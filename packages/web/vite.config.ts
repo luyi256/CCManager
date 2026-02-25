@@ -38,7 +38,7 @@ export default defineConfig({
     }
   },
   build: {
-    outDir: 'dist_new',
+    outDir: 'dist',
     emptyOutDir: true,
   },
   server: {

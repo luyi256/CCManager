@@ -93,7 +93,8 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
 
       {error && (
         <div
-          className="absolute right-0 top-full mt-2 z-50 w-72 px-3 py-2.5 text-xs text-red-200 bg-red-950 border border-red-500/50 rounded-lg shadow-xl cursor-pointer"
+          className="absolute left-auto right-0 top-full mt-2 z-50 w-80 px-4 py-3 text-sm font-medium text-white bg-red-600 border border-red-400 rounded-lg shadow-2xl cursor-pointer animate-bounce"
+          style={{ animationIterationCount: 2, animationDuration: '0.5s' }}
           onClick={clearError}
         >
           {error}

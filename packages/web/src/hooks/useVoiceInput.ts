@@ -31,6 +31,9 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
   const canRecord = typeof MediaRecorder !== 'undefined';
 
   const startRecording = useCallback(async () => {
+    // Immediate visual feedback
+    setState({ isRecording: false, isStarting: true, isTranscribing: false, error: null });
+
     // Runtime check: navigator.mediaDevices is undefined in non-secure HTTP contexts (Chrome)
     if (!navigator.mediaDevices?.getUserMedia) {
       setState({
@@ -38,14 +41,11 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
         isStarting: false,
         isTranscribing: false,
         error: !window.isSecureContext
-          ? '当前为 HTTP 连接，浏览器禁止访问麦克风。请使用 HTTPS 访问，或点击上传按钮上传音频文件。'
-          : '浏览器不支持录音，请上传音频文件',
+          ? '当前为 HTTP 连接，浏览器禁止访问麦克风。请点击下方上传按钮上传音频文件转文字。'
+          : '浏览器不支持录音，请点击下方上传按钮上传音频文件',
       });
       return;
     }
-
-    // Immediate visual feedback while requesting mic permission
-    setState({ isRecording: false, isStarting: true, isTranscribing: false, error: null });
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });

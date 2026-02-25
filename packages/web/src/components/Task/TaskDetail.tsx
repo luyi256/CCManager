@@ -53,17 +53,8 @@ function formatDate(date: unknown): string {
   }
 }
 
-// Lightweight message row: uses plain <pre> for streaming (fast), SafeMarkdown for saved logs
-const MessageRow = memo(function MessageRow({ content, isStreaming }: { content: string; isStreaming: boolean }) {
-  if (isStreaming) {
-    return (
-      <div className="px-3 py-1.5">
-        <pre className="text-dark-200 text-sm whitespace-pre-wrap break-words font-mono leading-relaxed m-0">
-          {content}
-        </pre>
-      </div>
-    );
-  }
+// Memoized saved-log message row (only used for completed task logs)
+const SavedLogRow = memo(function SavedLogRow({ content }: { content: string }) {
   return (
     <div className="p-3 prose prose-invert prose-sm max-w-none">
       <SafeMarkdown>{content}</SafeMarkdown>
@@ -124,13 +115,26 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
     return [];
   }, [isActive, stream.messages, savedLogs]);
 
-  // Only render the last N messages to avoid DOM overload
-  const visibleMessages = useMemo(() => {
+  // For streaming: merge all messages into a single string for one DOM node
+  // For saved logs: limit to last N messages rendered individually with markdown
+  const mergedStreamText = useMemo(() => {
+    if (!isActive || displayMessages.length === 0) return '';
+    // Only keep the tail to prevent unbounded string growth
+    const tail = displayMessages.length > MAX_RENDERED_MESSAGES
+      ? displayMessages.slice(-MAX_RENDERED_MESSAGES)
+      : displayMessages;
+    return tail.map(m => m.content).join('');
+  }, [isActive, displayMessages]);
+
+  const visibleSavedLogs = useMemo(() => {
+    if (isActive || displayMessages.length === 0) return [];
     if (displayMessages.length <= MAX_RENDERED_MESSAGES) return displayMessages;
     return displayMessages.slice(-MAX_RENDERED_MESSAGES);
-  }, [displayMessages]);
+  }, [isActive, displayMessages]);
 
-  const skippedCount = displayMessages.length - visibleMessages.length;
+  const skippedCount = isActive
+    ? Math.max(0, displayMessages.length - MAX_RENDERED_MESSAGES)
+    : displayMessages.length - visibleSavedLogs.length;
 
   const hasMessages = displayMessages.length > 0 || isActive;
 
@@ -155,7 +159,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
         container.scrollTop = container.scrollHeight;
       }
     });
-  }, [autoScroll, visibleMessages.length]);
+  }, [autoScroll, displayMessages.length]);
 
   // Cleanup rAF on unmount
   useEffect(() => {
@@ -274,20 +278,34 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                 ref={messagesContainerRef}
                 onScroll={handleScroll}
                 className="bg-dark-900 rounded-lg h-full overflow-y-auto"
+                style={{ contain: 'content' }}
               >
                 {displayMessages.length === 0 ? (
                   <div className="p-3 text-dark-500 text-sm">
                     {isActive ? 'Waiting for output...' : 'Loading logs...'}
                   </div>
+                ) : isActive ? (
+                  /* Streaming: single <pre> block — minimal DOM nodes */
+                  <div>
+                    {skippedCount > 0 && (
+                      <div className="p-2 text-center text-dark-500 text-xs">
+                        ... {skippedCount} earlier messages hidden ...
+                      </div>
+                    )}
+                    <pre className="px-3 py-2 text-dark-200 text-sm whitespace-pre-wrap break-words font-mono leading-relaxed m-0">
+                      {mergedStreamText}
+                    </pre>
+                  </div>
                 ) : (
+                  /* Saved logs: individual markdown-rendered blocks */
                   <div className="divide-y divide-dark-800">
                     {skippedCount > 0 && (
                       <div className="p-2 text-center text-dark-500 text-xs">
                         ... {skippedCount} earlier messages hidden ...
                       </div>
                     )}
-                    {visibleMessages.map((msg) => (
-                      <MessageRow key={msg.id} content={msg.content} isStreaming={isActive} />
+                    {visibleSavedLogs.map((msg) => (
+                      <SavedLogRow key={msg.id} content={msg.content} />
                     ))}
                   </div>
                 )}
