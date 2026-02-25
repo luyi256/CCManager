@@ -120,6 +120,13 @@ export async function retryTask(taskId: number): Promise<Task> {
   });
 }
 
+export async function continueTask(taskId: number, prompt: string): Promise<Task> {
+  return request(`/tasks/${taskId}/continue`, {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  });
+}
+
 export interface TaskLog {
   timestamp: string;
   type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request';
