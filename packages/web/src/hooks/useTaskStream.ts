@@ -79,7 +79,7 @@ export function useTaskStream(taskId: number | null) {
         case 'task:output': {
           const text = msg.text as string;
           const newMessage: OutputMessage = {
-            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            id: `msg-${totalMessageCount.current}`,
             text,
             timestamp: Date.now(),
           };
@@ -132,37 +132,33 @@ export function useTaskStream(taskId: number | null) {
           }));
           break;
 
-        case 'task:completed':
+        case 'task:completed': {
           // Flush any remaining buffered messages before marking completed
-          if (pendingMessages.current.length > 0) {
-            if (flushTimer.current) clearTimeout(flushTimer.current);
-            const batch = pendingMessages.current;
-            const batchOutput = pendingOutput.current;
-            pendingMessages.current = [];
-            pendingOutput.current = '';
-            setState((prev) => ({
+          if (flushTimer.current) clearTimeout(flushTimer.current);
+          const completeBatch = pendingMessages.current;
+          pendingMessages.current = [];
+          setState((prev) => {
+            const merged = completeBatch.length > 0
+              ? [...prev.messages, ...completeBatch]
+              : prev.messages;
+            const trimmed = merged.length > MAX_STREAM_MESSAGES
+              ? merged.slice(-MAX_STREAM_MESSAGES)
+              : merged;
+            return {
               ...prev,
-              output: prev.output + batchOutput,
-              messages: [...prev.messages, ...batch],
+              messages: trimmed,
               status: 'completed',
               planQuestion: undefined,
               permissionRequest: undefined,
-            }));
-          } else {
-            setState((prev) => ({
-              ...prev,
-              status: 'completed',
-              planQuestion: undefined,
-              permissionRequest: undefined,
-            }));
-          }
+            };
+          });
           break;
+        }
 
         case 'task:failed':
           // Flush remaining messages on failure too
           if (flushTimer.current) clearTimeout(flushTimer.current);
           pendingMessages.current = [];
-          pendingOutput.current = '';
           setState((prev) => ({
             ...prev,
             status: 'failed',

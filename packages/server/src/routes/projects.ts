@@ -92,14 +92,9 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// Delete project
+// Delete project (idempotent - succeeds even if project doesn't exist)
 router.delete('/:id', async (req, res) => {
   try {
-    const project = await storage.getProject(req.params.id);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
-
     await storage.deleteProject(req.params.id);
     res.status(204).send();
   } catch (error) {
