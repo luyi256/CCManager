@@ -7,7 +7,7 @@ module.exports = {
       args: 'run start',
       env: {
         SERVE_STATIC: 'true',
-        STATIC_PATH: '/home/CC/CCManager/packages/web/dist',
+        STATIC_PATH: '/home/CC/CCManager/packages/web/dist_new',
         DATA_PATH: '/home/CC/CCManagerData'
       },
       out_file: '/home/CC/logs/ccm-server.log',

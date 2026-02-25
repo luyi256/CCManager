@@ -37,6 +37,10 @@ export default defineConfig({
       '@': path.resolve(__dirname, './src')
     }
   },
+  build: {
+    outDir: 'dist_new',
+    emptyOutDir: true,
+  },
   server: {
     port: 5173,
     proxy: {

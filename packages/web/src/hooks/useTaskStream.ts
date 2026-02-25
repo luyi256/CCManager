@@ -25,7 +25,9 @@ interface TaskStreamState {
 }
 
 // Batch interval for output messages (ms)
-const MESSAGE_BATCH_INTERVAL = 100;
+const MESSAGE_BATCH_INTERVAL = 150;
+// Max messages kept in state to prevent unbounded memory growth
+const MAX_STREAM_MESSAGES = 500;
 
 export function useTaskStream(taskId: number | null) {
   const { subscribe, unsubscribe, onMessage, sendAnswer, confirmPlan, respondPermission } = useWebSocket();
@@ -39,23 +41,28 @@ export function useTaskStream(taskId: number | null) {
 
   // Buffer for batching rapid output messages
   const pendingMessages = useRef<OutputMessage[]>([]);
-  const pendingOutput = useRef('');
   const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Track total messages seen (including trimmed ones)
+  const totalMessageCount = useRef(0);
 
   // Flush buffered messages into state
   const flushMessages = useCallback(() => {
     flushTimer.current = null;
     if (pendingMessages.current.length === 0) return;
     const batch = pendingMessages.current;
-    const batchOutput = pendingOutput.current;
     pendingMessages.current = [];
-    pendingOutput.current = '';
-    setState((prev) => ({
-      ...prev,
-      output: prev.output + batchOutput,
-      messages: [...prev.messages, ...batch],
-      status: 'running',
-    }));
+    setState((prev) => {
+      const merged = [...prev.messages, ...batch];
+      // Cap to prevent unbounded growth
+      const trimmed = merged.length > MAX_STREAM_MESSAGES
+        ? merged.slice(-MAX_STREAM_MESSAGES)
+        : merged;
+      return {
+        ...prev,
+        messages: trimmed,
+        status: 'running',
+      };
+    });
   }, []);
 
   useEffect(() => {
