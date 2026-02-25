@@ -192,12 +192,12 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
-  // Delete task logs first
-  db.prepare('DELETE FROM task_logs WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
-  // Delete tasks
-  db.prepare('DELETE FROM tasks WHERE project_id = ?').run(projectId);
-  // Delete project
-  db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+  const deleteAll = db.transaction(() => {
+    db.prepare('DELETE FROM task_logs WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
+    db.prepare('DELETE FROM tasks WHERE project_id = ?').run(projectId);
+    db.prepare('DELETE FROM projects WHERE id = ?').run(projectId);
+  });
+  deleteAll();
 }
 
 // Tasks

@@ -18,11 +18,11 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Auto-dismiss inline error after 4 seconds
   useEffect(() => {
-    if (error) {
-      alert(error);
-      clearError();
-    }
+    if (!error) return;
+    const timer = setTimeout(clearError, 4000);
+    return () => clearTimeout(timer);
   }, [error, clearError]);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -35,7 +35,7 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
   };
 
   return (
-    <div className={clsx('flex flex-col gap-1', className)}>
+    <div className={clsx('relative flex flex-col gap-1', className)}>
       {canRecord ? (
         <button
           type="button"

@@ -134,9 +134,6 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
 
   const hasMessages = displayMessages.length > 0 || isActive;
 
-  // Whether current view is streaming (use lightweight rendering)
-  const isStreamingView = isActive && stream.messages.length > 0;
-
   // Track if user has scrolled up
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
