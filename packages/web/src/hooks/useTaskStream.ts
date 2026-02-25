@@ -84,7 +84,7 @@ export function useTaskStream(taskId: number | null) {
             timestamp: Date.now(),
           };
           pendingMessages.current.push(newMessage);
-          pendingOutput.current += text;
+          totalMessageCount.current++;
           // Schedule a flush if not already pending
           if (!flushTimer.current) {
             flushTimer.current = setTimeout(flushMessages, MESSAGE_BATCH_INTERVAL);
