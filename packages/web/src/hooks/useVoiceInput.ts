@@ -7,6 +7,13 @@ interface VoiceInputState {
   error: string | null;
 }
 
+function getExtFromMime(mime: string): string {
+  if (mime.includes('webm')) return 'webm';
+  if (mime.includes('ogg')) return 'ogg';
+  if (mime.includes('mp4') || mime.includes('m4a')) return 'mp4';
+  return 'webm';
+}
+
 export function useVoiceInput(onTranscription: (text: string) => void) {
   const [state, setState] = useState<VoiceInputState>({
     isRecording: false,
@@ -17,12 +24,18 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
+  const canRecord = typeof MediaRecorder !== 'undefined'
+    && !!navigator.mediaDevices?.getUserMedia
+    && window.isSecureContext;
+
   const startRecording = useCallback(async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (!canRecord) {
       setState({
         isRecording: false,
         isTranscribing: false,
-        error: 'Microphone access is not supported in this browser or requires HTTPS.',
+        error: !window.isSecureContext
+          ? '需要 HTTPS 才能使用麦克风录音，请使用文件上传'
+          : '浏览器不支持录音',
       });
       return;
     }
@@ -48,40 +61,32 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
       };
 
       recorder.onstop = async () => {
-        // Release microphone
         stream.getTracks().forEach((t) => t.stop());
 
-        const blob = new Blob(chunksRef.current, {
-          type: recorder.mimeType || 'audio/webm',
-        });
+        const actualMime = recorder.mimeType || 'audio/webm';
+        const blob = new Blob(chunksRef.current, { type: actualMime });
         chunksRef.current = [];
 
         if (blob.size === 0) {
-          setState({ isRecording: false, isTranscribing: false, error: 'No audio recorded.' });
+          setState({ isRecording: false, isTranscribing: false, error: '未录到音频' });
           return;
         }
 
         setState((prev) => ({ ...prev, isRecording: false, isTranscribing: true }));
 
         try {
-          const result = await transcribeAudio(blob);
+          const ext = getExtFromMime(actualMime);
+          const result = await transcribeAudio(blob, `recording.${ext}`);
           if (result.text?.trim()) {
             onTranscription(result.text.trim());
-          } else {
-            setState((prev) => ({
-              ...prev,
-              isTranscribing: false,
-              error: 'No speech detected. Please try again.',
-            }));
-            return;
           }
-          setState((prev) => ({ ...prev, isTranscribing: false, error: null }));
+          setState({ isRecording: false, isTranscribing: false, error: null });
         } catch (err) {
-          setState((prev) => ({
-            ...prev,
+          setState({
+            isRecording: false,
             isTranscribing: false,
-            error: err instanceof Error ? err.message : 'Transcription failed',
-          }));
+            error: err instanceof Error ? err.message : '转写失败',
+          });
         }
       };
 
@@ -89,17 +94,17 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
       mediaRecorderRef.current = recorder;
       setState({ isRecording: true, isTranscribing: false, error: null });
     } catch (err) {
-      let message = 'Failed to access microphone.';
+      let message = '无法访问麦克风';
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError') {
-          message = 'Microphone access denied. Please allow microphone permission.';
+          message = '麦克风权限被拒绝，请允许麦克风访问';
         } else if (err.name === 'NotFoundError') {
-          message = 'No microphone found on this device.';
+          message = '未找到麦克风设备';
         }
       }
       setState({ isRecording: false, isTranscribing: false, error: message });
     }
-  }, [onTranscription]);
+  }, [canRecord, onTranscription]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
@@ -116,15 +121,34 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
     }
   }, [state.isRecording, startRecording, stopRecording]);
 
+  const transcribeFile = useCallback(async (file: File) => {
+    setState({ isRecording: false, isTranscribing: true, error: null });
+    try {
+      const result = await transcribeAudio(file, file.name);
+      if (result.text?.trim()) {
+        onTranscription(result.text.trim());
+      }
+      setState({ isRecording: false, isTranscribing: false, error: null });
+    } catch (err) {
+      setState({
+        isRecording: false,
+        isTranscribing: false,
+        error: err instanceof Error ? err.message : '转写失败',
+      });
+    }
+  }, [onTranscription]);
+
   const clearError = useCallback(() => {
     setState((prev) => ({ ...prev, error: null }));
   }, []);
 
   return {
     ...state,
+    canRecord,
     startRecording,
     stopRecording,
     toggleRecording,
+    transcribeFile,
     clearError,
   };
 }

@@ -171,9 +171,9 @@ export async function validateAuth(type: 'oauth' | 'apikey', token: string): Pro
 }
 
 // Voice transcription
-export async function transcribeAudio(audioBlob: Blob): Promise<{ text: string }> {
+export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<{ text: string }> {
   const formData = new FormData();
-  formData.append('audio', audioBlob, 'recording.webm');
+  formData.append('audio', audioBlob, filename);
 
   const response = await fetch(`${API_BASE}/transcribe`, {
     method: 'POST',

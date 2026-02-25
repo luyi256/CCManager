@@ -18,10 +18,18 @@ router.post('/', upload.single('audio'), async (req, res) => {
       return res.status(500).json({ message: 'Whisper API not configured' });
     }
 
+    // Determine filename with proper extension from the uploaded file
+    const originalName = req.file.originalname || 'audio.webm';
+
     // Create form data
     const formData = new FormData();
-    formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'audio.webm');
+    formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), originalName);
     formData.append('model', whisperModel);
+    // Language hint for better accuracy (Whisper auto-detects, but hint helps)
+    const language = (req.body?.language as string) || process.env.WHISPER_LANGUAGE || '';
+    if (language) {
+      formData.append('language', language);
+    }
 
     const response = await fetch(`${whisperUrl}/audio/transcriptions`, {
       method: 'POST',

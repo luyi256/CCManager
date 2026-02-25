@@ -53,8 +53,17 @@ function formatDate(date: unknown): string {
   }
 }
 
-// Memoized message item to avoid re-rendering all messages on every state update
-const MessageItem = memo(function MessageItem({ content }: { content: string }) {
+// Lightweight message row: uses plain <pre> for streaming (fast), SafeMarkdown for saved logs
+const MessageRow = memo(function MessageRow({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  if (isStreaming) {
+    return (
+      <div className="px-3 py-1.5">
+        <pre className="text-dark-200 text-sm whitespace-pre-wrap break-words font-mono leading-relaxed m-0">
+          {content}
+        </pre>
+      </div>
+    );
+  }
   return (
     <div className="p-3 prose prose-invert prose-sm max-w-none">
       <SafeMarkdown>{content}</SafeMarkdown>
@@ -67,13 +76,13 @@ interface TaskDetailProps {
   onClose: () => void;
 }
 
-const MAX_RENDERED_MESSAGES = 200;
+const MAX_RENDERED_MESSAGES = 150;
 
 export default function TaskDetail({ task, onClose }: TaskDetailProps) {
   const [showToolCalls, setShowToolCalls] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
-  const userScrolledUp = useRef(false);
+  const scrollRafRef = useRef<number>(0);
 
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
     task.status
@@ -125,21 +134,36 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
 
   const hasMessages = displayMessages.length > 0 || isActive;
 
+  // Whether current view is streaming (use lightweight rendering)
+  const isStreamingView = isActive && stream.messages.length > 0;
+
   // Track if user has scrolled up
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
     if (!container) return;
     const { scrollTop, scrollHeight, clientHeight } = container;
     // Consider "at bottom" if within 80px of the bottom
-    userScrolledUp.current = scrollHeight - scrollTop - clientHeight > 80;
+    const isAtBottom = scrollHeight - scrollTop - clientHeight <= 80;
+    setAutoScroll(isAtBottom);
   }, []);
 
   // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
+  // Use rAF to batch scroll updates and avoid layout thrashing
   useEffect(() => {
-    if (!userScrolledUp.current && messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [visibleMessages.length]);
+    if (!autoScroll) return;
+    cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+  }, [autoScroll, visibleMessages.length]);
+
+  // Cleanup rAF on unmount
+  useEffect(() => {
+    return () => cancelAnimationFrame(scrollRafRef.current);
+  }, []);
 
   const displayToolCalls = useMemo(() => {
     if (isActive) {
@@ -248,29 +272,44 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
             <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">
               Output ({displayMessages.length} messages)
             </h3>
-            <div
-              ref={messagesContainerRef}
-              onScroll={handleScroll}
-              className="bg-dark-900 rounded-lg flex-1 overflow-y-auto"
-            >
-              {displayMessages.length === 0 ? (
-                <div className="p-3 text-dark-500 text-sm">
-                  {isActive ? 'Waiting for output...' : 'Loading logs...'}
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-800">
-                  {skippedCount > 0 && (
-                    <div className="p-2 text-center text-dark-500 text-xs">
-                      ... {skippedCount} earlier messages hidden ...
-                    </div>
-                  )}
-                  {visibleMessages.map((msg) => (
-                    <div key={msg.id} className="p-3 prose prose-invert prose-sm max-w-none">
-                      <SafeMarkdown>{msg.content}</SafeMarkdown>
-                    </div>
-                  ))}
-                  <div ref={messagesEndRef} />
-                </div>
+            <div className="relative flex-1 min-h-0">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleScroll}
+                className="bg-dark-900 rounded-lg h-full overflow-y-auto"
+              >
+                {displayMessages.length === 0 ? (
+                  <div className="p-3 text-dark-500 text-sm">
+                    {isActive ? 'Waiting for output...' : 'Loading logs...'}
+                  </div>
+                ) : (
+                  <div className="divide-y divide-dark-800">
+                    {skippedCount > 0 && (
+                      <div className="p-2 text-center text-dark-500 text-xs">
+                        ... {skippedCount} earlier messages hidden ...
+                      </div>
+                    )}
+                    {visibleMessages.map((msg) => (
+                      <MessageRow key={msg.id} content={msg.content} isStreaming={isActive} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Scroll-to-bottom button when user has scrolled up */}
+              {!autoScroll && displayMessages.length > 0 && (
+                <button
+                  onClick={() => {
+                    const container = messagesContainerRef.current;
+                    if (container) {
+                      container.scrollTop = container.scrollHeight;
+                    }
+                    setAutoScroll(true);
+                  }}
+                  className="absolute bottom-2 right-2 p-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full shadow-lg transition-colors"
+                  title="Scroll to bottom"
+                >
+                  <ArrowDown size={16} />
+                </button>
               )}
             </div>
           </div>

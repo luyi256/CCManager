@@ -1,5 +1,5 @@
-import { useEffect } from 'react';
-import { Mic, MicOff, Loader2 } from 'lucide-react';
+import { useEffect, useRef } from 'react';
+import { Mic, MicOff, Loader2, Upload } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useVoiceInput } from '../../hooks/useVoiceInput';
 
@@ -8,9 +8,15 @@ interface VoiceInputProps {
   className?: string;
 }
 
+const AUDIO_ACCEPT = 'audio/webm,audio/ogg,audio/mp3,audio/mp4,audio/wav,audio/flac,audio/m4a,audio/mpeg,.webm,.ogg,.mp3,.mp4,.wav,.flac,.m4a';
+
 export default function VoiceInput({ onTranscription, className }: VoiceInputProps) {
-  const { isRecording, isTranscribing, toggleRecording, error, clearError } =
-    useVoiceInput(onTranscription);
+  const {
+    isRecording, isTranscribing, canRecord,
+    toggleRecording, transcribeFile, error, clearError,
+  } = useVoiceInput(onTranscription);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (error) {
@@ -19,35 +25,75 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
     }
   }, [error, clearError]);
 
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      transcribeFile(file);
+    }
+    // Reset so same file can be selected again
+    e.target.value = '';
+  };
+
   return (
-    <button
-      type="button"
-      onClick={toggleRecording}
-      disabled={isTranscribing}
-      className={clsx(
-        'p-2 rounded-lg transition-all duration-200',
-        isRecording
-          ? 'bg-red-500 text-white animate-pulse'
-          : isTranscribing
-            ? 'bg-dark-700 text-dark-500 cursor-wait'
-            : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
-        className
-      )}
-      title={
-        isRecording
-          ? 'Stop recording'
-          : isTranscribing
-            ? 'Transcribing...'
-            : 'Start voice input'
-      }
-    >
-      {isTranscribing ? (
-        <Loader2 size={20} className="animate-spin" />
-      ) : isRecording ? (
-        <MicOff size={20} />
+    <div className={clsx('flex flex-col gap-1', className)}>
+      {canRecord ? (
+        <button
+          type="button"
+          onClick={toggleRecording}
+          disabled={isTranscribing}
+          className={clsx(
+            'p-2 rounded-lg transition-all duration-200',
+            isRecording
+              ? 'bg-red-500 text-white animate-pulse'
+              : isTranscribing
+                ? 'bg-dark-700 text-dark-500 cursor-wait'
+                : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
+          )}
+          title={
+            isRecording
+              ? '停止录音'
+              : isTranscribing
+                ? '转写中...'
+                : '语音输入'
+          }
+        >
+          {isTranscribing ? (
+            <Loader2 size={20} className="animate-spin" />
+          ) : isRecording ? (
+            <MicOff size={20} />
+          ) : (
+            <Mic size={20} />
+          )}
+        </button>
       ) : (
-        <Mic size={20} />
+        <>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={AUDIO_ACCEPT}
+            onChange={handleFileChange}
+            className="hidden"
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isTranscribing}
+            className={clsx(
+              'p-2 rounded-lg transition-all duration-200',
+              isTranscribing
+                ? 'bg-dark-700 text-dark-500 cursor-wait'
+                : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
+            )}
+            title={isTranscribing ? '转写中...' : '上传音频文件'}
+          >
+            {isTranscribing ? (
+              <Loader2 size={20} className="animate-spin" />
+            ) : (
+              <Upload size={20} />
+            )}
+          </button>
+        </>
       )}
-    </button>
+    </div>
   );
 }

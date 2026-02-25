@@ -53,7 +53,8 @@ export function useDeleteProject() {
 
   return useMutation({
     mutationFn: api.deleteProject,
-    onSuccess: () => {
+    onSettled: () => {
+      // Always refresh project list, even on error (removes zombie projects)
       queryClient.invalidateQueries({ queryKey: ['projects'] });
     },
   });
