@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -57,8 +57,13 @@ interface TaskDetailProps {
   onClose: () => void;
 }
 
+const MAX_RENDERED_MESSAGES = 200;
+
 export default function TaskDetail({ task, onClose }: TaskDetailProps) {
   const [showToolCalls, setShowToolCalls] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const userScrolledUp = useRef(false);
 
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
     task.status
