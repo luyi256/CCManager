@@ -1,0 +1,26 @@
+{
+  "name": "ccmanager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Claude Code Manager - Web app for managing remote Claude Code development tasks",
+  "scripts": {
+    "dev": "concurrently \"pnpm --filter @ccmanager/server dev\" \"pnpm --filter @ccmanager/web dev\"",
+    "dev:web": "pnpm --filter @ccmanager/web dev",
+    "dev:server": "pnpm --filter @ccmanager/server dev",
+    "build": "pnpm --filter @ccmanager/server build && pnpm --filter @ccmanager/web build",
+    "build:web": "pnpm --filter @ccmanager/web build",
+    "build:server": "pnpm --filter @ccmanager/server build",
+    "start": "pnpm --filter @ccmanager/server start",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "pm2": "^6.0.14",
+    "typescript": "^5.4.5"
+  },
+  "packageManager": "pnpm@9.0.0",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+*.db
+*.db-shm
+*.db-wal
+data/
+packages/agent/agent.config.json
+.claude/
