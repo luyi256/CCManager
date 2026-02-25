@@ -53,6 +53,15 @@ function formatDate(date: unknown): string {
   }
 }
 
+// Memoized message item to avoid re-rendering all messages on every state update
+const MessageItem = memo(function MessageItem({ content }: { content: string }) {
+  return (
+    <div className="p-3 prose prose-invert prose-sm max-w-none">
+      <SafeMarkdown>{content}</SafeMarkdown>
+    </div>
+  );
+});
+
 interface TaskDetailProps {
   task: Task;
   onClose: () => void;
