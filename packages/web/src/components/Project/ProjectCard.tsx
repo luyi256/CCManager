@@ -1,10 +1,12 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useRef, useCallback, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Server, GitBranch, Clock, ChevronRight, Trash2, Loader2 } from 'lucide-react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import type { Project } from '../../types';
 import { useDeleteProject } from '../../hooks/useProjects';
 import Modal from '../common/Modal';
+
+const LONG_PRESS_MS = 500;
 
 interface ProjectCardProps {
   project: Project;
@@ -12,7 +14,13 @@ interface ProjectCardProps {
 
 export default function ProjectCard({ project }: ProjectCardProps) {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showContextMenu, setShowContextMenu] = useState(false);
   const deleteProject = useDeleteProject();
+  const navigate = useNavigate();
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isLongPressRef = useRef(false);
+  const cardRef = useRef<HTMLDivElement>(null);
 
   const lastActivity = project.lastActivity
     ? formatRelativeTime(new Date(project.lastActivity))
@@ -27,6 +35,52 @@ export default function ProjectCard({ project }: ProjectCardProps) {
     }
   };
 
+  const clearTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  const startPress = useCallback(() => {
+    isLongPressRef.current = false;
+    timerRef.current = setTimeout(() => {
+      isLongPressRef.current = true;
+      setShowContextMenu(true);
+    }, LONG_PRESS_MS);
+  }, []);
+
+  const endPress = useCallback(() => {
+    clearTimer();
+  }, [clearTimer]);
+
+  // Close context menu on outside click
+  useEffect(() => {
+    if (!showContextMenu) return;
+    const handleClickOutside = (e: MouseEvent | TouchEvent) => {
+      if (cardRef.current && !cardRef.current.contains(e.target as Node)) {
+        setShowContextMenu(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('touchstart', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
+    };
+  }, [showContextMenu]);
+
+  // Cleanup timer on unmount
+  useEffect(() => clearTimer, [clearTimer]);
+
+  const handleClick = (e: React.MouseEvent) => {
+    if (isLongPressRef.current || showContextMenu) {
+      e.preventDefault();
+      return;
+    }
+    navigate(`/project/${project.id}`);
+  };
+
   return (
     <motion.div
       layout
@@ -34,55 +88,79 @@ export default function ProjectCard({ project }: ProjectCardProps) {
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: -20 }}
     >
-      <div className="card p-4 hover:border-dark-600 transition-colors group relative">
-        <Link
-          to={`/project/${project.id}`}
-          className="block"
-        >
-          <div className="flex items-start justify-between">
-            <div className="flex-1 min-w-0">
-              <h3 className="font-semibold text-dark-100 truncate group-hover:text-primary-400 transition-colors">
-                {project.name}
-              </h3>
-              <div className="mt-2 flex items-center gap-4 text-sm text-dark-400">
-                <span className="flex items-center gap-1.5">
-                  <Server size={14} />
-                  {project.agentId}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <GitBranch size={14} />
-                  {project.taskCount} tasks
-                </span>
-              </div>
-              <div className="mt-2 flex items-center gap-4 text-sm">
-                <span className="flex items-center gap-1.5 text-dark-500">
-                  <Clock size={14} />
-                  {lastActivity}
-                </span>
-                {project.runningCount > 0 && (
-                  <span className="flex items-center gap-1.5 text-blue-400">
-                    <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                    {project.runningCount} running
-                  </span>
-                )}
-              </div>
+      <div
+        ref={cardRef}
+        className="card p-4 hover:border-dark-600 transition-colors group relative cursor-pointer select-none"
+        onMouseDown={startPress}
+        onMouseUp={endPress}
+        onMouseLeave={endPress}
+        onTouchStart={startPress}
+        onTouchEnd={endPress}
+        onTouchCancel={endPress}
+        onClick={handleClick}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setShowContextMenu(true);
+        }}
+      >
+        <div className="flex items-start justify-between">
+          <div className="flex-1 min-w-0">
+            <h3 className="font-semibold text-dark-100 truncate group-hover:text-primary-400 transition-colors">
+              {project.name}
+            </h3>
+            <div className="mt-2 flex items-center gap-4 text-sm text-dark-400">
+              <span className="flex items-center gap-1.5">
+                <Server size={14} />
+                {project.agentId}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <GitBranch size={14} />
+                {project.taskCount} tasks
+              </span>
             </div>
-            <ChevronRight
-              size={20}
-              className="text-dark-500 group-hover:text-dark-300 transition-colors flex-shrink-0"
-            />
+            <div className="mt-2 flex items-center gap-4 text-sm">
+              <span className="flex items-center gap-1.5 text-dark-500">
+                <Clock size={14} />
+                {lastActivity}
+              </span>
+              {project.runningCount > 0 && (
+                <span className="flex items-center gap-1.5 text-blue-400">
+                  <span className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                  {project.runningCount} running
+                </span>
+              )}
+            </div>
           </div>
-        </Link>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowDeleteConfirm(true);
-          }}
-          className="absolute top-4 right-12 p-1.5 text-dark-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-          title="Delete project"
-        >
-          <Trash2 size={16} />
-        </button>
+          <ChevronRight
+            size={20}
+            className="text-dark-500 group-hover:text-dark-300 transition-colors flex-shrink-0"
+          />
+        </div>
+
+        {/* Context menu on long press */}
+        <AnimatePresence>
+          {showContextMenu && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              transition={{ duration: 0.12 }}
+              className="absolute top-2 right-2 z-50 bg-dark-700 border border-dark-600 rounded-lg shadow-xl overflow-hidden"
+            >
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setShowContextMenu(false);
+                  setShowDeleteConfirm(true);
+                }}
+                className="flex items-center gap-2 px-4 py-2.5 text-sm text-red-400 hover:bg-dark-600 transition-colors w-full"
+              >
+                <Trash2 size={15} />
+                Delete Project
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       <Modal

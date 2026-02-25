@@ -11,11 +11,46 @@ import {
   Clock,
   AlertTriangle,
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
 import StatusBadge from '../common/StatusBadge';
+import ErrorBoundary from '../common/ErrorBoundary';
+import SafeMarkdown from '../common/SafeMarkdown';
 import { useTaskStream } from '../../hooks/useTaskStream';
 import { useCancelTask, useRetryTask, useTaskLogs } from '../../hooks/useTasks';
 import type { Task } from '../../types';
+
+// Safe JSON stringify that handles circular references
+function safeStringify(obj: unknown, indent = 2): string {
+  const seen = new WeakSet();
+  try {
+    return JSON.stringify(
+      obj,
+      (_key, value) => {
+        if (typeof value === 'object' && value !== null) {
+          if (seen.has(value)) {
+            return '[Circular]';
+          }
+          seen.add(value);
+        }
+        return value;
+      },
+      indent
+    );
+  } catch {
+    return String(obj);
+  }
+}
+
+// Safe date formatting
+function formatDate(date: unknown): string {
+  if (!date) return 'Unknown';
+  try {
+    const d = new Date(date as string | number);
+    if (isNaN(d.getTime())) return 'Invalid date';
+    return d.toLocaleString();
+  } catch {
+    return 'Invalid date';
+  }
+}
 
 interface TaskDetailProps {
   task: Task;
@@ -51,7 +86,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
         .map((log, index) => ({
           id: `log-${index}`,
           content: String(log.content),
-          timestamp: new Date(log.timestamp).getTime(),
+          timestamp: typeof log.timestamp === 'number' ? log.timestamp : new Date(log.timestamp || 0).getTime(),
         }));
     }
     // Keep showing stream messages during transition
@@ -121,6 +156,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
         </button>
       </div>
 
+      <ErrorBoundary onReset={onClose}>
       {/* Content */}
       <div className="flex-1 overflow-y-auto flex flex-col min-h-0">
         {/* Prompt */}
@@ -147,7 +183,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                 <Clock size={14} /> Created
               </span>
               <span className="text-dark-300 mt-1 block">
-                {new Date(task.createdAt).toLocaleString()}
+                {formatDate(task.createdAt)}
               </span>
             </div>
           )}
@@ -182,7 +218,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                 <div className="divide-y divide-dark-800">
                   {displayMessages.map((msg) => (
                     <div key={msg.id} className="p-3 prose prose-invert prose-sm max-w-none">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      <SafeMarkdown>{msg.content}</SafeMarkdown>
                     </div>
                   ))}
                 </div>
@@ -228,7 +264,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                         </span>
                       </div>
                       <pre className="text-dark-400 overflow-x-auto">
-                        {JSON.stringify(tc.input, null, 2)}
+                        {safeStringify(tc.input)}
                       </pre>
                     </div>
                   ))}
@@ -342,6 +378,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
           </button>
         )}
       </div>
+      </ErrorBoundary>
     </motion.div>
     </>
   );
