@@ -24,5 +24,10 @@
         ]
       }
     ]
+  },
+  "permissions": {
+    "allow": [
+      "Bash(ssh rack \"pm2 logs ccm-server --lines 100 --nostream 2>&1\" | tail -80)"
+    ]
   }
 }
