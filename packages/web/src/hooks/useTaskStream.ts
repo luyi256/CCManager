@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { useWebSocket } from '../contexts/WebSocketContext';
 import type { PlanQuestion, PermissionRequest } from '../types';
 
@@ -24,6 +24,9 @@ interface TaskStreamState {
   error?: string;
 }
 
+// Batch interval for output messages (ms)
+const MESSAGE_BATCH_INTERVAL = 100;
+
 export function useTaskStream(taskId: number | null) {
   const { subscribe, unsubscribe, onMessage, sendAnswer, confirmPlan, respondPermission } = useWebSocket();
 
@@ -33,6 +36,27 @@ export function useTaskStream(taskId: number | null) {
     toolCalls: [],
     status: 'idle',
   });
+
+  // Buffer for batching rapid output messages
+  const pendingMessages = useRef<OutputMessage[]>([]);
+  const pendingOutput = useRef('');
+  const flushTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Flush buffered messages into state
+  const flushMessages = useCallback(() => {
+    flushTimer.current = null;
+    if (pendingMessages.current.length === 0) return;
+    const batch = pendingMessages.current;
+    const batchOutput = pendingOutput.current;
+    pendingMessages.current = [];
+    pendingOutput.current = '';
+    setState((prev) => ({
+      ...prev,
+      output: prev.output + batchOutput,
+      messages: [...prev.messages, ...batch],
+      status: 'running',
+    }));
+  }, []);
 
   useEffect(() => {
     if (!taskId) return;
@@ -45,22 +69,21 @@ export function useTaskStream(taskId: number | null) {
       if (msgTaskId !== undefined && msgTaskId !== taskId) return;
 
       switch (msg.type) {
-        case 'task:output':
-          setState((prev) => {
-            const text = msg.text as string;
-            const newMessage: OutputMessage = {
-              id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-              text,
-              timestamp: Date.now(),
-            };
-            return {
-              ...prev,
-              output: prev.output + text,
-              messages: [...prev.messages, newMessage],
-              status: 'running',
-            };
-          });
+        case 'task:output': {
+          const text = msg.text as string;
+          const newMessage: OutputMessage = {
+            id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+            text,
+            timestamp: Date.now(),
+          };
+          pendingMessages.current.push(newMessage);
+          pendingOutput.current += text;
+          // Schedule a flush if not already pending
+          if (!flushTimer.current) {
+            flushTimer.current = setTimeout(flushMessages, MESSAGE_BATCH_INTERVAL);
+          }
           break;
+        }
 
         case 'task:tool_use':
           setState((prev) => ({
@@ -103,15 +126,36 @@ export function useTaskStream(taskId: number | null) {
           break;
 
         case 'task:completed':
-          setState((prev) => ({
-            ...prev,
-            status: 'completed',
-            planQuestion: undefined,
-            permissionRequest: undefined,
-          }));
+          // Flush any remaining buffered messages before marking completed
+          if (pendingMessages.current.length > 0) {
+            if (flushTimer.current) clearTimeout(flushTimer.current);
+            const batch = pendingMessages.current;
+            const batchOutput = pendingOutput.current;
+            pendingMessages.current = [];
+            pendingOutput.current = '';
+            setState((prev) => ({
+              ...prev,
+              output: prev.output + batchOutput,
+              messages: [...prev.messages, ...batch],
+              status: 'completed',
+              planQuestion: undefined,
+              permissionRequest: undefined,
+            }));
+          } else {
+            setState((prev) => ({
+              ...prev,
+              status: 'completed',
+              planQuestion: undefined,
+              permissionRequest: undefined,
+            }));
+          }
           break;
 
         case 'task:failed':
+          // Flush remaining messages on failure too
+          if (flushTimer.current) clearTimeout(flushTimer.current);
+          pendingMessages.current = [];
+          pendingOutput.current = '';
           setState((prev) => ({
             ...prev,
             status: 'failed',
@@ -126,10 +170,13 @@ export function useTaskStream(taskId: number | null) {
     });
 
     return () => {
+      if (flushTimer.current) clearTimeout(flushTimer.current);
+      pendingMessages.current = [];
+      pendingOutput.current = '';
       unsubscribe(String(taskId));
       cleanup();
     };
-  }, [taskId, subscribe, unsubscribe, onMessage]);
+  }, [taskId, subscribe, unsubscribe, onMessage, flushMessages]);
 
   const answerQuestion = useCallback(
     (answer: string) => {

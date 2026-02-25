@@ -105,7 +105,31 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
     return [];
   }, [isActive, stream.messages, savedLogs]);
 
+  // Only render the last N messages to avoid DOM overload
+  const visibleMessages = useMemo(() => {
+    if (displayMessages.length <= MAX_RENDERED_MESSAGES) return displayMessages;
+    return displayMessages.slice(-MAX_RENDERED_MESSAGES);
+  }, [displayMessages]);
+
+  const skippedCount = displayMessages.length - visibleMessages.length;
+
   const hasMessages = displayMessages.length > 0 || isActive;
+
+  // Track if user has scrolled up
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    // Consider "at bottom" if within 80px of the bottom
+    userScrolledUp.current = scrollHeight - scrollTop - clientHeight > 80;
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
+  useEffect(() => {
+    if (!userScrolledUp.current && messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [visibleMessages.length]);
 
   const displayToolCalls = useMemo(() => {
     if (isActive) {
@@ -214,18 +238,28 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
             <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">
               Output ({displayMessages.length} messages)
             </h3>
-            <div className="bg-dark-900 rounded-lg flex-1 overflow-y-auto">
+            <div
+              ref={messagesContainerRef}
+              onScroll={handleScroll}
+              className="bg-dark-900 rounded-lg flex-1 overflow-y-auto"
+            >
               {displayMessages.length === 0 ? (
                 <div className="p-3 text-dark-500 text-sm">
                   {isActive ? 'Waiting for output...' : 'Loading logs...'}
                 </div>
               ) : (
                 <div className="divide-y divide-dark-800">
-                  {displayMessages.map((msg) => (
+                  {skippedCount > 0 && (
+                    <div className="p-2 text-center text-dark-500 text-xs">
+                      ... {skippedCount} earlier messages hidden ...
+                    </div>
+                  )}
+                  {visibleMessages.map((msg) => (
                     <div key={msg.id} className="p-3 prose prose-invert prose-sm max-w-none">
                       <SafeMarkdown>{msg.content}</SafeMarkdown>
                     </div>
                   ))}
+                  <div ref={messagesEndRef} />
                 </div>
               )}
             </div>

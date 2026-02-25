@@ -1,9 +1,13 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
 import express from 'express';
 import cors from 'cors';
 import { createServer } from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+
+// Load .env from cwd, then fallback to project root
+dotenv.config();
+dotenv.config({ path: path.resolve(process.cwd(), '../../.env') });
 
 import projectsRouter from './routes/projects.js';
 import tasksRouter from './routes/tasks.js';
