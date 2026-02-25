@@ -3,6 +3,7 @@ import { transcribeAudio } from '../services/api';
 
 interface VoiceInputState {
   isRecording: boolean;
+  isStarting: boolean;
   isTranscribing: boolean;
   error: string | null;
 }
@@ -17,6 +18,7 @@ function getExtFromMime(mime: string): string {
 export function useVoiceInput(onTranscription: (text: string) => void) {
   const [state, setState] = useState<VoiceInputState>({
     isRecording: false,
+    isStarting: false,
     isTranscribing: false,
     error: null,
   });
@@ -32,6 +34,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
     if (!canRecord) {
       setState({
         isRecording: false,
+        isStarting: false,
         isTranscribing: false,
         error: !window.isSecureContext
           ? '需要 HTTPS 才能使用麦克风录音，请使用文件上传'
@@ -39,6 +42,9 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
       });
       return;
     }
+
+    // Immediate visual feedback while requesting mic permission
+    setState({ isRecording: false, isStarting: true, isTranscribing: false, error: null });
 
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -68,7 +74,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
         chunksRef.current = [];
 
         if (blob.size === 0) {
-          setState({ isRecording: false, isTranscribing: false, error: '未录到音频' });
+          setState({ isRecording: false, isStarting: false, isTranscribing: false, error: '未录到音频' });
           return;
         }
 
@@ -80,10 +86,11 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
           if (result.text?.trim()) {
             onTranscription(result.text.trim());
           }
-          setState({ isRecording: false, isTranscribing: false, error: null });
+          setState({ isRecording: false, isStarting: false, isTranscribing: false, error: null });
         } catch (err) {
           setState({
             isRecording: false,
+            isStarting: false,
             isTranscribing: false,
             error: err instanceof Error ? err.message : '转写失败',
           });
@@ -92,17 +99,17 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
 
       recorder.start();
       mediaRecorderRef.current = recorder;
-      setState({ isRecording: true, isTranscribing: false, error: null });
+      setState({ isRecording: true, isStarting: false, isTranscribing: false, error: null });
     } catch (err) {
       let message = '无法访问麦克风';
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError') {
-          message = '麦克风权限被拒绝，请允许麦克风访问';
+          message = '麦克风权限被拒绝，请在浏览器设置中允许麦克风访问';
         } else if (err.name === 'NotFoundError') {
           message = '未找到麦克风设备';
         }
       }
-      setState({ isRecording: false, isTranscribing: false, error: message });
+      setState({ isRecording: false, isStarting: false, isTranscribing: false, error: message });
     }
   }, [canRecord, onTranscription]);
 
@@ -114,12 +121,13 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
   }, []);
 
   const toggleRecording = useCallback(() => {
+    if (state.isStarting) return;
     if (state.isRecording) {
       stopRecording();
     } else {
       startRecording();
     }
-  }, [state.isRecording, startRecording, stopRecording]);
+  }, [state.isStarting, state.isRecording, startRecording, stopRecording]);
 
   const transcribeFile = useCallback(async (file: File) => {
     setState({ isRecording: false, isTranscribing: true, error: null });
