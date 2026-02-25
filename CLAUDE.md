@@ -69,6 +69,10 @@ npx pm2 start ecosystem.config.cjs
 npx pm2 logs ccm-agent
 ```
 
+## 重要规则
+
+- 每次修改后重启服务以应用修改：`pm2 restart ccm-server`
+
 ## 开发
 
 ```bash
