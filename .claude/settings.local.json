@@ -1,0 +1,28 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/CC/CCManager/.claude/hooks/post-edit.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/CC/CCManager/.claude/hooks/on-stop.sh",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

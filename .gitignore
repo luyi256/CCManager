@@ -8,4 +8,6 @@ dist/
 *.db-wal
 data/
 packages/agent/agent.config.json
-.claude/
+.claude/*
+!.claude/hooks/
+!.claude/settings.local.json
