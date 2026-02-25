@@ -9,7 +9,6 @@ interface OutputMessage {
 }
 
 interface TaskStreamState {
-  output: string;
   messages: OutputMessage[];
   toolCalls: Array<{
     id: string;
@@ -33,7 +32,6 @@ export function useTaskStream(taskId: number | null) {
   const { subscribe, unsubscribe, onMessage, sendAnswer, confirmPlan, respondPermission } = useWebSocket();
 
   const [state, setState] = useState<TaskStreamState>({
-    output: '',
     messages: [],
     toolCalls: [],
     status: 'idle',
@@ -175,7 +173,6 @@ export function useTaskStream(taskId: number | null) {
     return () => {
       if (flushTimer.current) clearTimeout(flushTimer.current);
       pendingMessages.current = [];
-      pendingOutput.current = '';
       unsubscribe(String(taskId));
       cleanup();
     };
@@ -208,8 +205,8 @@ export function useTaskStream(taskId: number | null) {
   );
 
   const reset = useCallback(() => {
+    totalMessageCount.current = 0;
     setState({
-      output: '',
       messages: [],
       toolCalls: [],
       status: 'idle',

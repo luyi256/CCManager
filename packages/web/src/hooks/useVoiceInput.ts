@@ -1,109 +1,110 @@
 import { useState, useRef, useCallback } from 'react';
-
-interface SpeechRecognitionEvent {
-  results: { [index: number]: { [index: number]: { transcript: string } }; length: number };
-  resultIndex: number;
-}
-
-interface SpeechRecognitionErrorEvent {
-  error: string;
-  message?: string;
-}
-
-interface SpeechRecognitionInstance {
-  lang: string;
-  interimResults: boolean;
-  continuous: boolean;
-  start(): void;
-  stop(): void;
-  abort(): void;
-  onresult: ((event: SpeechRecognitionEvent) => void) | null;
-  onerror: ((event: SpeechRecognitionErrorEvent) => void) | null;
-  onend: (() => void) | null;
-}
+import { transcribeAudio } from '../services/api';
 
 interface VoiceInputState {
   isRecording: boolean;
+  isTranscribing: boolean;
   error: string | null;
-}
-
-function getSpeechRecognition(): (new () => SpeechRecognitionInstance) | null {
-  const w = window as unknown as Record<string, unknown>;
-  return (w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null) as
-    (new () => SpeechRecognitionInstance) | null;
 }
 
 export function useVoiceInput(onTranscription: (text: string) => void) {
   const [state, setState] = useState<VoiceInputState>({
     isRecording: false,
+    isTranscribing: false,
     error: null,
   });
 
-  const recognitionRef = useRef<SpeechRecognitionInstance | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
 
-  const startRecording = useCallback(() => {
-    const SpeechRecognition = getSpeechRecognition();
-    if (!SpeechRecognition) {
+  const startRecording = useCallback(async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
       setState({
         isRecording: false,
-        error: 'Speech recognition is not supported in this browser. Please use Chrome or Edge.',
+        isTranscribing: false,
+        error: 'Microphone access is not supported in this browser or requires HTTPS.',
       });
       return;
     }
 
     try {
-      const recognition = new SpeechRecognition();
-      recognition.lang = navigator.language || 'zh-CN';
-      recognition.interimResults = false;
-      recognition.continuous = false;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
 
-      recognition.onresult = (event: SpeechRecognitionEvent) => {
-        let transcript = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          transcript += event.results[i][0].transcript;
-        }
-        if (transcript.trim()) {
-          onTranscription(transcript.trim());
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : MediaRecorder.isTypeSupported('audio/webm')
+          ? 'audio/webm'
+          : '';
+
+      const recorder = mimeType
+        ? new MediaRecorder(stream, { mimeType })
+        : new MediaRecorder(stream);
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) {
+          chunksRef.current.push(e.data);
         }
       };
 
-      recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
-        let message: string;
-        switch (event.error) {
-          case 'not-allowed':
-            message = 'Microphone access denied. Please allow microphone permission.';
-            break;
-          case 'no-speech':
-            message = 'No speech detected. Please try again.';
-            break;
-          case 'network':
-            message = 'Network error. Speech recognition requires an internet connection.';
-            break;
-          default:
-            message = `Speech recognition error: ${event.error}`;
+      recorder.onstop = async () => {
+        // Release microphone
+        stream.getTracks().forEach((t) => t.stop());
+
+        const blob = new Blob(chunksRef.current, {
+          type: recorder.mimeType || 'audio/webm',
+        });
+        chunksRef.current = [];
+
+        if (blob.size === 0) {
+          setState({ isRecording: false, isTranscribing: false, error: 'No audio recorded.' });
+          return;
         }
-        setState({ isRecording: false, error: message });
+
+        setState((prev) => ({ ...prev, isRecording: false, isTranscribing: true }));
+
+        try {
+          const result = await transcribeAudio(blob);
+          if (result.text?.trim()) {
+            onTranscription(result.text.trim());
+          } else {
+            setState((prev) => ({
+              ...prev,
+              isTranscribing: false,
+              error: 'No speech detected. Please try again.',
+            }));
+            return;
+          }
+          setState((prev) => ({ ...prev, isTranscribing: false, error: null }));
+        } catch (err) {
+          setState((prev) => ({
+            ...prev,
+            isTranscribing: false,
+            error: err instanceof Error ? err.message : 'Transcription failed',
+          }));
+        }
       };
 
-      recognition.onend = () => {
-        setState((prev) => ({ ...prev, isRecording: false }));
-        recognitionRef.current = null;
-      };
-
-      recognition.start();
-      recognitionRef.current = recognition;
-      setState({ isRecording: true, error: null });
-    } catch (error) {
-      setState({
-        isRecording: false,
-        error: error instanceof Error ? error.message : 'Failed to start speech recognition',
-      });
+      recorder.start();
+      mediaRecorderRef.current = recorder;
+      setState({ isRecording: true, isTranscribing: false, error: null });
+    } catch (err) {
+      let message = 'Failed to access microphone.';
+      if (err instanceof DOMException) {
+        if (err.name === 'NotAllowedError') {
+          message = 'Microphone access denied. Please allow microphone permission.';
+        } else if (err.name === 'NotFoundError') {
+          message = 'No microphone found on this device.';
+        }
+      }
+      setState({ isRecording: false, isTranscribing: false, error: message });
     }
   }, [onTranscription]);
 
   const stopRecording = useCallback(() => {
-    if (recognitionRef.current) {
-      recognitionRef.current.stop();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
+      mediaRecorderRef.current.stop();
+      mediaRecorderRef.current = null;
     }
   }, []);
 
