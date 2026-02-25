@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Settings, RefreshCw, ArrowLeft } from 'lucide-react';
+import { Settings, RefreshCw } from 'lucide-react';
 import TaskBoard from '../components/Task/TaskBoard';
 import TaskInput from '../components/Task/TaskInput';
 import TaskDetail from '../components/Task/TaskDetail';
