@@ -130,16 +130,17 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
   }, [state.isStarting, state.isRecording, startRecording, stopRecording]);
 
   const transcribeFile = useCallback(async (file: File) => {
-    setState({ isRecording: false, isTranscribing: true, error: null });
+    setState({ isRecording: false, isStarting: false, isTranscribing: true, error: null });
     try {
       const result = await transcribeAudio(file, file.name);
       if (result.text?.trim()) {
         onTranscription(result.text.trim());
       }
-      setState({ isRecording: false, isTranscribing: false, error: null });
+      setState({ isRecording: false, isStarting: false, isTranscribing: false, error: null });
     } catch (err) {
       setState({
         isRecording: false,
+        isStarting: false,
         isTranscribing: false,
         error: err instanceof Error ? err.message : '转写失败',
       });
