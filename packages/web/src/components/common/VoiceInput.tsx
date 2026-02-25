@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Mic, MicOff, Loader2, Upload } from 'lucide-react';
+import { Mic, MicOff, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useVoiceInput } from '../../hooks/useVoiceInput';
 
@@ -35,68 +35,62 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
     e.target.value = '';
   };
 
+  const handleClick = () => {
+    if (busy) return;
+    if (canRecord) {
+      toggleRecording();
+    } else {
+      // On HTTP (non-secure context), microphone API is unavailable.
+      // Fall back to file upload picker directly.
+      fileInputRef.current?.click();
+    }
+  };
+
   return (
     <div className={clsx('relative flex flex-col gap-1', className)}>
-      {canRecord ? (
-        <button
-          type="button"
-          onClick={toggleRecording}
-          disabled={busy}
-          className={clsx(
-            'p-2 rounded-lg transition-all duration-200',
-            isRecording
-              ? 'bg-red-500 text-white animate-pulse'
-              : busy
-                ? 'bg-dark-700 text-dark-500 cursor-wait'
-                : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
-          )}
-          title={
-            isStarting
-              ? '请求麦克风权限...'
-              : isRecording
-                ? '停止录音'
-                : isTranscribing
-                  ? '转写中...'
-                  : '语音输入'
-          }
-        >
-          {busy ? (
-            <Loader2 size={20} className="animate-spin" />
-          ) : isRecording ? (
-            <MicOff size={20} />
-          ) : (
-            <Mic size={20} />
-          )}
-        </button>
-      ) : (
-        <>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept={AUDIO_ACCEPT}
-            onChange={handleFileChange}
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={isTranscribing}
-            className={clsx(
-              'p-2 rounded-lg transition-all duration-200',
-              isTranscribing
-                ? 'bg-dark-700 text-dark-500 cursor-wait'
-                : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
-            )}
-            title={isTranscribing ? '转写中...' : '上传音频文件'}
-          >
-            {isTranscribing ? (
-              <Loader2 size={20} className="animate-spin" />
-            ) : (
-              <Upload size={20} />
-            )}
-          </button>
-        </>
-      )}
+      {/* Hidden file input for audio upload - always rendered.
+          Use absolute + clip approach instead of display:none to ensure .click() works cross-browser */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept={AUDIO_ACCEPT}
+        onChange={handleFileChange}
+        tabIndex={-1}
+        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', clip: 'rect(0,0,0,0)' }}
+      />
+
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        className={clsx(
+          'p-2 rounded-lg transition-all duration-200',
+          isRecording
+            ? 'bg-red-500 text-white animate-pulse'
+            : busy
+              ? 'bg-dark-700 text-dark-500 cursor-wait'
+              : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
+        )}
+        title={
+          isStarting
+            ? '请求麦克风权限...'
+            : isRecording
+              ? '停止录音'
+              : isTranscribing
+                ? '转写中...'
+                : canRecord
+                  ? '语音输入'
+                  : '上传音频文件（HTTP 下不支持直接录音）'
+        }
+      >
+        {busy ? (
+          <Loader2 size={20} className="animate-spin" />
+        ) : isRecording ? (
+          <MicOff size={20} />
+        ) : (
+          <Mic size={20} />
+        )}
+      </button>
 
       {error && (
         <div

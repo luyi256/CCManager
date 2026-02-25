@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { Send, Loader2 } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
 import type { Task } from '../../types';
@@ -27,9 +27,9 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
     setDependsOn(undefined);
   };
 
-  const handleVoiceTranscription = (text: string) => {
+  const handleVoiceTranscription = useCallback((text: string) => {
     setPrompt((prev) => (prev ? `${prev} ${text}` : text));
-  };
+  }, []);
 
   return (
     <form onSubmit={handleSubmit} className="card p-4">

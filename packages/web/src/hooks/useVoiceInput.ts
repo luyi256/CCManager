@@ -26,19 +26,20 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
-  const canRecord = typeof MediaRecorder !== 'undefined'
-    && !!navigator.mediaDevices?.getUserMedia
-    && window.isSecureContext;
+  // Only check basic API existence — don't gate on isSecureContext,
+  // so the mic button always renders. Errors surface when the user clicks.
+  const canRecord = typeof MediaRecorder !== 'undefined';
 
   const startRecording = useCallback(async () => {
-    if (!canRecord) {
+    // Runtime check: navigator.mediaDevices is undefined in non-secure HTTP contexts (Chrome)
+    if (!navigator.mediaDevices?.getUserMedia) {
       setState({
         isRecording: false,
         isStarting: false,
         isTranscribing: false,
         error: !window.isSecureContext
-          ? '需要 HTTPS 才能使用麦克风录音，请使用文件上传'
-          : '浏览器不支持录音',
+          ? '当前为 HTTP 连接，浏览器禁止访问麦克风。请使用 HTTPS 访问，或点击上传按钮上传音频文件。'
+          : '浏览器不支持录音，请上传音频文件',
       });
       return;
     }
@@ -111,7 +112,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
       }
       setState({ isRecording: false, isStarting: false, isTranscribing: false, error: message });
     }
-  }, [canRecord, onTranscription]);
+  }, [onTranscription]);
 
   const stopRecording = useCallback(() => {
     if (mediaRecorderRef.current && mediaRecorderRef.current.state === 'recording') {
