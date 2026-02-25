@@ -11,6 +11,7 @@ import type { Task } from '../types';
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
+  const navigate = useNavigate();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId!);
