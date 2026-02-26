@@ -2,32 +2,70 @@ import type { Project, Task, GlobalConfig, Agent } from '../types';
 
 const API_BASE = '/api';
 
+const MAX_RETRIES = 3;
+const INITIAL_RETRY_DELAY = 1000; // 1s
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryable(status: number): boolean {
+  return status >= 500 && status < 600;
+}
+
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  console.log('request:', options?.method || 'GET', `${API_BASE}${url}`);
+  const method = options?.method || 'GET';
+  console.log('request:', method, `${API_BASE}${url}`);
   console.log('request body:', options?.body);
-  let response: Response;
-  try {
-    response = await fetch(`${API_BASE}${url}`, {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options?.headers,
-      },
-      ...options,
-    });
-  } catch (fetchErr) {
-    console.error('fetch failed:', fetchErr);
-    throw fetchErr;
-  }
 
-  console.log('response status:', response.status, response.statusText);
+  let lastError: Error | null = null;
 
-  if (!response.ok) {
+  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
+      console.warn(`Retry ${attempt}/${MAX_RETRIES} for ${method} ${url} in ${delay}ms...`);
+      await sleep(delay);
+    }
+
+    let response: Response;
+    try {
+      response = await fetch(`${API_BASE}${url}`, {
+        headers: {
+          'Content-Type': 'application/json',
+          ...options?.headers,
+        },
+        ...options,
+      });
+    } catch (fetchErr) {
+      console.error('fetch failed:', fetchErr);
+      lastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
+      // Network errors are retryable
+      if (attempt < MAX_RETRIES) continue;
+      throw lastError;
+    }
+
+    console.log('response status:', response.status, response.statusText);
+
+    if (response.ok) {
+      if (response.status === 204) {
+        return undefined as T;
+      }
+      return response.json();
+    }
+
     const error = await response.json().catch(() => ({ message: response.statusText }));
+    lastError = new Error(error.message || 'Request failed');
+
+    if (isRetryable(response.status) && attempt < MAX_RETRIES) {
+      console.warn(`Server error ${response.status}, will retry...`);
+      continue;
+    }
+
     console.error('request failed:', error);
-    throw new Error(error.message || 'Request failed');
+    throw lastError;
   }
 
-  return response.json();
+  throw lastError || new Error('Request failed after retries');
 }
 
 // Projects
@@ -174,9 +212,9 @@ export async function validateAuth(type: 'oauth' | 'apikey', token: string): Pro
 }
 
 // Voice transcription
-export async function transcribeAudio(audioBlob: Blob): Promise<{ text: string }> {
+export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<{ text: string }> {
   const formData = new FormData();
-  formData.append('audio', audioBlob, 'recording.webm');
+  formData.append('audio', audioBlob, filename);
 
   const response = await fetch(`${API_BASE}/transcribe`, {
     method: 'POST',

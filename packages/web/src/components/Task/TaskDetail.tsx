@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect, useCallback, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   X,
@@ -10,7 +10,7 @@ import {
   GitBranch,
   Clock,
   AlertTriangle,
-  MessageSquare,
+  ArrowDown,
   Send,
 } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
@@ -54,51 +54,38 @@ function formatDate(date: unknown): string {
   }
 }
 
+// Memoized saved-log message row (only used for completed task logs)
+const SavedLogRow = memo(function SavedLogRow({ content }: { content: string }) {
+  return (
+    <div className="p-3 prose prose-invert prose-sm max-w-none">
+      <SafeMarkdown>{content}</SafeMarkdown>
+    </div>
+  );
+});
+
 interface TaskDetailProps {
   task: Task;
   onClose: () => void;
 }
 
+const MAX_RENDERED_MESSAGES = 150;
+
 export default function TaskDetail({ task, onClose }: TaskDetailProps) {
   const [showToolCalls, setShowToolCalls] = useState(false);
-  const [showContinueInput, setShowContinueInput] = useState(false);
-  const [continuePrompt, setContinuePrompt] = useState('');
+  const [autoScroll, setAutoScroll] = useState(true);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  const scrollRafRef = useRef<number>(0);
 
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
     task.status
   );
-
-  // Check if task has a session ID for continuation
-  const hasSessionId = (() => {
-    if (!task.gitInfo) return false;
-    try {
-      const gitInfo = JSON.parse(task.gitInfo);
-      return !!gitInfo.sessionId;
-    } catch {
-      return false;
-    }
-  })();
-
-  const canContinue = (task.status === 'completed' || task.status === 'completed_with_warnings') && hasSessionId;
 
   const stream = useTaskStream(isActive ? task.id : null);
   const { data: savedLogs } = useTaskLogs(!isActive ? task.id : null);
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
-
-  const handleContinue = () => {
-    if (!continuePrompt.trim()) return;
-    continueTask.mutate(
-      { taskId: task.id, prompt: continuePrompt.trim() },
-      {
-        onSuccess: () => {
-          setContinuePrompt('');
-          setShowContinueInput(false);
-        },
-      }
-    );
-  };
+  const [continuePrompt, setContinuePrompt] = useState('');
 
   // Combine streamed messages with saved logs for display
   const displayMessages = useMemo(() => {
@@ -131,7 +118,56 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
     return [];
   }, [isActive, stream.messages, savedLogs]);
 
+  // For streaming: merge all messages into a single string for one DOM node
+  // For saved logs: limit to last N messages rendered individually with markdown
+  const mergedStreamText = useMemo(() => {
+    if (!isActive || displayMessages.length === 0) return '';
+    // Only keep the tail to prevent unbounded string growth
+    const tail = displayMessages.length > MAX_RENDERED_MESSAGES
+      ? displayMessages.slice(-MAX_RENDERED_MESSAGES)
+      : displayMessages;
+    return tail.map(m => m.content).join('');
+  }, [isActive, displayMessages]);
+
+  const visibleSavedLogs = useMemo(() => {
+    if (isActive || displayMessages.length === 0) return [];
+    if (displayMessages.length <= MAX_RENDERED_MESSAGES) return displayMessages;
+    return displayMessages.slice(-MAX_RENDERED_MESSAGES);
+  }, [isActive, displayMessages]);
+
+  const skippedCount = isActive
+    ? Math.max(0, displayMessages.length - MAX_RENDERED_MESSAGES)
+    : displayMessages.length - visibleSavedLogs.length;
+
   const hasMessages = displayMessages.length > 0 || isActive;
+
+  // Track if user has scrolled up
+  const handleScroll = useCallback(() => {
+    const container = messagesContainerRef.current;
+    if (!container) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
+    // Consider "at bottom" if within 80px of the bottom
+    const isAtBottom = scrollHeight - scrollTop - clientHeight <= 80;
+    setAutoScroll(isAtBottom);
+  }, []);
+
+  // Auto-scroll to bottom when new messages arrive (unless user scrolled up)
+  // Use rAF to batch scroll updates and avoid layout thrashing
+  useEffect(() => {
+    if (!autoScroll) return;
+    cancelAnimationFrame(scrollRafRef.current);
+    scrollRafRef.current = requestAnimationFrame(() => {
+      const container = messagesContainerRef.current;
+      if (container) {
+        container.scrollTop = container.scrollHeight;
+      }
+    });
+  }, [autoScroll, displayMessages.length]);
+
+  // Cleanup rAF on unmount
+  useEffect(() => {
+    return () => cancelAnimationFrame(scrollRafRef.current);
+  }, []);
 
   const displayToolCalls = useMemo(() => {
     if (isActive) {
@@ -194,12 +230,6 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
         <div className="p-4 border-b border-dark-700">
           <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">Task</h3>
           <p className="text-dark-200">{task.prompt}</p>
-          {task.continuePrompt && (
-            <div className="mt-3 pt-3 border-t border-dark-700">
-              <h4 className="text-xs font-medium text-primary-400 uppercase mb-2">Continue</h4>
-              <p className="text-dark-300">{task.continuePrompt}</p>
-            </div>
-          )}
         </div>
 
         {/* Meta info */}
@@ -246,19 +276,58 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
             <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">
               Output ({displayMessages.length} messages)
             </h3>
-            <div className="bg-dark-900 rounded-lg flex-1 overflow-y-auto">
-              {displayMessages.length === 0 ? (
-                <div className="p-3 text-dark-500 text-sm">
-                  {isActive ? 'Waiting for output...' : 'Loading logs...'}
-                </div>
-              ) : (
-                <div className="divide-y divide-dark-800">
-                  {displayMessages.map((msg) => (
-                    <div key={msg.id} className="p-3 prose prose-invert prose-sm max-w-none">
-                      <SafeMarkdown>{msg.content}</SafeMarkdown>
-                    </div>
-                  ))}
-                </div>
+            <div className="relative flex-1 min-h-0">
+              <div
+                ref={messagesContainerRef}
+                onScroll={handleScroll}
+                className="bg-dark-900 rounded-lg h-full overflow-y-auto"
+                style={{ contain: 'content' }}
+              >
+                {displayMessages.length === 0 ? (
+                  <div className="p-3 text-dark-500 text-sm">
+                    {isActive ? 'Waiting for output...' : 'Loading logs...'}
+                  </div>
+                ) : isActive ? (
+                  /* Streaming: single <pre> block — minimal DOM nodes */
+                  <div>
+                    {skippedCount > 0 && (
+                      <div className="p-2 text-center text-dark-500 text-xs">
+                        ... {skippedCount} earlier messages hidden ...
+                      </div>
+                    )}
+                    <pre className="px-3 py-2 text-dark-200 text-sm whitespace-pre-wrap break-words font-mono leading-relaxed m-0">
+                      {mergedStreamText}
+                    </pre>
+                  </div>
+                ) : (
+                  /* Saved logs: individual markdown-rendered blocks */
+                  <div className="divide-y divide-dark-800">
+                    {skippedCount > 0 && (
+                      <div className="p-2 text-center text-dark-500 text-xs">
+                        ... {skippedCount} earlier messages hidden ...
+                      </div>
+                    )}
+                    {visibleSavedLogs.map((msg) => (
+                      <SavedLogRow key={msg.id} content={msg.content} />
+                    ))}
+                  </div>
+                )}
+              </div>
+              {/* Scroll-to-bottom button when user has scrolled up */}
+              {!autoScroll && displayMessages.length > 0 && (
+                <button
+                  onClick={() => {
+                    const container = messagesContainerRef.current;
+                    if (container) {
+                      container.scrollTop = container.scrollHeight;
+                    }
+                    setAutoScroll(true);
+                  }}
+                  className="absolute bottom-2 right-2 p-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full shadow-lg transition-colors"
+                  title="Scroll to bottom"
+                >
+                  <ArrowDown size={16} />
+                </button>
               )}
             </div>
           </div>
@@ -383,73 +452,68 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
         )}
       </div>
 
-      {/* Continue Input */}
-      {showContinueInput && (
-        <div className="p-4 border-t border-dark-700">
-          <div className="flex gap-2">
+      {/* Actions */}
+      <div className="p-4 border-t border-dark-700 space-y-2">
+        {task.status === 'completed' && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const prompt = continuePrompt.trim();
+              if (!prompt) return;
+              continueTask.mutate({ taskId: task.id, prompt });
+              setContinuePrompt('');
+            }}
+            className="flex gap-2"
+          >
             <input
               type="text"
               value={continuePrompt}
               onChange={(e) => setContinuePrompt(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && handleContinue()}
-              placeholder="Enter follow-up prompt..."
-              className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
-              autoFocus
+              placeholder="Follow-up message..."
+              disabled={continueTask.isPending}
+              className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
             />
             <button
-              onClick={handleContinue}
-              disabled={!continuePrompt.trim() || continueTask.isPending}
-              className="btn btn-primary flex items-center gap-2"
+              type="submit"
+              disabled={continueTask.isPending || !continuePrompt.trim()}
+              className="btn btn-primary flex items-center justify-center gap-2 px-4"
             >
               <Send size={16} />
-              {continueTask.isPending ? 'Sending...' : 'Send'}
+              Send
             </button>
-          </div>
+          </form>
+        )}
+        <div className="flex gap-2">
+          {isActive && (
+            <button
+              onClick={() => cancelTask.mutate(task.id)}
+              disabled={cancelTask.isPending}
+              className="btn btn-secondary flex-1 flex items-center justify-center gap-2"
+            >
+              <Square size={16} />
+              Cancel
+            </button>
+          )}
+          {(task.status === 'failed' || task.status === 'cancelled') && (
+            <button
+              onClick={() => retryTask.mutate(task.id)}
+              disabled={retryTask.isPending}
+              className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              <RotateCcw size={16} />
+              Retry
+            </button>
+          )}
+          {task.status === 'plan_review' && (
+            <button
+              onClick={stream.confirm}
+              className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              <Play size={16} />
+              Confirm Plan
+            </button>
+          )}
         </div>
-      )}
-
-      {/* Actions */}
-      <div className="p-4 border-t border-dark-700 flex gap-2">
-        {isActive && (
-          <button
-            onClick={() => cancelTask.mutate(task.id)}
-            disabled={cancelTask.isPending}
-            className="btn btn-secondary flex-1 flex items-center justify-center gap-2"
-          >
-            <Square size={16} />
-            Cancel
-          </button>
-        )}
-        {(task.status === 'failed' || task.status === 'cancelled') && (
-          <button
-            onClick={() => retryTask.mutate(task.id)}
-            disabled={retryTask.isPending}
-            className="btn btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            <RotateCcw size={16} />
-            Retry
-          </button>
-        )}
-        {task.status === 'plan_review' && (
-          <button
-            onClick={stream.confirm}
-            className="btn btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            <Play size={16} />
-            Confirm Plan
-          </button>
-        )}
-        {canContinue && (
-          <button
-            onClick={() => setShowContinueInput(!showContinueInput)}
-            className={`btn flex-1 flex items-center justify-center gap-2 ${
-              showContinueInput ? 'btn-secondary' : 'btn-primary'
-            }`}
-          >
-            <MessageSquare size={16} />
-            {showContinueInput ? 'Cancel' : 'Continue Chat'}
-          </button>
-        )}
       </div>
       </ErrorBoundary>
     </motion.div>
