@@ -10,38 +10,31 @@ router.post('/', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ message: 'No audio file provided' });
     }
 
-    const whisperUrl = process.env.WHISPER_API_URL;
-    const whisperKey = process.env.WHISPER_API_KEY;
-    const whisperModel = process.env.WHISPER_MODEL || 'whisper-1';
+    // Groq API configuration
+    const groqApiKey = process.env.GROQ_API_KEY;
+    const groqModel = process.env.GROQ_MODEL || 'whisper-large-v3-turbo';
 
-    if (!whisperUrl || !whisperKey) {
-      return res.status(500).json({ message: 'Whisper API not configured' });
+    if (!groqApiKey) {
+      return res.status(500).json({ message: 'Groq API not configured' });
     }
 
-    // Determine filename with proper extension from the uploaded file
-    const originalName = req.file.originalname || 'audio.webm';
-
-    // Create form data
+    // Create form data for Groq API
     const formData = new FormData();
-    formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), originalName);
-    formData.append('model', whisperModel);
-    // Language hint for better accuracy (Whisper auto-detects, but hint helps)
-    const language = (req.body?.language as string) || process.env.WHISPER_LANGUAGE || '';
-    if (language) {
-      formData.append('language', language);
-    }
+    formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'audio.webm');
+    formData.append('model', groqModel);
+    formData.append('response_format', 'json');
 
-    const response = await fetch(`${whisperUrl}/audio/transcriptions`, {
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${whisperKey}`,
+        'Authorization': `Bearer ${groqApiKey}`,
       },
       body: formData,
     });
 
     if (!response.ok) {
       const error = await response.text();
-      console.error('Whisper API error:', error);
+      console.error('Groq API error:', error);
       return res.status(500).json({ message: 'Transcription failed' });
     }
 

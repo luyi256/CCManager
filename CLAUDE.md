@@ -100,3 +100,32 @@ npm run dev -w @ccmanager/web
 - **并行执行**: 同一 agent 可同时执行多个任务
 - **孤儿任务恢复**: 服务重启后自动恢复 `running` 状态的任务
 - **继续对话**: `POST /api/tasks/:id/continue` 基于已完成任务的会话继续工作
+
+## 部署流程
+
+**重要**: 本地修改代码完成后，必须执行部署流程让远程服务器更新。
+
+### 快速部署 (推荐)
+
+```bash
+./deploy.sh "fix: your commit message"
+```
+
+### 手动部署
+
+```bash
+# 1. 本地提交并推送
+git add -A
+git commit -m "your message"
+git push origin main
+
+# 2. 远程更新 (以 CC 用户)
+ssh rack "su - CC -c 'cd ~/CCManager && git pull && pnpm run build && pm2 restart ccm-server'"
+```
+
+### Claude Code 工作流
+
+当完成代码修改任务后，Claude 应该：
+1. 提交代码到 GitHub
+2. SSH 到 rack 服务器，以 CC 用户执行 `git pull && pnpm run build && pm2 restart ccm-server`
+3. 确认服务正常运行

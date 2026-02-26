@@ -1,13 +1,37 @@
+# Dependencies
 node_modules/
+
+# Build outputs
 dist/
-*.log
-.DS_Store
+build/
+.next/
+
+# Environment variables (contains secrets)
 .env
-*.db
-*.db-shm
-*.db-wal
-data/
-packages/agent/agent.config.json
-.claude/*
-!.claude/hooks/
-!.claude/settings.local.json
+.env.local
+.env.*.local
+
+# Data directory (synced separately, may contain large logs)
+# Uncomment if you want to exclude data from git:
+# data/projects/*/logs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test coverage
+coverage/
+
+# Temp files
+*.tmp
+*.temp
+.cache/
