@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # CCManager 启动脚本 (使用 pm2 守护进程)
-# Telegram 通知由 tunnel-monitor.sh 自动处理
+# Telegram 通知由 tunnel-notify.sh 自动处理（已集成到 pm2）
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -17,7 +17,7 @@ sleep 1
 # 清空旧日志
 > /tmp/ccm-tunnel.log 2>/dev/null
 
-# 启动所有服务
+# 启动所有服务 (包括 ccm-agent 和 ccm-tunnel)
 echo "Starting services with pm2..."
 npx pm2 start ecosystem.config.cjs
 sleep 3
@@ -37,7 +37,7 @@ echo "=== CCManager Running ==="
 echo "Server: http://localhost:3001"
 if [ -n "$TUNNEL_URL" ]; then
     echo "Tunnel: $TUNNEL_URL"
-    echo "(Telegram notification will be sent by tunnel-monitor)"
+    echo "(Telegram notification sent automatically)"
 else
     echo "Tunnel: (waiting for URL...)"
 fi

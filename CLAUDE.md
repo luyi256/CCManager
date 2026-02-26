@@ -52,9 +52,23 @@ git pull
 pnpm run build
 pm2 restart ccm-server
 
+# 如果服务丢失环境变量，使用 ecosystem 重新启动
+pm2 delete ccm-server ccm-agent
+pm2 start ecosystem.config.cjs
+pm2 save
+
 # 同步数据到 GitHub
 cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
 ```
+
+## 环境变量 (重要)
+
+服务器必须设置以下环境变量：
+- `DATA_PATH=/home/CC/CCManagerData` - 数据库路径
+- `STATIC_PATH=/home/CC/CCManager/packages/web/dist` - 静态文件路径
+- `SERVE_STATIC=true` - 启用静态文件服务
+
+这些已配置在 `ecosystem.config.cjs` 中。
 
 ## Agent 配置 (开发机器)
 
