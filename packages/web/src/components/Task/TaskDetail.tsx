@@ -342,7 +342,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                                   <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto">
                                     {safeStringify(item.toolInput)}
                                   </pre>
-                                  {item.toolResult && (
+                                  {item.toolResult != null ? (
                                     <div className="mt-2">
                                       <span className="text-xs text-dark-500">Result:</span>
                                       <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto mt-1">
@@ -351,7 +351,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                                           : safeStringify(item.toolResult)}
                                       </pre>
                                     </div>
-                                  )}
+                                  ) : null}
                                 </div>
                               </div>
                             ) : null}
