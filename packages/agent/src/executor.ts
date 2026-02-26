@@ -22,6 +22,7 @@ export class ClaudeExecutor extends EventEmitter {
   private currentTaskId: number | null = null;
   private timeoutHandle: NodeJS.Timeout | null = null;
   private sessionId: string | null = null;
+  private hasStreamedDelta = false; // Track if content_block_delta has emitted text
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT) {
     super();
@@ -120,7 +121,13 @@ export class ClaudeExecutor extends EventEmitter {
           if (event.message?.content) {
             for (const block of event.message.content) {
               if (block.type === 'text') {
-                this.emit('output', block.text);
+                // Only emit text from assistant if no content_block_delta was received.
+                // Normally text comes via content_block_delta (streaming); emitting from
+                // both causes duplicate output. This is a fallback for formats that
+                // only emit assistant events.
+                if (!this.hasStreamedDelta) {
+                  this.emit('output', block.text);
+                }
               } else if (block.type === 'tool_use') {
                 this.emit('tool_use', {
                   id: block.id,
@@ -130,10 +137,13 @@ export class ClaudeExecutor extends EventEmitter {
               }
             }
           }
+          // Reset delta flag after processing assistant message
+          this.hasStreamedDelta = false;
           break;
 
         case 'content_block_delta':
           if (event.delta?.type === 'text_delta') {
+            this.hasStreamedDelta = true;
             this.emit('output', event.delta.text);
           }
           break;
