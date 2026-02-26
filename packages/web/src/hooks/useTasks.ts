@@ -67,6 +67,19 @@ export function useRetryTask() {
   });
 }
 
+export function useContinueTask() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ taskId, prompt }: { taskId: number; prompt: string }) =>
+      api.continueTask(taskId, prompt),
+    onSuccess: (task) => {
+      queryClient.invalidateQueries({ queryKey: ['tasks', task.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['task', task.id] });
+    },
+  });
+}
+
 export function useTaskLogs(taskId: number | null) {
   return useQuery({
     queryKey: ['taskLogs', taskId],

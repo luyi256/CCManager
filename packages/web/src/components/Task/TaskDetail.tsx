@@ -11,12 +11,13 @@ import {
   Clock,
   AlertTriangle,
   ArrowDown,
+  Send,
 } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import ErrorBoundary from '../common/ErrorBoundary';
 import SafeMarkdown from '../common/SafeMarkdown';
 import { useTaskStream } from '../../hooks/useTaskStream';
-import { useCancelTask, useRetryTask, useTaskLogs } from '../../hooks/useTasks';
+import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs } from '../../hooks/useTasks';
 import type { Task } from '../../types';
 
 // Safe JSON stringify that handles circular references
@@ -83,6 +84,8 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
   const { data: savedLogs } = useTaskLogs(!isActive ? task.id : null);
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
+  const continueTask = useContinueTask();
+  const [continuePrompt, setContinuePrompt] = useState('');
 
   // Combine streamed messages with saved logs for display
   const displayMessages = useMemo(() => {
@@ -450,36 +453,67 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
       </div>
 
       {/* Actions */}
-      <div className="p-4 border-t border-dark-700 flex gap-2">
-        {isActive && (
-          <button
-            onClick={() => cancelTask.mutate(task.id)}
-            disabled={cancelTask.isPending}
-            className="btn btn-secondary flex-1 flex items-center justify-center gap-2"
+      <div className="p-4 border-t border-dark-700 space-y-2">
+        {task.status === 'completed' && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              const prompt = continuePrompt.trim();
+              if (!prompt) return;
+              continueTask.mutate({ taskId: task.id, prompt });
+              setContinuePrompt('');
+            }}
+            className="flex gap-2"
           >
-            <Square size={16} />
-            Cancel
-          </button>
+            <input
+              type="text"
+              value={continuePrompt}
+              onChange={(e) => setContinuePrompt(e.target.value)}
+              placeholder="Follow-up message..."
+              disabled={continueTask.isPending}
+              className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
+            />
+            <button
+              type="submit"
+              disabled={continueTask.isPending || !continuePrompt.trim()}
+              className="btn btn-primary flex items-center justify-center gap-2 px-4"
+            >
+              <Send size={16} />
+              Send
+            </button>
+          </form>
         )}
-        {(task.status === 'failed' || task.status === 'cancelled') && (
-          <button
-            onClick={() => retryTask.mutate(task.id)}
-            disabled={retryTask.isPending}
-            className="btn btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            <RotateCcw size={16} />
-            Retry
-          </button>
-        )}
-        {task.status === 'plan_review' && (
-          <button
-            onClick={stream.confirm}
-            className="btn btn-primary flex-1 flex items-center justify-center gap-2"
-          >
-            <Play size={16} />
-            Confirm Plan
-          </button>
-        )}
+        <div className="flex gap-2">
+          {isActive && (
+            <button
+              onClick={() => cancelTask.mutate(task.id)}
+              disabled={cancelTask.isPending}
+              className="btn btn-secondary flex-1 flex items-center justify-center gap-2"
+            >
+              <Square size={16} />
+              Cancel
+            </button>
+          )}
+          {(task.status === 'failed' || task.status === 'cancelled') && (
+            <button
+              onClick={() => retryTask.mutate(task.id)}
+              disabled={retryTask.isPending}
+              className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              <RotateCcw size={16} />
+              Retry
+            </button>
+          )}
+          {task.status === 'plan_review' && (
+            <button
+              onClick={stream.confirm}
+              className="btn btn-primary flex-1 flex items-center justify-center gap-2"
+            >
+              <Play size={16} />
+              Confirm Plan
+            </button>
+          )}
+        </div>
       </div>
       </ErrorBoundary>
     </motion.div>
