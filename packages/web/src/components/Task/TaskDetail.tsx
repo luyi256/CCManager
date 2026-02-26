@@ -99,7 +99,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
 
-  // Reset stream when task transitions to running (continuation)
+  // Handle task status transitions
   useEffect(() => {
     const prevStatus = prevStatusRef.current;
     prevStatusRef.current = task.status;
@@ -109,6 +109,14 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       stream.reset();
       // Refetch logs to get any newly saved content
       refetchLogs();
+    }
+
+    // If transitioning from running to completed/failed, refetch logs to get follow-up output
+    const wasActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(prevStatus);
+    const isNowDone = ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status);
+    if (wasActive && isNowDone) {
+      // Small delay to ensure server has saved all output logs
+      setTimeout(() => refetchLogs(), 300);
     }
   }, [task.status, stream, refetchLogs]);
 
@@ -192,6 +200,20 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       });
     }
 
+    // Fallback: if task has continuePrompt but no user_message in saved logs,
+    // show continuePrompt as a follow-up (for tasks created before user_message logging)
+    if (task.continuePrompt && savedUserMessages.size === 0) {
+      const fallbackTs = task.startedAt
+        ? new Date(task.startedAt).getTime()
+        : Date.now();
+      items.push({
+        id: 'fallback-continue-prompt',
+        type: 'user_message',
+        timestamp: fallbackTs,
+        content: task.continuePrompt,
+      });
+    }
+
     // Add optimistic sent messages (dedup against saved logs)
     sentMessages.forEach((msg, index) => {
       if (!savedUserMessages.has(msg.content)) {
@@ -204,8 +226,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       }
     });
 
-    // For active tasks, add stream messages (they may duplicate saved logs briefly)
-    if (isActive && stream.messages.length > 0) {
+    // Add stream messages (show even after completion to prevent flash before logs refetch)
+    if (stream.messages.length > 0) {
       // Find the latest saved log timestamp to avoid duplicates
       const lastSavedTimestamp = items.length > 0
         ? Math.max(...items.map(i => i.timestamp))
@@ -245,7 +267,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     items.sort((a, b) => a.timestamp - b.timestamp);
 
     return items;
-  }, [savedLogs, isActive, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt]);
+  }, [savedLogs, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt, task.continuePrompt, task.startedAt]);
 
   const hasContent = timeline.length > 0 || isActive;
 
