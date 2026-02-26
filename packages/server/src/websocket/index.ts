@@ -2,6 +2,7 @@ import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
 import { getConfig, getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent } from '../services/storage.js';
+import { checkDependentTasks } from '../services/waitingTasks.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -208,6 +209,9 @@ export function setupWebSocket(server: HttpServer): Server {
           status: 'completed',
           summary: data.summary,
         });
+
+        // Start any pending tasks that depend on this completed task
+        await checkDependentTasks(data.taskId);
       } catch (error) {
         console.error('Error handling task:completed:', error);
       }

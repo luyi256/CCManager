@@ -163,7 +163,7 @@ export async function continueTask(taskId: number, prompt: string): Promise<Task
 
 export interface TaskLog {
   timestamp: string;
-  type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request';
+  type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request' | 'user_message';
   content: unknown;
 }
 

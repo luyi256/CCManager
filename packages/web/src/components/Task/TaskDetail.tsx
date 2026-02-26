@@ -57,7 +57,7 @@ function formatDate(date: unknown): string {
 // Timeline item types
 interface TimelineItem {
   id: string;
-  type: 'output' | 'tool_use' | 'tool_result';
+  type: 'output' | 'tool_use' | 'tool_result' | 'user_message';
   timestamp: number;
   content: string;
   toolName?: string;
@@ -76,6 +76,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
   const [followUpQueue, setFollowUpQueue] = useState<string[]>([]);
+  const [sentMessages, setSentMessages] = useState<Array<{ content: string; timestamp: number }>>([]);
 
   // Use live task data with refetch, falling back to initial prop
   const { data: liveTask } = useTask(initialTask.id);
@@ -116,13 +117,34 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     if (task.status === 'completed' && followUpQueue.length > 0 && !continueTask.isPending) {
       const nextPrompt = followUpQueue[0];
       setFollowUpQueue(prev => prev.slice(1));
+      setSentMessages(prev => [...prev, { content: nextPrompt, timestamp: Date.now() }]);
       continueTask.mutate({ taskId: task.id, prompt: nextPrompt });
     }
   }, [task.status, followUpQueue, continueTask, task.id]);
 
+  // Clean up optimistic sentMessages once they appear in savedLogs
+  useEffect(() => {
+    if (savedLogs && sentMessages.length > 0) {
+      const savedUserContents = new Set(
+        savedLogs.filter(l => l.type === 'user_message').map(l => String(l.content))
+      );
+      setSentMessages(prev => prev.filter(m => !savedUserContents.has(m.content)));
+    }
+  }, [savedLogs, sentMessages.length]);
+
   // Build unified timeline from saved logs and stream
   const timeline = useMemo(() => {
     const items: TimelineItem[] = [];
+    // Track saved user_message contents for dedup with optimistic messages
+    const savedUserMessages = new Set<string>();
+
+    // Add the initial task prompt as the first message in the timeline
+    items.push({
+      id: 'initial-prompt',
+      type: 'user_message',
+      timestamp: new Date(task.createdAt).getTime(),
+      content: task.prompt,
+    });
 
     // Add saved logs first
     if (savedLogs && savedLogs.length > 0) {
@@ -158,9 +180,29 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
             content: '',
             toolResult: data.result,
           });
+        } else if (log.type === 'user_message') {
+          savedUserMessages.add(String(log.content));
+          items.push({
+            id: `saved-user-${index}`,
+            type: 'user_message',
+            timestamp,
+            content: String(log.content),
+          });
         }
       });
     }
+
+    // Add optimistic sent messages (dedup against saved logs)
+    sentMessages.forEach((msg, index) => {
+      if (!savedUserMessages.has(msg.content)) {
+        items.push({
+          id: `local-user-${index}`,
+          type: 'user_message',
+          timestamp: msg.timestamp,
+          content: msg.content,
+        });
+      }
+    });
 
     // For active tasks, add stream messages (they may duplicate saved logs briefly)
     if (isActive && stream.messages.length > 0) {
@@ -203,7 +245,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     items.sort((a, b) => a.timestamp - b.timestamp);
 
     return items;
-  }, [savedLogs, isActive, stream.messages, stream.toolCalls]);
+  }, [savedLogs, isActive, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt]);
 
   const hasContent = timeline.length > 0 || isActive;
 
@@ -278,18 +320,6 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
         <ErrorBoundary onReset={onClose}>
           {/* Content */}
           <div className="flex-1 overflow-hidden flex flex-col min-h-0">
-            {/* Prompt */}
-            <div className="p-4 border-b border-dark-700 flex-shrink-0">
-              <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">Task</h3>
-              <p className="text-dark-200">{task.prompt}</p>
-              {task.continuePrompt && (
-                <div className="mt-3 pt-3 border-t border-dark-700">
-                  <h4 className="text-xs font-medium text-primary-400 uppercase mb-1">Follow-up</h4>
-                  <p className="text-dark-200">{task.continuePrompt}</p>
-                </div>
-              )}
-            </div>
-
             {/* Meta info */}
             <div className="p-4 border-b border-dark-700 grid grid-cols-2 gap-4 text-sm flex-shrink-0">
               {task.worktreeBranch && (
@@ -355,6 +385,16 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                                 <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />
                                 <div className="flex-1 prose prose-invert prose-sm max-w-none">
                                   <SafeMarkdown>{item.content}</SafeMarkdown>
+                                </div>
+                              </div>
+                            ) : item.type === 'user_message' ? (
+                              <div className="flex gap-2 bg-primary-500/10 rounded-lg -mx-1 px-1 py-1">
+                                <Send size={14} className="text-primary-400 flex-shrink-0 mt-1" />
+                                <div className="flex-1">
+                                  <div className="text-xs font-medium text-primary-400 uppercase mb-1">
+                                    {item.id === 'initial-prompt' ? 'Prompt' : 'Follow-up'}
+                                  </div>
+                                  <p className="text-dark-200">{item.content}</p>
                                 </div>
                               </div>
                             ) : item.type === 'tool_use' ? (
@@ -517,6 +557,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     const prompt = continuePrompt.trim();
                     if (!prompt) return;
                     if (task.status === 'completed') {
+                      // Add optimistic message to timeline immediately
+                      setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
                       // Send immediately
                       continueTask.mutate({ taskId: task.id, prompt });
                     } else {
