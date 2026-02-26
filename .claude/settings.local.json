@@ -1,33 +1,23 @@
 {
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "Edit|Write|NotebookEdit",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/CC/CCManager/.claude/hooks/post-edit.sh",
-            "timeout": 60
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "/home/CC/CCManager/.claude/hooks/on-stop.sh",
-            "timeout": 120
-          }
-        ]
-      }
-    ]
-  },
   "permissions": {
     "allow": [
-      "Bash(ssh rack \"pm2 logs ccm-server --lines 100 --nostream 2>&1\" | tail -80)"
+      "WebFetch(domain:www.reddit.com)",
+      "Bash(gh api:*)",
+      "Bash(curl:*)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(pnpm install:*)",
+      "Bash(npm install:*)",
+      "Bash(npx pnpm install:*)",
+      "Bash(npx tsc:*)",
+      "Bash(timeout 5 npx tsx:*)",
+      "Bash(npx vite build:*)",
+      "Bash(pkill:*)",
+      "Bash(xargs kill:*)",
+      "Bash(lsof:*)"
     ]
   }
 }

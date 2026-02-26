@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Settings, RefreshCw, ArrowLeft } from 'lucide-react';
+import { Settings, RefreshCw } from 'lucide-react';
 import TaskBoard from '../components/Task/TaskBoard';
 import TaskInput from '../components/Task/TaskInput';
 import TaskDetail from '../components/Task/TaskDetail';
@@ -46,16 +46,9 @@ export default function ProjectPage() {
           <h2 className="text-xl font-semibold text-dark-200 mb-2">
             Project not found
           </h2>
-          <p className="text-dark-400 mb-4">
+          <p className="text-dark-400">
             The project you're looking for doesn't exist or has been deleted.
           </p>
-          <Link
-            to="/"
-            className="inline-flex items-center gap-1.5 text-primary-400 hover:text-primary-300 transition-colors"
-          >
-            <ArrowLeft size={16} />
-            Back to Home
-          </Link>
         </div>
       </div>
     );

@@ -1,4 +1,3 @@
-import { memo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { AlertTriangle } from 'lucide-react';
 
@@ -7,7 +6,7 @@ interface SafeMarkdownProps {
   className?: string;
 }
 
-const SafeMarkdown = memo(function SafeMarkdown({ children, className }: SafeMarkdownProps) {
+export default function SafeMarkdown({ children, className }: SafeMarkdownProps) {
   // Validate input
   if (typeof children !== 'string') {
     return (
@@ -32,6 +31,4 @@ const SafeMarkdown = memo(function SafeMarkdown({ children, className }: SafeMar
       </div>
     );
   }
-});
-
-export default SafeMarkdown;
+}
