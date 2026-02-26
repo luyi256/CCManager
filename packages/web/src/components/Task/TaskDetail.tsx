@@ -17,7 +17,7 @@ import StatusBadge from '../common/StatusBadge';
 import ErrorBoundary from '../common/ErrorBoundary';
 import SafeMarkdown from '../common/SafeMarkdown';
 import { useTaskStream } from '../../hooks/useTaskStream';
-import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs } from '../../hooks/useTasks';
+import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask } from '../../hooks/useTasks';
 import type { Task } from '../../types';
 
 // Safe JSON stringify that handles circular references
@@ -71,10 +71,15 @@ interface TaskDetailProps {
   onClose: () => void;
 }
 
-export default function TaskDetail({ task, onClose }: TaskDetailProps) {
+export default function TaskDetail({ task: initialTask, onClose }: TaskDetailProps) {
   const [autoScroll, setAutoScroll] = useState(true);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
+  const [followUpQueue, setFollowUpQueue] = useState<string[]>([]);
+
+  // Use live task data with refetch, falling back to initial prop
+  const { data: liveTask } = useTask(initialTask.id);
+  const task = liveTask || initialTask;
 
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
     task.status
@@ -89,6 +94,15 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
+
+  // Auto-send queued follow-ups when task completes
+  useEffect(() => {
+    if (task.status === 'completed' && followUpQueue.length > 0 && !continueTask.isPending) {
+      const nextPrompt = followUpQueue[0];
+      setFollowUpQueue(prev => prev.slice(1));
+      continueTask.mutate({ taskId: task.id, prompt: nextPrompt });
+    }
+  }, [task.status, followUpQueue, continueTask, task.id]);
 
   // Build unified timeline from saved logs and stream
   const timeline = useMemo(() => {
@@ -454,34 +468,61 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
 
           {/* Actions */}
           <div className="p-4 border-t border-dark-700 space-y-2 flex-shrink-0">
-            {task.status === 'completed' && (
-              <form
-                onSubmit={(e) => {
-                  e.preventDefault();
-                  const prompt = continuePrompt.trim();
-                  if (!prompt) return;
-                  continueTask.mutate({ taskId: task.id, prompt });
-                  setContinuePrompt('');
-                }}
-                className="flex gap-2"
-              >
-                <input
-                  type="text"
-                  value={continuePrompt}
-                  onChange={(e) => setContinuePrompt(e.target.value)}
-                  placeholder="Follow-up message..."
-                  disabled={continueTask.isPending}
-                  className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
-                />
-                <button
-                  type="submit"
-                  disabled={continueTask.isPending || !continuePrompt.trim()}
-                  className="btn btn-primary flex items-center justify-center gap-2 px-4"
+            {/* Follow-up input: show for completed (send immediately) or running (queue) */}
+            {(task.status === 'completed' || isActive) && (
+              <>
+                {/* Show queued messages */}
+                {followUpQueue.length > 0 && (
+                  <div className="mb-2 p-2 bg-dark-800 rounded-lg">
+                    <div className="text-xs text-dark-400 mb-1">Queued follow-ups (will send when task completes):</div>
+                    {followUpQueue.map((msg, idx) => (
+                      <div key={idx} className="flex items-center justify-between text-sm text-dark-300 py-1">
+                        <span className="truncate flex-1">{msg}</span>
+                        <button
+                          type="button"
+                          onClick={() => setFollowUpQueue(prev => prev.filter((_, i) => i !== idx))}
+                          className="ml-2 text-dark-500 hover:text-red-400"
+                        >
+                          <X size={14} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <form
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const prompt = continuePrompt.trim();
+                    if (!prompt) return;
+                    if (task.status === 'completed') {
+                      // Send immediately
+                      continueTask.mutate({ taskId: task.id, prompt });
+                    } else {
+                      // Queue for when task completes
+                      setFollowUpQueue(prev => [...prev, prompt]);
+                    }
+                    setContinuePrompt('');
+                  }}
+                  className="flex gap-2"
                 >
-                  <Send size={16} />
-                  Send
-                </button>
-              </form>
+                  <input
+                    type="text"
+                    value={continuePrompt}
+                    onChange={(e) => setContinuePrompt(e.target.value)}
+                    placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
+                    disabled={continueTask.isPending}
+                    className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
+                  />
+                  <button
+                    type="submit"
+                    disabled={continueTask.isPending || !continuePrompt.trim()}
+                    className="btn btn-primary flex items-center justify-center gap-2 px-4"
+                  >
+                    <Send size={16} />
+                    {isActive ? 'Queue' : 'Send'}
+                  </button>
+                </form>
+              </>
             )}
             <div className="flex gap-2">
               {isActive && (
