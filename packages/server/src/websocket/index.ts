@@ -173,14 +173,19 @@ export function setupWebSocket(server: HttpServer): Server {
     });
 
     socket.on('task:session_id', async (data) => {
+      console.log('Received task:session_id event:', data);
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          console.log(`Saving session_id ${data.sessionId} for task ${data.taskId}`);
           // Store session_id in gitInfo field (reusing existing field)
           const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
           gitInfo.sessionId = data.sessionId;
           task.gitInfo = JSON.stringify(gitInfo);
           await saveTask(task.projectId, task);
+          console.log(`Task ${data.taskId} gitInfo saved:`, task.gitInfo);
+        } else {
+          console.log(`Task ${data.taskId} not found for session_id save`);
         }
       } catch (error) {
         console.error('Error handling task:session_id:', error);
