@@ -41,7 +41,7 @@ export class ClaudeExecutor extends EventEmitter {
     }
 
     if (task.continueSession && task.sessionId) {
-      args.push('--continue', task.sessionId);
+      args.push('--resume', task.sessionId);
     }
 
     args.push('--dangerously-skip-permissions');

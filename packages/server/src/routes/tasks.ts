@@ -288,9 +288,9 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
 
-    // Update task status
+    // Update task status - keep original prompt, store continuation in continuePrompt
     task.status = 'running';
-    task.prompt = prompt; // Update prompt to new continuation prompt
+    task.continuePrompt = prompt; // Store continuation prompt separately
     task.startedAt = new Date().toISOString();
     task.completedAt = undefined;
     task.error = undefined;
