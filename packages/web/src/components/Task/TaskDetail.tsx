@@ -85,8 +85,11 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     task.status
   );
 
+  // Track previous status to detect transitions
+  const prevStatusRef = useRef(task.status);
+
   // Always load saved logs (for history)
-  const { data: savedLogs } = useTaskLogs(task.id);
+  const { data: savedLogs, refetch: refetchLogs } = useTaskLogs(task.id);
   // Stream for active tasks
   const stream = useTaskStream(isActive ? task.id : null);
 
@@ -94,6 +97,19 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
+
+  // Reset stream when task transitions to running (continuation)
+  useEffect(() => {
+    const prevStatus = prevStatusRef.current;
+    prevStatusRef.current = task.status;
+
+    // If transitioning from completed to running (continuation), reset stream
+    if (prevStatus === 'completed' && task.status === 'running') {
+      stream.reset();
+      // Refetch logs to get any newly saved content
+      refetchLogs();
+    }
+  }, [task.status, stream, refetchLogs]);
 
   // Auto-send queued follow-ups when task completes
   useEffect(() => {
@@ -266,6 +282,12 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
             <div className="p-4 border-b border-dark-700 flex-shrink-0">
               <h3 className="text-xs font-medium text-dark-500 uppercase mb-2">Task</h3>
               <p className="text-dark-200">{task.prompt}</p>
+              {task.continuePrompt && (
+                <div className="mt-3 pt-3 border-t border-dark-700">
+                  <h4 className="text-xs font-medium text-primary-400 uppercase mb-1">Follow-up</h4>
+                  <p className="text-dark-200">{task.continuePrompt}</p>
+                </div>
+              )}
             </div>
 
             {/* Meta info */}

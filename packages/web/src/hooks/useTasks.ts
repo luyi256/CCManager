@@ -75,8 +75,15 @@ export function useContinueTask() {
     mutationFn: ({ taskId, prompt }: { taskId: number; prompt: string }) =>
       api.continueTask(taskId, prompt),
     onSuccess: (task) => {
+      // Immediately update the task cache with new data
+      queryClient.setQueryData(['task', task.id], task);
+      // Optimistically update tasks list
+      queryClient.setQueryData<Task[]>(['tasks', task.projectId], (old) =>
+        old ? old.map((t) => (t.id === task.id ? task : t)) : [task]
+      );
+      // Also refetch to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['tasks', task.projectId] });
-      queryClient.invalidateQueries({ queryKey: ['task', task.id] });
+      queryClient.invalidateQueries({ queryKey: ['taskLogs', task.id] });
     },
   });
 }
