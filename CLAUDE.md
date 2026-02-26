@@ -72,6 +72,7 @@ npx pm2 logs ccm-agent
 ## 重要规则
 
 - 每次修改后重启服务以应用修改：`pm2 restart ccm-server`
+- 每次完成代码修改后重新部署本项目：编译 (`npm run build -w @ccmanager/server && npm run build -w @ccmanager/web`) 然后重启 (`pm2 restart ccm-server`)
 
 ## 开发
 
