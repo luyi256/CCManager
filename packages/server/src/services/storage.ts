@@ -387,7 +387,7 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     task.waitReason || null,
     task.checkCommand || null,
     task.continuePrompt || null,
-    task.git ? JSON.stringify(task.git) : null,
+    task.gitInfo || (task.git ? JSON.stringify(task.git) : null),
     task.summary || null,
     task.securityWarnings ? JSON.stringify(task.securityWarnings) : null,
     task.pendingPermission ? JSON.stringify(task.pendingPermission) : null
