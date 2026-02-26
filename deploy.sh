@@ -1,10 +1,24 @@
 #!/bin/bash
 # CCManager 部署脚本
 # 用法: ./deploy.sh [commit message]
+# 如果不提供消息，会根据修改的文件自动生成
 
 set -e
 
-COMMIT_MSG="${1:-auto deploy}"
+# 自动生成 commit 消息
+if [ -z "$1" ]; then
+  CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null | head -3 | tr '\n' ', ' | sed 's/,$//')
+  if [ -z "$CHANGED_FILES" ]; then
+    CHANGED_FILES=$(git diff --cached --name-only 2>/dev/null | head -3 | tr '\n' ', ' | sed 's/,$//')
+  fi
+  if [ -n "$CHANGED_FILES" ]; then
+    COMMIT_MSG="chore: update ${CHANGED_FILES}"
+  else
+    COMMIT_MSG="chore: auto deploy $(date +%Y-%m-%d_%H:%M)"
+  fi
+else
+  COMMIT_MSG="$1"
+fi
 
 echo "=== CCManager Deploy ==="
 
