@@ -174,10 +174,11 @@ export class AgentConnection {
       console.log(`Task ${task.taskId}: Execution completed`);
 
       // Task completed - include sessionId so server can preserve it
+      const sessionId = 'getSessionId' in executor ? executor.getSessionId() : undefined;
       this.socket?.emit('task:completed', {
         taskId: task.taskId,
         status: 'completed',
-        sessionId: executor.getSessionId(),
+        sessionId,
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
