@@ -16,6 +16,7 @@ export function useTask(taskId: number) {
     queryKey: ['task', taskId],
     queryFn: () => api.getTask(taskId),
     enabled: !!taskId,
+    refetchInterval: 3000, // Poll for updates more frequently
   });
 }
 
