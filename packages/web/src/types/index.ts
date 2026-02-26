@@ -61,6 +61,7 @@ export interface Task {
   checkCommand?: string;
   continuePrompt?: string;
   git?: GitInfo;
+  gitInfo?: string; // JSON string for storing session info
   summary?: string;
   securityWarnings?: Violation[];
   pendingPermission?: PermissionRequest;
