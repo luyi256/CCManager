@@ -344,6 +344,7 @@ function rowToTask(row: {
     checkCommand: row.check_command || undefined,
     continuePrompt: row.continue_prompt || undefined,
     git: safeJsonParse(row.git_info),
+    gitInfo: row.git_info || undefined,
     summary: row.summary || undefined,
     securityWarnings: safeJsonParse(row.security_warnings),
     pendingPermission: safeJsonParse(row.pending_permission),
