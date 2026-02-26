@@ -139,10 +139,13 @@ export class ClaudeExecutor extends EventEmitter {
           break;
 
         case 'result':
-          // Final result from Claude Code
-          if (event.subtype === 'success' && event.result) {
-            this.emit('output', event.result);
+          // Capture session_id from result event
+          if (event.session_id && !this.sessionId) {
+            this.sessionId = event.session_id;
+            this.emit('session_id', event.session_id);
           }
+          // Don't emit result text as output - it duplicates what was already
+          // streamed via 'assistant' events
           break;
 
         case 'user':
@@ -164,14 +167,6 @@ export class ClaudeExecutor extends EventEmitter {
         case 'system':
           // Extract session_id from init message
           if (event.subtype === 'init' && event.session_id) {
-            this.sessionId = event.session_id;
-            this.emit('session_id', event.session_id);
-          }
-          break;
-
-        case 'result':
-          // Also capture session_id from result if not already set
-          if (event.session_id && !this.sessionId) {
             this.sessionId = event.session_id;
             this.emit('session_id', event.session_id);
           }
