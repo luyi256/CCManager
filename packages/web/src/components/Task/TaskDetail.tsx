@@ -1,5 +1,5 @@
 import { useState, useMemo, useRef, useEffect, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { motion } from 'framer-motion';
 import {
   X,
   Play,
@@ -347,7 +347,7 @@ export default function TaskDetail({ task, onClose }: TaskDetailProps) {
                                       <span className="text-xs text-dark-500">Result:</span>
                                       <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto mt-1">
                                         {typeof item.toolResult === 'string'
-                                          ? item.toolResult.slice(0, 500) + (item.toolResult.length > 500 ? '...' : '')
+                                          ? (item.toolResult as string).slice(0, 500) + ((item.toolResult as string).length > 500 ? '...' : '')
                                           : safeStringify(item.toolResult)}
                                       </pre>
                                     </div>
