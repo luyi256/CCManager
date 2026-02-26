@@ -164,6 +164,7 @@ export class AgentConnection {
       });
 
       executor.on('session_id', (sessionId: string) => {
+        console.log(`Task ${task.taskId}: Emitting session_id to server:`, sessionId);
         this.socket?.emit('task:session_id', { taskId: task.taskId, sessionId });
       });
 
