@@ -162,14 +162,21 @@ export class ClaudeExecutor extends EventEmitter {
           break;
 
         case 'system':
+          // Debug: log system events
+          console.log(`Task ${this.currentTaskId}: System event:`, JSON.stringify(event));
           // Extract session_id from init message
           if (event.subtype === 'init' && event.session_id) {
+            console.log(`Task ${this.currentTaskId}: Got session_id from init:`, event.session_id);
             this.sessionId = event.session_id;
             this.emit('session_id', event.session_id);
           }
           break;
 
         case 'result':
+          // Debug: log result events for session_id
+          if (event.session_id) {
+            console.log(`Task ${this.currentTaskId}: Result has session_id:`, event.session_id);
+          }
           // Also capture session_id from result if not already set
           if (event.session_id && !this.sessionId) {
             this.sessionId = event.session_id;
