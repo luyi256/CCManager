@@ -288,6 +288,12 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
 
+    // Log the follow-up prompt into task_logs so it appears in the timeline
+    await storage.appendTaskLog(task.projectId, task.id, {
+      type: 'user_message',
+      content: prompt,
+    });
+
     // Update task status - keep original prompt, store continuation in continuePrompt
     task.status = 'running';
     task.continuePrompt = prompt; // Store continuation prompt separately
