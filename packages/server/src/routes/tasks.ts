@@ -270,7 +270,25 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
 
-    // Dispatch task with continue session
+    // Log the follow-up prompt FIRST so it appears in the timeline
+    await storage.appendTaskLog(task.projectId, task.id, {
+      type: 'user_message',
+      content: prompt,
+    });
+
+    // Update task status BEFORE dispatching to avoid race condition
+    // where task:completed handler could overwrite with stale data
+    const previousStatus = task.status;
+    const previousStartedAt = task.startedAt;
+    const previousCompletedAt = task.completedAt;
+    task.status = 'running';
+    task.continuePrompt = prompt;
+    task.startedAt = new Date().toISOString();
+    task.completedAt = undefined;
+    task.error = undefined;
+    await storage.saveTask(task.projectId, task);
+
+    // Dispatch task with continue session (after DB is updated)
     const dispatched = agentPool.dispatchTask(project.agentId, {
       taskId: task.id,
       projectId: project.id,
@@ -283,24 +301,15 @@ router.post('/tasks/:id/continue', async (req, res) => {
     });
 
     if (!dispatched) {
+      // Revert task status on dispatch failure
+      task.status = previousStatus as Task['status'];
+      task.startedAt = previousStartedAt;
+      task.completedAt = previousCompletedAt;
+      await storage.saveTask(task.projectId, task);
       return res.status(503).json({
         message: 'Failed to dispatch task to agent',
       });
     }
-
-    // Log the follow-up prompt into task_logs so it appears in the timeline
-    await storage.appendTaskLog(task.projectId, task.id, {
-      type: 'user_message',
-      content: prompt,
-    });
-
-    // Update task status - keep original prompt, store continuation in continuePrompt
-    task.status = 'running';
-    task.continuePrompt = prompt; // Store continuation prompt separately
-    task.startedAt = new Date().toISOString();
-    task.completedAt = undefined;
-    task.error = undefined;
-    await storage.saveTask(task.projectId, task);
 
     res.json(task);
   } catch (error) {

@@ -85,13 +85,27 @@ export function setupWebSocket(server: HttpServer): Server {
         if (runningTasks.length > 0) {
           console.log(`Recovering ${runningTasks.length} orphaned task(s) for agent ${info.agentId}`);
           for (const { task, project } of runningTasks) {
+            // Use continuePrompt if available (task was in follow-up mode)
+            const prompt = task.continuePrompt || task.prompt;
+            // If task has a session ID and continuePrompt, resume the session
+            let sessionId: string | undefined;
+            let continueSession = false;
+            if (task.continuePrompt && task.gitInfo) {
+              try {
+                const gitInfo = JSON.parse(task.gitInfo);
+                sessionId = gitInfo.sessionId;
+                continueSession = !!sessionId;
+              } catch { /* ignore */ }
+            }
             const dispatched = agentPool.dispatchTask(info.agentId, {
               taskId: task.id,
               projectId: project.id,
               projectPath: project.projectPath,
-              prompt: task.prompt,
+              prompt,
               isPlanMode: task.isPlanMode,
               worktreeBranch: task.worktreeBranch,
+              continueSession,
+              sessionId,
             });
             if (dispatched) {
               console.log(`  - Task ${task.id} re-dispatched`);
