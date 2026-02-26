@@ -73,6 +73,7 @@ npx pm2 logs ccm-agent
 
 - 每次修改后重启服务以应用修改：`pm2 restart ccm-server`
 - 每次完成代码修改后重新部署本项目：编译 (`npm run build -w @ccmanager/server && npm run build -w @ccmanager/web`) 然后重启 (`pm2 restart ccm-server`)
+- **提交信息**: 每次 commit 时必须生成有意义的提交信息，总结本次修改的具体内容（如 `fix: 修复任务状态同步问题` 或 `feat: 添加任务优先级排序功能`），禁止使用 `auto-commit by CCManager hook` 等无意义的通用信息
 
 ## 开发
 
