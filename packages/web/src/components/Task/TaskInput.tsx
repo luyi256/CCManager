@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { Send, Loader2 } from 'lucide-react';
+import { useState } from 'react';
+import { Send, Loader2, AlertCircle } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
 import type { Task } from '../../types';
 
@@ -13,6 +13,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
   const [prompt, setPrompt] = useState('');
   const [isPlanMode, setIsPlanMode] = useState(false);
   const [dependsOn, setDependsOn] = useState<number | undefined>();
+  const [error, setError] = useState<string | null>(null);
 
   const pendingTasks = tasks.filter((t) =>
     ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)
@@ -22,17 +23,37 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
     e.preventDefault();
     if (!prompt.trim() || isSubmitting) return;
 
-    await onSubmit({ prompt: prompt.trim(), isPlanMode, dependsOn });
-    setPrompt('');
-    setDependsOn(undefined);
+    setError(null);
+    try {
+      await onSubmit({ prompt: prompt.trim(), isPlanMode, dependsOn });
+      setPrompt('');
+      setDependsOn(undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to create task');
+    }
   };
 
-  const handleVoiceTranscription = useCallback((text: string) => {
+  const handleVoiceTranscription = (text: string) => {
     setPrompt((prev) => (prev ? `${prev} ${text}` : text));
-  }, []);
+  };
 
   return (
     <form onSubmit={handleSubmit} className="card p-4">
+      {error && (
+        <div className="mb-3 p-3 bg-red-500/10 border border-red-500/30 rounded-lg flex items-start gap-2">
+          <AlertCircle size={18} className="text-red-400 flex-shrink-0 mt-0.5" />
+          <div className="flex-1">
+            <p className="text-red-400 text-sm">{error}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            className="text-red-400 hover:text-red-300 text-sm"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
       <div className="flex gap-3">
         <div className="flex-1">
           <textarea
