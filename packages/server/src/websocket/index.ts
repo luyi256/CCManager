@@ -194,11 +194,17 @@ export function setupWebSocket(server: HttpServer): Server {
 
     socket.on('task:completed', async (data) => {
       try {
+        // Small delay to ensure session_id save completes first
+        await new Promise(resolve => setTimeout(resolve, 100));
         const task = await getTaskById(data.taskId);
         if (task) {
           task.status = 'completed';
           task.completedAt = new Date().toISOString();
           if (data.summary) task.summary = data.summary;
+          // Preserve session_id if it exists
+          if (data.sessionId && !task.gitInfo) {
+            task.gitInfo = JSON.stringify({ sessionId: data.sessionId });
+          }
           await saveTask(task.projectId, task);
         }
         // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
