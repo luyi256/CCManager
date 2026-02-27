@@ -130,6 +130,19 @@ async function main(): Promise<void> {
   console.log(`Executor: ${config.executor}`);
   console.log(`Allowed Paths: ${config.allowedPaths.join(', ')}`);
 
+  // Docker setup: verify Docker availability and ensure image exists
+  if (config.executor === 'docker' && config.dockerConfig) {
+    const { verifyDockerAvailable, ensureDockerImage } = await import('./dockerSetup.js');
+
+    console.log('Docker executor mode — verifying Docker availability...');
+    await verifyDockerAvailable();
+
+    console.log('Ensuring Docker image is available...');
+    await ensureDockerImage(config.dockerConfig);
+
+    console.log('Docker setup complete.');
+  }
+
   const connection = new AgentConnection(config);
 
   // Graceful shutdown
