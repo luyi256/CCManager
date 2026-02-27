@@ -4,6 +4,7 @@ export interface DockerConfig {
   cpus?: string;
   network?: string;
   timeout?: number; // Task execution timeout in milliseconds
+  sessionsDir?: string; // Host directory for session persistence, default ~/.ccm-sessions
   extraMounts?: Array<{
     source: string;
     target: string;

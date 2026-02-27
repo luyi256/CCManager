@@ -8,9 +8,11 @@
   "blockedPaths": ["/Users/me/.ssh"],
   "capabilities": ["no-gpu"],
   "dockerConfig": {
-    "image": "ccrunner:latest",
+    "image": "ccmanager-runner:latest",
     "memory": "8g",
     "cpus": "4",
+    "network": "bridge",
+    "sessionsDir": "/home/me/.ccm-sessions",
     "extraMounts": [
       {
         "source": "/data/datasets",
