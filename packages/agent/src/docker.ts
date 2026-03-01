@@ -77,17 +77,19 @@ export class DockerExecutor extends EventEmitter {
     args.push('-v', `${workingDir}:/workspace:rw`);
     args.push('-w', '/workspace');
 
-    // Session persistence directory (for --resume support)
+    // Container home directory: mount the per-project session dir as the entire
+    // home so that both ~/.claude/ (sessions, credentials) and ~/.claude.json
+    // (config) are writable by the host UID.
     const sessionsDir = this.getSessionsDir(task.projectId);
-    args.push('-v', `${sessionsDir}:/home/node/.claude:rw`);
+    const claudeSubdir = path.join(sessionsDir, '.claude');
+    fs.mkdirSync(claudeSubdir, { recursive: true });
+    args.push('-v', `${sessionsDir}:/home/ccm:rw`);
+    args.push('-e', 'HOME=/home/ccm');
 
-    // Mount host credentials file so Claude CLI can authenticate inside the container.
-    // The file is mounted read-only; Claude CLI will refresh tokens into the session dir.
+    // Copy host credentials so Claude CLI can authenticate inside the container
     const hostCredentials = path.join(os.homedir(), '.claude', '.credentials.json');
     if (fs.existsSync(hostCredentials)) {
-      // Copy credentials to session dir so they're accessible via the existing mount
-      const destCredentials = path.join(sessionsDir, '.credentials.json');
-      fs.copyFileSync(hostCredentials, destCredentials);
+      fs.copyFileSync(hostCredentials, path.join(claudeSubdir, '.credentials.json'));
     }
 
     // Extra mounts (user-configured)
