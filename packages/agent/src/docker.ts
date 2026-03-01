@@ -81,6 +81,15 @@ export class DockerExecutor extends EventEmitter {
     const sessionsDir = this.getSessionsDir(task.projectId);
     args.push('-v', `${sessionsDir}:/home/node/.claude:rw`);
 
+    // Mount host credentials file so Claude CLI can authenticate inside the container.
+    // The file is mounted read-only; Claude CLI will refresh tokens into the session dir.
+    const hostCredentials = path.join(os.homedir(), '.claude', '.credentials.json');
+    if (fs.existsSync(hostCredentials)) {
+      // Copy credentials to session dir so they're accessible via the existing mount
+      const destCredentials = path.join(sessionsDir, '.credentials.json');
+      fs.copyFileSync(hostCredentials, destCredentials);
+    }
+
     // Extra mounts (user-configured)
     if (this.config.extraMounts) {
       for (const mount of this.config.extraMounts) {
@@ -89,7 +98,7 @@ export class DockerExecutor extends EventEmitter {
       }
     }
 
-    // Credential injection via environment variables (never mount host config files)
+    // Credential injection via environment variables (fallback)
     if (process.env.ANTHROPIC_API_KEY) {
       args.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
     }

@@ -113,6 +113,12 @@ export class AgentConnection {
     console.log(`Received task ${task.taskId}: ${task.prompt.substring(0, 50)}...`);
     console.log(`Task ${task.taskId} projectPath: ${task.projectPath}`);
 
+    // Skip if this task is already running (prevents duplicate execution on reconnect)
+    if (this.executors.has(task.taskId)) {
+      console.log(`Task ${task.taskId}: Already running, skipping duplicate dispatch`);
+      return;
+    }
+
     let executor: ClaudeExecutor | DockerExecutor;
 
     try {
