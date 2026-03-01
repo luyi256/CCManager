@@ -14,6 +14,7 @@ export interface Project {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
+  postTaskHook?: string;
   createdAt: string;
   lastActivity?: string;
   taskCount: number;
@@ -115,6 +116,7 @@ export interface ServerToAgentEvents {
     prompt: string;
     isPlanMode: boolean;
     worktreeBranch?: string;
+    postTaskHook?: string;
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;
   'task:cancel': (data: { taskId: number }) => void;

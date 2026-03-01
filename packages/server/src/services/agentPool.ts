@@ -167,6 +167,7 @@ class AgentPool {
     requiredCapabilities?: string[];
     continueSession?: boolean;
     sessionId?: string;
+    postTaskHook?: string;
   }): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'online') {

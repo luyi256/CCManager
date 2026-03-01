@@ -14,6 +14,7 @@ interface FormData {
   agentId: string;
   projectPath: string;
   securityMode: 'auto' | 'safe';
+  postTaskHook: string;
 }
 
 const initialFormData: FormData = {
@@ -21,6 +22,7 @@ const initialFormData: FormData = {
   agentId: '',
   projectPath: '',
   securityMode: 'auto',
+  postTaskHook: '',
 };
 
 export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProps) {
@@ -226,6 +228,22 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
               </div>
             </label>
           </div>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-dark-300 mb-1.5">
+            Post-Task Hook <span className="text-dark-500">(optional)</span>
+          </label>
+          <input
+            type="text"
+            className="input"
+            placeholder="pm2 restart my-app"
+            value={formData.postTaskHook}
+            onChange={(e) => setFormData({ ...formData, postTaskHook: e.target.value })}
+          />
+          <p className="text-xs text-dark-500 mt-1">
+            Shell command to run on the agent after each successful task
+          </p>
         </div>
 
         <div className="flex justify-end gap-3 pt-4">
