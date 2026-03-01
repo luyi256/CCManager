@@ -79,7 +79,7 @@ packages/
 │   ├── index.ts              # CLI 入口, 配置加载与验证
 │   ├── connection.ts         # WebSocket 连接, 心跳 (30s), 并发任务 Map
 │   ├── executor.ts           # spawn claude CLI (stream-json, 4 小时超时)
-│   ├── docker.ts             # Docker 容器执行 (挂载 /workspace)
+│   ├── docker.ts             # Docker 容器执行 (挂载 /workspace, 凭证注入, HOME=/home/ccm)
 │   ├── security.ts           # 路径验证 (含符号链接检查)、环境变量白名单
 │   └── types.ts              # AgentConfig, TaskRequest, DockerConfig, TaskResult 等类型
 ```
@@ -222,16 +222,37 @@ cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
 
 - **并行执行**: 同一 agent 可同时执行多个任务 (Map 存储活跃执行器)
 - **孤儿任务恢复**: Agent 重连后自动恢复 `running` 状态的任务
+- **重复执行防护**: Agent 收到已在运行的 taskId 时自动跳过
 - **继续对话**: 基于已完成任务的会话 ID 继续工作 (`--resume sessionId`)
 - **实时更新**: WebSocket 推送 + 前端 5s 轮询兜底
 - **安全模型**: 路径白名单 + 符号链接检查 + 权限请求 + plan mode
 - **任务超时**: 默认 4 小时
 - **等待任务**: node-cron 每分钟检查，最多 20 次重试
 
+## Docker 执行模式
+
+当 agent 配置 `executor: "docker"` 时，每个任务在独立容器中运行：
+
+```
+容器内目录结构:
+├── /workspace          ← 项目目录 (bind mount, rw)
+└── /home/ccm           ← HOME 目录 (bind mount from ~/.ccm-sessions/<projectId>)
+    ├── .claude/        ← Claude CLI 数据 (sessions, debug)
+    │   └── .credentials.json  ← 从宿主机 ~/.claude/ 复制
+    └── .claude.json    ← Claude CLI 配置 (运行时生成)
+```
+
+**凭证传递机制**: 启动容器前，自动将宿主机 `~/.claude/.credentials.json` 复制到 session 目录的 `.claude/` 子目录中。容器以 host UID 运行 (`--user`)，HOME 设为 `/home/ccm` (挂载的 session 目录)，确保 Claude CLI 能读取凭证并写入配置。
+
+**安全加固**: `--cap-drop=ALL` + 最小权限 (`CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID`) + `--no-new-privileges`
+
 ## 环境变量 (.env)
 
 ```bash
-# Claude Code 认证 (二选一)
+# Claude Code 认证
+# Docker 模式: 自动从 ~/.claude/.credentials.json 读取 OAuth 凭证
+# Local 模式: 直接使用宿主机的 claude CLI 认证
+# 环境变量 (可选覆盖, Docker 模式也支持):
 CLAUDE_CODE_OAUTH_TOKEN=clt_...    # Pro/Max 订阅
 ANTHROPIC_API_KEY=sk-ant-...       # 按用量付费
 
