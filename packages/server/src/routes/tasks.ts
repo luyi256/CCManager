@@ -91,6 +91,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         prompt: task.prompt,
         isPlanMode: task.isPlanMode,
         worktreeBranch: task.worktreeBranch,
+        postTaskHook: project.postTaskHook,
       });
 
       if (dispatched) {
@@ -205,6 +206,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       prompt: task.prompt,
       isPlanMode: task.isPlanMode,
       worktreeBranch: task.worktreeBranch,
+      postTaskHook: project.postTaskHook,
     });
 
     if (!dispatched) {
@@ -298,6 +300,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       worktreeBranch: task.worktreeBranch,
       continueSession: true,
       sessionId: sessionId,
+      postTaskHook: project.postTaskHook,
     });
 
     if (!dispatched) {

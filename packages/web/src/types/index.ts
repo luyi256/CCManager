@@ -14,6 +14,7 @@ export interface Project {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
+  postTaskHook?: string;
   createdAt: string;
   lastActivity?: string;
   taskCount: number;

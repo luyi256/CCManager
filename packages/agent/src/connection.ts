@@ -1,8 +1,12 @@
 import { io, Socket } from 'socket.io-client';
+import { exec } from 'child_process';
+import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
 import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
+
+const execAsync = promisify(exec);
 
 export class AgentConnection {
   private socket: Socket | null = null;
@@ -177,6 +181,35 @@ export class AgentConnection {
       console.log(`Task ${task.taskId}: Starting execution...`);
       await executor.execute(task, task.projectPath);
       console.log(`Task ${task.taskId}: Execution completed`);
+
+      // Run post-task hook if configured
+      if (task.postTaskHook) {
+        console.log(`Task ${task.taskId}: Running post-task hook...`);
+        this.socket?.emit('task:output', {
+          taskId: task.taskId,
+          text: `\n[Post-Task Hook] Running: ${task.postTaskHook}\n`,
+        });
+        try {
+          const { stdout, stderr } = await execAsync(task.postTaskHook, {
+            cwd: task.projectPath,
+            timeout: 30000,
+          });
+          if (stdout) {
+            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stdout}` });
+          }
+          if (stderr) {
+            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stderr}` });
+          }
+          console.log(`Task ${task.taskId}: Post-task hook completed`);
+        } catch (hookError) {
+          const msg = hookError instanceof Error ? hookError.message : String(hookError);
+          console.error(`Task ${task.taskId}: Post-task hook failed:`, msg);
+          this.socket?.emit('task:output', {
+            taskId: task.taskId,
+            text: `[Post-Task Hook] Failed: ${msg}\n`,
+          });
+        }
+      }
 
       // Task completed - include sessionId so server can preserve it
       const sessionId = 'getSessionId' in executor ? executor.getSessionId() : undefined;

@@ -92,4 +92,13 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_projects_agent ON projects(agent_id);
 `);
 
+// Migrations
+// Add post_task_hook column to projects table
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN post_task_hook TEXT`);
+  console.log('Migration: Added post_task_hook column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

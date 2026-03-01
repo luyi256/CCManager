@@ -112,6 +112,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     prompt: continuePrompt,
     isPlanMode: task.isPlanMode,
     worktreeBranch: task.worktreeBranch,
+    postTaskHook: project.postTaskHook,
   });
 
   if (dispatched) {
@@ -168,6 +169,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             prompt: currentTask.prompt,
             isPlanMode: currentTask.isPlanMode,
             worktreeBranch: currentTask.worktreeBranch,
+            postTaskHook: project.postTaskHook,
           });
 
           if (dispatched) {

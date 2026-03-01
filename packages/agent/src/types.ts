@@ -33,6 +33,7 @@ export interface TaskRequest {
   worktreeBranch?: string;
   continueSession?: boolean;
   sessionId?: string;
+  postTaskHook?: string;
 }
 
 export interface TaskOutput {

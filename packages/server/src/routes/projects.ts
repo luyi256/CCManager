@@ -35,7 +35,7 @@ router.get('/:id', async (req, res) => {
 router.post('/', async (req, res) => {
   console.log('POST /api/projects - body:', JSON.stringify(req.body));
   try {
-    const { name, agentId, projectPath, securityMode } = req.body;
+    const { name, agentId, projectPath, securityMode, postTaskHook } = req.body;
 
     if (!name || !agentId || !projectPath) {
       return res.status(400).json({ message: 'Missing required fields: name, agentId, projectPath' });
@@ -47,6 +47,7 @@ router.post('/', async (req, res) => {
       agentId,
       projectPath,
       securityMode: securityMode || 'auto',
+      postTaskHook: postTaskHook || undefined,
       createdAt: new Date().toISOString(),
     };
 
@@ -69,7 +70,7 @@ router.put('/:id', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const { name, agentId, projectPath, securityMode, authType } = req.body;
+    const { name, agentId, projectPath, securityMode, authType, postTaskHook } = req.body;
 
     const updatedProject: Omit<Project, 'taskCount' | 'runningCount'> = {
       id: project.id,
@@ -78,6 +79,7 @@ router.put('/:id', async (req, res) => {
       projectPath: projectPath || project.projectPath,
       securityMode: securityMode || project.securityMode,
       authType: authType || project.authType,
+      postTaskHook: postTaskHook !== undefined ? (postTaskHook || undefined) : project.postTaskHook,
       createdAt: project.createdAt,
       lastActivity: project.lastActivity,
     };
