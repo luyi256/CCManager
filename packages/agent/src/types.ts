@@ -34,6 +34,11 @@ export interface TaskRequest {
   continueSession?: boolean;
   sessionId?: string;
   postTaskHook?: string;
+  extraMounts?: Array<{
+    source: string;
+    target: string;
+    readonly?: boolean;
+  }>;
 }
 
 export interface TaskOutput {
