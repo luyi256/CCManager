@@ -7,6 +7,12 @@ export interface Agent {
   lastSeen?: string;
 }
 
+export interface ExtraMount {
+  source: string;
+  target: string;
+  readonly?: boolean;
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -15,6 +21,7 @@ export interface Project {
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
   postTaskHook?: string;
+  extraMounts?: ExtraMount[];
   createdAt: string;
   lastActivity?: string;
   taskCount: number;

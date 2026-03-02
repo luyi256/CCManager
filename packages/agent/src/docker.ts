@@ -92,9 +92,17 @@ export class DockerExecutor extends EventEmitter {
       fs.copyFileSync(hostCredentials, path.join(claudeSubdir, '.credentials.json'));
     }
 
-    // Extra mounts (user-configured)
+    // Extra mounts — agent-level (from dockerConfig)
     if (this.config.extraMounts) {
       for (const mount of this.config.extraMounts) {
+        const mode = mount.readonly ? 'ro' : 'rw';
+        args.push('-v', `${mount.source}:${mount.target}:${mode}`);
+      }
+    }
+
+    // Extra mounts — project-level (from task dispatch)
+    if (task.extraMounts) {
+      for (const mount of task.extraMounts) {
         const mode = mount.readonly ? 'ro' : 'rw';
         args.push('-v', `${mount.source}:${mount.target}:${mode}`);
       }

@@ -101,4 +101,12 @@ try {
   // Column already exists, ignore
 }
 
+// Add extra_mounts column to projects table
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN extra_mounts TEXT`);
+  console.log('Migration: Added extra_mounts column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

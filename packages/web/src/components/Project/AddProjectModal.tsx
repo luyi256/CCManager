@@ -1,8 +1,9 @@
 import { useState } from 'react';
-import { Loader2, Server, Circle } from 'lucide-react';
+import { Loader2, Server, Circle, Plus, X } from 'lucide-react';
 import Modal from '../common/Modal';
 import { useCreateProject } from '../../hooks/useProjects';
 import { useWebSocket } from '../../contexts/WebSocketContext';
+import type { ExtraMount } from '../../types';
 
 interface AddProjectModalProps {
   isOpen: boolean;
@@ -15,6 +16,7 @@ interface FormData {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   postTaskHook: string;
+  extraMounts: ExtraMount[];
 }
 
 const initialFormData: FormData = {
@@ -23,6 +25,7 @@ const initialFormData: FormData = {
   projectPath: '',
   securityMode: 'auto',
   postTaskHook: '',
+  extraMounts: [],
 };
 
 export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProps) {
@@ -42,8 +45,14 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
     }
 
     try {
-      console.log('Calling createProject.mutateAsync with:', formData);
-      await createProject.mutateAsync(formData);
+      const submitData = {
+        ...formData,
+        extraMounts: formData.extraMounts.length > 0
+          ? formData.extraMounts.filter(m => m.source && m.target)
+          : undefined,
+      };
+      console.log('Calling createProject.mutateAsync with:', submitData);
+      await createProject.mutateAsync(submitData);
       console.log('createProject succeeded');
       onClose();
       setFormData(initialFormData);
@@ -243,6 +252,79 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           />
           <p className="text-xs text-dark-500 mt-1">
             Shell command to run on the agent after each successful task
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-dark-300 mb-1.5">
+            Extra Mounts <span className="text-dark-500">(optional, Docker only)</span>
+          </label>
+          <div className="space-y-2">
+            {formData.extraMounts.map((mount, index) => (
+              <div key={index} className="flex items-center gap-2">
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="/host/path"
+                  value={mount.source}
+                  onChange={(e) => {
+                    const mounts = [...formData.extraMounts];
+                    mounts[index] = { ...mounts[index], source: e.target.value };
+                    setFormData({ ...formData, extraMounts: mounts });
+                  }}
+                />
+                <input
+                  type="text"
+                  className="input flex-1"
+                  placeholder="/container/path"
+                  value={mount.target}
+                  onChange={(e) => {
+                    const mounts = [...formData.extraMounts];
+                    mounts[index] = { ...mounts[index], target: e.target.value };
+                    setFormData({ ...formData, extraMounts: mounts });
+                  }}
+                />
+                <label className="flex items-center gap-1 text-xs text-dark-400 whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={mount.readonly || false}
+                    onChange={(e) => {
+                      const mounts = [...formData.extraMounts];
+                      mounts[index] = { ...mounts[index], readonly: e.target.checked };
+                      setFormData({ ...formData, extraMounts: mounts });
+                    }}
+                    className="rounded border-dark-600"
+                  />
+                  RO
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const mounts = formData.extraMounts.filter((_, i) => i !== index);
+                    setFormData({ ...formData, extraMounts: mounts });
+                  }}
+                  className="text-dark-400 hover:text-red-400 transition-colors"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setFormData({
+                  ...formData,
+                  extraMounts: [...formData.extraMounts, { source: '', target: '' }],
+                });
+              }}
+              className="btn btn-secondary text-xs py-1 px-2 flex items-center gap-1"
+            >
+              <Plus size={14} />
+              Add Mount
+            </button>
+          </div>
+          <p className="text-xs text-dark-500 mt-1">
+            Additional volumes to mount in Docker containers (source → target)
           </p>
         </div>
 

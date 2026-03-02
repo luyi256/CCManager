@@ -168,6 +168,7 @@ class AgentPool {
     continueSession?: boolean;
     sessionId?: string;
     postTaskHook?: string;
+    extraMounts?: Array<{ source: string; target: string; readonly?: boolean }>;
   }): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'online') {
