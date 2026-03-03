@@ -1,4 +1,5 @@
 import type { Project, Task, GlobalConfig, Agent } from '../types';
+import { getApiToken, clearApiToken } from './auth';
 
 const API_BASE = '/api';
 
@@ -14,37 +15,36 @@ function isRetryable(status: number): boolean {
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const method = options?.method || 'GET';
-  console.log('request:', method, `${API_BASE}${url}`);
-  console.log('request body:', options?.body);
-
   let lastError: Error | null = null;
 
   for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
     if (attempt > 0) {
       const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
-      console.warn(`Retry ${attempt}/${MAX_RETRIES} for ${method} ${url} in ${delay}ms...`);
       await sleep(delay);
     }
 
     let response: Response;
     try {
+      const token = getApiToken();
+      const headers: Record<string, string> = {
+        'Content-Type': 'application/json',
+      };
+      if (token) {
+        headers['Authorization'] = `Bearer ${token}`;
+      }
       response = await fetch(`${API_BASE}${url}`, {
         headers: {
-          'Content-Type': 'application/json',
+          ...headers,
           ...options?.headers,
         },
         ...options,
       });
     } catch (fetchErr) {
-      console.error('fetch failed:', fetchErr);
       lastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
       // Network errors are retryable
       if (attempt < MAX_RETRIES) continue;
       throw lastError;
     }
-
-    console.log('response status:', response.status, response.statusText);
 
     if (response.ok) {
       if (response.status === 204) {
@@ -56,12 +56,17 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     const error = await response.json().catch(() => ({ message: response.statusText }));
     lastError = new Error(error.message || 'Request failed');
 
+    // Auth failure — clear token and reload to show login page
+    if (response.status === 401 || response.status === 403) {
+      clearApiToken();
+      window.location.reload();
+      throw lastError;
+    }
+
     if (isRetryable(response.status) && attempt < MAX_RETRIES) {
-      console.warn(`Server error ${response.status}, will retry...`);
       continue;
     }
 
-    console.error('request failed:', error);
     throw lastError;
   }
 
@@ -78,19 +83,10 @@ export async function getProject(id: string): Promise<Project> {
 }
 
 export async function createProject(data: Omit<Project, 'id' | 'createdAt' | 'taskCount' | 'runningCount'>): Promise<Project> {
-  console.log('api.createProject called with:', data);
-  console.log('api.createProject - about to call request()');
-  try {
-    const result = await request<Project>('/projects', {
-      method: 'POST',
-      body: JSON.stringify(data),
-    });
-    console.log('api.createProject result:', result);
-    return result;
-  } catch (err) {
-    console.error('api.createProject error:', err);
-    throw err;
-  }
+  return request<Project>('/projects', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
 }
 
 export async function updateProject(id: string, data: Partial<Project>): Promise<Project> {
@@ -211,13 +207,71 @@ export async function validateAuth(type: 'oauth' | 'apikey', token: string): Pro
   });
 }
 
+// Device management
+export interface DeviceInfo {
+  id: number;
+  name: string;
+  createdAt: string;
+  lastUsedAt: string | null;
+}
+
+export async function getCurrentDevice(): Promise<DeviceInfo> {
+  return request('/auth/me');
+}
+
+export async function getDeviceTokens(): Promise<DeviceInfo[]> {
+  return request('/auth/devices');
+}
+
+export async function revokeDeviceToken(id: number): Promise<void> {
+  return request(`/auth/devices/${id}`, { method: 'DELETE' });
+}
+
+// Agent token management
+export interface AgentTokenInfo {
+  agentId: string;
+  hasToken: boolean;
+  createdAt?: string;
+  lastUsedAt?: string | null;
+}
+
+export async function registerAgent(agentId: string, agentName?: string): Promise<{ agentId: string; agentName: string; token: string }> {
+  return request('/agents/register', {
+    method: 'POST',
+    body: JSON.stringify({ agentId, agentName }),
+  });
+}
+
+export async function generateAgentToken(agentId: string): Promise<{ agentId: string; token: string }> {
+  return request(`/agents/${agentId}/token`, {
+    method: 'POST',
+  });
+}
+
+export async function getAgentTokenInfo(agentId: string): Promise<AgentTokenInfo> {
+  return request(`/agents/${agentId}/token`);
+}
+
+export async function revokeAgentToken(agentId: string): Promise<void> {
+  return request(`/agents/${agentId}/token`, {
+    method: 'DELETE',
+  });
+}
+
 // Voice transcription
 export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<{ text: string }> {
   const formData = new FormData();
   formData.append('audio', audioBlob, filename);
 
+  const headers: Record<string, string> = {};
+  const token = getApiToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+
   const response = await fetch(`${API_BASE}/transcribe`, {
     method: 'POST',
+    headers,
     body: formData,
   });
 
