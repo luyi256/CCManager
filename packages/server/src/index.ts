@@ -1,30 +1,80 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import { existsSync } from 'fs';
+import { resolve, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+// Load .env from repo root
+// At runtime: __server_dir = packages/server/dist, repo root is 3 levels up
+// At dev (tsx): __server_dir = packages/server/src, repo root is 3 levels up
+const __server_dir = dirname(fileURLToPath(import.meta.url));
+const envPath = resolve(__server_dir, '../../../.env');
+if (existsSync(envPath)) {
+  dotenv.config({ path: envPath });
+} else {
+  dotenv.config(); // fallback: cwd
+}
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
 import { createServer } from 'http';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
 
 import projectsRouter from './routes/projects.js';
 import tasksRouter from './routes/tasks.js';
 import settingsRouter from './routes/settings.js';
 import agentsRouter from './routes/agents.js';
 import transcribeRouter from './routes/transcribe.js';
+import authRouter from './routes/auth.js';
 import { setupWebSocket } from './websocket/index.js';
 import { startWaitingTaskChecker } from './services/waitingTasks.js';
 import { agentPool } from './services/agentPool.js';
+import { hashToken } from './services/auth.js';
+import { findDeviceByHash, updateDeviceLastUsed } from './services/storage.js';
 
 // Initialize database (creates tables if needed)
 import './services/database.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const __dirname = __server_dir;
 
 const app = express();
 const server = createServer(app);
 
-// Middleware
-app.use(cors());
+// Security headers
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "ws:", "wss:"],
+      fontSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      frameAncestors: ["'none'"],
+    },
+  },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+  },
+  frameguard: { action: 'deny' },
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+}));
+
+// CORS — only allow same-origin requests
+app.use(cors({ origin: false }));
 app.use(express.json());
+
+// Rate limiting — 100 requests per minute per IP
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' },
+});
+app.use('/api', apiLimiter);
 
 // Request logging for debugging
 app.use((req, res, next) => {
@@ -34,7 +84,31 @@ app.use((req, res, next) => {
   next();
 });
 
+// API authentication middleware — device-token based
+app.use('/api', (req, res, next) => {
+  // Public endpoints: health check
+  if (req.path === '/health') return next();
+
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Authorization required' });
+  }
+
+  const token = authHeader.slice(7);
+  const tokenHash = hashToken(token);
+  const device = findDeviceByHash(tokenHash);
+
+  if (!device) {
+    return res.status(403).json({ error: 'Invalid token' });
+  }
+
+  // Update last_used_at with debounce
+  updateDeviceLastUsed(tokenHash);
+  next();
+});
+
 // API Routes
+app.use('/api/auth', authRouter);
 app.use('/api/projects', projectsRouter);
 app.use('/api/agents', agentsRouter);
 app.use('/api', tasksRouter);
@@ -72,8 +146,9 @@ setupWebSocket(server);
 startWaitingTaskChecker();
 
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '127.0.0.1';
 
-server.listen(PORT, () => {
+server.listen(Number(PORT), HOST, () => {
   console.log(`CCManager server running on port ${PORT}`);
   console.log(`- API: http://localhost:${PORT}/api`);
   console.log(`- Socket.IO: http://localhost:${PORT}`);
