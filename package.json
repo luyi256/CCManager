@@ -12,10 +12,7 @@
     "build:server": "pnpm --filter @ccmanager/server build",
     "start": "pnpm --filter @ccmanager/server start",
     "lint": "pnpm -r lint",
-    "typecheck": "pnpm -r typecheck",
-    "token:create": "pnpm --filter @ccmanager/server token:create",
-    "token:list": "pnpm --filter @ccmanager/server token:list",
-    "token:revoke": "pnpm --filter @ccmanager/server token:revoke"
+    "typecheck": "pnpm -r typecheck"
   },
   "devDependencies": {
     "concurrently": "^8.2.2",

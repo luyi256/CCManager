@@ -3,14 +3,14 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "bin": {
+    "ccmng": "dist/cli/index.js"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit",
-    "token:create": "tsx src/cli/token.ts create",
-    "token:list": "tsx src/cli/token.ts list",
-    "token:revoke": "tsx src/cli/token.ts revoke"
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "better-sqlite3": "^11.0.0",
