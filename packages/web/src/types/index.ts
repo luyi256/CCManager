@@ -20,6 +20,7 @@ export interface Project {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
+  executor?: 'local' | 'docker';
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;

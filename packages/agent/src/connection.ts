@@ -121,7 +121,6 @@ export class AgentConnection {
       agentId: this.config.agentId,
       agentName: this.config.agentName,
       capabilities: this.config.capabilities || [],
-      executor: this.config.executor,
       status: 'online',
     };
 
@@ -189,8 +188,9 @@ export class AgentConnection {
         }
       }
 
-      // Create executor based on config
-      if (this.config.executor === 'docker' && this.config.dockerConfig) {
+      // Create executor based on task's executor setting (per-project)
+      const taskExecutor = task.executor ?? this.config.executor ?? 'local';
+      if (taskExecutor === 'docker' && this.config.dockerConfig) {
         executor = new DockerExecutor(this.config.dockerConfig);
       } else {
         executor = new ClaudeExecutor();
@@ -306,6 +306,14 @@ export class AgentConnection {
         }
         text = (await res.text()).trim();
       } else {
+        // Local dataPath: try localhost first
+        const localhostUrl = 'http://localhost:3001';
+        try {
+          const res = await fetch(`${localhostUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+          if (res.ok) return localhostUrl;
+        } catch { /* not reachable */ }
+
+        // Fall back to server-url.txt (tunnel URL)
         const { readFileSync, existsSync } = await import('fs');
         const { join } = await import('path');
         const filePath = join(dataPath, 'server-url.txt');

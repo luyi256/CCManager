@@ -31,7 +31,6 @@ function loadConfig(): AgentConfig {
         agentId: 'my-agent',
         agentName: 'My Agent',
         dataPath: '/path/to/CCManagerData',
-        executor: 'local',
         allowedPaths: ['/path/to/projects/*'],
       },
       null,
@@ -68,7 +67,9 @@ function saveTokenToConfig(configPath: string, token: string): void {
   }
 }
 
-/** Read server URL from dataPath/server-url.txt (local file or remote URL) */
+/** Read server URL from dataPath/server-url.txt (local file or remote URL).
+ *  For local agents (dataPath is a filesystem path): try localhost first,
+ *  then fall back to server-url.txt (which contains the tunnel URL). */
 async function resolveServerUrl(dataPath: string): Promise<string> {
   // Remote: dataPath is a URL base (e.g. https://raw.githubusercontent.com/.../main)
   if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
@@ -79,16 +80,28 @@ async function resolveServerUrl(dataPath: string): Promise<string> {
     return (await res.text()).trim();
   }
 
-  // Local: dataPath is a filesystem path
+  // Local: dataPath is a filesystem path — try localhost first
+  const localhostUrl = 'http://localhost:3001';
+  try {
+    const res = await fetch(`${localhostUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
+    if (res.ok) {
+      console.log('Local server detected at localhost:3001');
+      return localhostUrl;
+    }
+  } catch {
+    // localhost not reachable, fall back to server-url.txt
+  }
+
+  // Fall back to server-url.txt (contains tunnel URL for remote access)
   const filePath = path.join(dataPath, 'server-url.txt');
   if (!fs.existsSync(filePath)) {
-    throw new Error(`${filePath} not found`);
+    throw new Error(`Local server not reachable and ${filePath} not found`);
   }
   return fs.readFileSync(filePath, 'utf-8').trim();
 }
 
 function validateConfig(config: AgentConfig): void {
-  const required = ['agentId', 'agentName', 'dataPath', 'executor', 'allowedPaths'];
+  const required = ['agentId', 'agentName', 'dataPath', 'allowedPaths'];
   const missing = required.filter((key) => !(key in config));
 
   if (missing.length > 0) {
@@ -102,14 +115,9 @@ function validateConfig(config: AgentConfig): void {
     process.exit(1);
   }
 
-  // Validate executor value
-  if (config.executor !== 'local' && config.executor !== 'docker') {
+  // Validate executor value if present (now optional, per-project)
+  if (config.executor && config.executor !== 'local' && config.executor !== 'docker') {
     console.error(`Invalid executor: ${config.executor}. Must be 'local' or 'docker'`);
-    process.exit(1);
-  }
-
-  if (config.executor === 'docker' && !config.dockerConfig) {
-    console.error('Docker executor requires dockerConfig');
     process.exit(1);
   }
 
@@ -167,11 +175,10 @@ async function main(): Promise<void> {
   console.log(`Agent ID: ${config.agentId}`);
   console.log(`Agent Name: ${config.agentName}`);
   console.log(`Data Path: ${config.dataPath}`);
-  console.log(`Executor: ${config.executor}`);
   console.log(`Allowed Paths: ${config.allowedPaths.join(', ')}`);
 
-  // Docker setup: verify Docker availability and ensure image exists
-  if (config.executor === 'docker' && config.dockerConfig) {
+  // Docker setup: verify Docker availability and ensure image exists if dockerConfig present
+  if (config.dockerConfig) {
     const { verifyDockerAvailable, ensureDockerImage } = await import('./dockerSetup.js');
 
     console.log('Docker executor mode — verifying Docker availability...');
