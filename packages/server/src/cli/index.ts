@@ -15,6 +15,7 @@ if (existsSync(envPath)) {
 
 import { runTokenCommand } from './token.js';
 import { runAgentCommand } from './agent.js';
+import { runBackupCommand } from './backup.js';
 
 const USAGE = `Usage: ccmng <command> [subcommand] [options]
 
@@ -28,10 +29,12 @@ Commands:
   agent token <id>                        Regenerate token for an agent
   agent revoke <id>                       Revoke an agent's token
 
+  backup [--keep <n>]                     Backup database (default: keep 7)
+
 Examples:
   ccmng token create --name "MacBook Pro"
   ccmng agent create --id macbook-agent --name "MacBook Agent"
-  ccmng agent list
+  ccmng backup
 `;
 
 async function main() {
@@ -49,6 +52,9 @@ async function main() {
       break;
     case 'agent':
       await runAgentCommand(args.slice(1));
+      break;
+    case 'backup':
+      await runBackupCommand(args.slice(1));
       break;
     default:
       console.error(`Unknown command: ${command}\n`);
