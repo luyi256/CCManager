@@ -5,11 +5,7 @@ import path from 'path';
 import { AgentConnection } from './connection.js';
 import type { AgentConfig } from './types.js';
 
-const CONFIG_PATHS = [
-  './agent.config.json',
-  './ccm-agent.json',
-  path.join(process.env.HOME || '', '.ccm-agent.json'),
-];
+const CONFIG_PATH = path.join(process.env.HOME || '', '.ccm-agent.json');
 
 function loadConfig(): AgentConfig {
   // Check command line argument
@@ -19,21 +15,14 @@ function loadConfig(): AgentConfig {
     return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   }
 
-  // Check default paths
-  for (const configPath of CONFIG_PATHS) {
-    try {
-      const fullPath = path.resolve(configPath);
-      if (fs.existsSync(fullPath)) {
-        console.log(`Loading config from: ${fullPath}`);
-        return JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
-      }
-    } catch {
-      continue;
-    }
+  // Check default path
+  const fullPath = path.resolve(CONFIG_PATH);
+  if (fs.existsSync(fullPath)) {
+    console.log(`Loading config from: ${fullPath}`);
+    return JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
   }
 
-  console.error('No config file found. Checked:');
-  CONFIG_PATHS.forEach((p) => console.error(`  - ${p}`));
+  console.error(`No config file found at: ${fullPath}`);
   console.error('\nCreate a config file with:');
   console.error(
     JSON.stringify(

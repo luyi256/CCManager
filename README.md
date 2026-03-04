@@ -103,7 +103,7 @@ ccmng token revoke <id>
 
 ## Agent 配置
 
-配置文件搜索顺序：`./agent.config.json` → `./ccm-agent.json` → `~/.ccm-agent.json` → `--config=<path>`
+配置文件：`~/.ccm-agent.json`（或 `--config=<path>` 指定）
 
 ```json
 {
