@@ -43,6 +43,7 @@ export function setupWebSocket(server: HttpServer): Server {
     }
 
     if (!token || typeof token !== 'string') {
+      console.warn(`Agent auth rejected: no token provided (agentId: ${agentId})`);
       return next(new Error('Auth token is required'));
     }
 
@@ -51,11 +52,13 @@ export function setupWebSocket(server: HttpServer): Server {
     const agentToken = findAgentTokenByHash(tokenHash);
 
     if (!agentToken) {
+      console.warn(`Agent auth rejected: invalid token (agentId: ${agentId})`);
       return next(new Error('Invalid agent auth token'));
     }
 
     // Verify the token belongs to the connecting agent
     if (agentToken.agentId !== agentId) {
+      console.warn(`Agent auth rejected: token belongs to ${agentToken.agentId}, not ${agentId}`);
       return next(new Error('Token does not match agent ID'));
     }
 
@@ -95,6 +98,7 @@ export function setupWebSocket(server: HttpServer): Server {
               projectPath: project.projectPath,
               prompt,
               isPlanMode: task.isPlanMode,
+              executor: project.executor,
               worktreeBranch: task.worktreeBranch,
               continueSession,
               sessionId,

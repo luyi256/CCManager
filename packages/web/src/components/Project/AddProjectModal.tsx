@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Loader2, Server, Circle, Plus, X } from 'lucide-react';
+import { Loader2, Server, Circle, Plus, X, Monitor, Box } from 'lucide-react';
 import Modal from '../common/Modal';
 import { useCreateProject } from '../../hooks/useProjects';
 import { useWebSocket } from '../../contexts/WebSocketContext';
@@ -15,6 +15,7 @@ interface FormData {
   agentId: string;
   projectPath: string;
   securityMode: 'auto' | 'safe';
+  executor: 'local' | 'docker';
   postTaskHook: string;
   extraMounts: ExtraMount[];
   enableWorktree: boolean;
@@ -25,6 +26,7 @@ const initialFormData: FormData = {
   agentId: '',
   projectPath: '',
   securityMode: 'auto',
+  executor: 'local',
   postTaskHook: '',
   extraMounts: [],
   enableWorktree: false,
@@ -242,6 +244,64 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
         </div>
 
         <div>
+          <label className="block text-sm font-medium text-dark-300 mb-1.5">
+            Executor
+          </label>
+          <div className="grid grid-cols-2 gap-3">
+            <label
+              className={`card p-3 cursor-pointer transition-colors ${
+                formData.executor === 'local'
+                  ? 'border-primary-500 bg-primary-500/10'
+                  : 'hover:border-dark-600'
+              }`}
+            >
+              <input
+                type="radio"
+                name="executor"
+                value="local"
+                checked={formData.executor === 'local'}
+                onChange={(e) =>
+                  setFormData({ ...formData, executor: e.target.value as 'local' | 'docker' })
+                }
+                className="sr-only"
+              />
+              <div className="flex items-center gap-2">
+                <Monitor size={16} className="text-dark-400" />
+                <span className="font-medium text-dark-100">Local</span>
+              </div>
+              <div className="text-xs text-dark-400 mt-1">
+                Run Claude CLI directly on the host
+              </div>
+            </label>
+            <label
+              className={`card p-3 cursor-pointer transition-colors ${
+                formData.executor === 'docker'
+                  ? 'border-primary-500 bg-primary-500/10'
+                  : 'hover:border-dark-600'
+              }`}
+            >
+              <input
+                type="radio"
+                name="executor"
+                value="docker"
+                checked={formData.executor === 'docker'}
+                onChange={(e) =>
+                  setFormData({ ...formData, executor: e.target.value as 'local' | 'docker' })
+                }
+                className="sr-only"
+              />
+              <div className="flex items-center gap-2">
+                <Box size={16} className="text-dark-400" />
+                <span className="font-medium text-dark-100">Docker</span>
+              </div>
+              <div className="text-xs text-dark-400 mt-1">
+                Run in isolated Docker containers
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <div>
           <label className="flex items-center gap-3 cursor-pointer">
             <input
               type="checkbox"
@@ -274,9 +334,9 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           </p>
         </div>
 
-        <div>
+        {formData.executor === 'docker' && <div>
           <label className="block text-sm font-medium text-dark-300 mb-1.5">
-            Extra Mounts <span className="text-dark-500">(optional, Docker only)</span>
+            Extra Mounts <span className="text-dark-500">(optional)</span>
           </label>
           <div className="space-y-2">
             {formData.extraMounts.map((mount, index) => (
@@ -345,7 +405,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           <p className="text-xs text-dark-500 mt-1">
             Additional volumes to mount in Docker containers (source → target)
           </p>
-        </div>
+        </div>}
 
         <div className="flex justify-end gap-3 pt-4">
           <button

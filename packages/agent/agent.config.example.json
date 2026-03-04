@@ -2,7 +2,6 @@
   "agentId": "my-agent",
   "agentName": "My Agent",
   "dataPath": "/path/to/CCManagerData",
-  "executor": "local",
   "allowedPaths": ["/Users/me/projects/*"],
   "blockedPaths": ["/Users/me/.ssh"],
   "capabilities": ["no-gpu"],

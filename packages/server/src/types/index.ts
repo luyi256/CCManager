@@ -20,6 +20,7 @@ export interface Project {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
+  executor?: 'local' | 'docker';
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;
@@ -122,6 +123,7 @@ export interface ServerToAgentEvents {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
+    executor?: 'local' | 'docker';
     worktreeBranch?: string;
     postTaskHook?: string;
     extraMounts?: ExtraMount[];
@@ -137,7 +139,7 @@ export interface AgentToServerEvents {
     agentId: string;
     agentName: string;
     capabilities: string[];
-    executor: 'local' | 'docker';
+    executor?: 'local' | 'docker';
   }) => void;
   status: (data: { status: 'online' | 'busy'; taskId?: number }) => void;
   'task:output': (data: { taskId: number; text: string }) => void;

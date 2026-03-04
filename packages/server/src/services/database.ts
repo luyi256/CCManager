@@ -143,4 +143,12 @@ try {
   // Column already exists, ignore
 }
 
+// Add executor column to projects table (per-project executor instead of per-agent)
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN executor TEXT DEFAULT 'local'`);
+  console.log('Migration: Added executor column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

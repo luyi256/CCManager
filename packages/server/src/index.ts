@@ -1,6 +1,6 @@
 import dotenv from 'dotenv';
-import { existsSync, writeFileSync } from 'fs';
-import { resolve, dirname } from 'path';
+import { existsSync } from 'fs';
+import { dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 // Load .env from repo root
@@ -38,6 +38,8 @@ import './services/database.js';
 const __dirname = __server_dir;
 
 const app = express();
+// Trust proxy (Cloudflare tunnel adds X-Forwarded-For)
+app.set('trust proxy', 1);
 const server = createServer(app);
 
 // Security headers
@@ -154,18 +156,6 @@ server.listen(Number(PORT), HOST, () => {
   console.log(`- Socket.IO: http://localhost:${PORT}`);
   console.log(`  - Agent namespace: /agent`);
   console.log(`  - User namespace: /`);
-
-  // Write server URL to DATA_PATH/server-url.txt for agent discovery
-  const dataPath = process.env.DATA_PATH;
-  if (dataPath) {
-    try {
-      const serverUrl = `http://localhost:${PORT}`;
-      writeFileSync(resolve(dataPath, 'server-url.txt'), serverUrl + '\n');
-      console.log(`Server URL written to ${resolve(dataPath, 'server-url.txt')}`);
-    } catch (e) {
-      console.warn('Failed to write server-url.txt:', e instanceof Error ? e.message : e);
-    }
-  }
 });
 
 // Graceful shutdown

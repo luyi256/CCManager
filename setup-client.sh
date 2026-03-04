@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
 # CCManager Agent (Client) - One-click setup & run script
-# Usage: bash setup-client.sh
+# Usage: bash setup-client.sh [--reconfigure]
 set -euo pipefail
+
+RECONFIGURE=false
+for arg in "$@"; do
+  case "$arg" in
+    --reconfigure) RECONFIGURE=true ;;
+  esac
+done
 
 # ── Colors ──────────────────────────────────────────────
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -78,18 +85,34 @@ for p in "${CONFIG_PATHS[@]}"; do
   fi
 done
 
+NEED_CONFIG=false
 if [ -z "$CONFIG_FILE" ]; then
-  warn "No agent config found. Creating from template..."
+  NEED_CONFIG=true
   CONFIG_FILE="$HOME/.ccm-agent.json"
+  warn "No agent config found. Creating new config..."
+elif [ "$RECONFIGURE" = true ]; then
+  NEED_CONFIG=true
+  info "Reconfiguring: $CONFIG_FILE"
+else
+  ok "Config found: $CONFIG_FILE"
+  info "Run with --reconfigure to change settings"
+fi
 
-  # Detect defaults
-  DEFAULT_ID=$(hostname | tr '[:upper:]' '[:lower:]' | tr ' .' '-')
-  DEFAULT_NAME=$(hostname)
-  DEFAULT_PATH="$HOME/projects/*"
+if [ "$NEED_CONFIG" = true ]; then
+  # Read existing values as defaults (if reconfiguring)
+  if [ -f "$CONFIG_FILE" ]; then
+    EXISTING_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('agentId',''))" 2>/dev/null || echo "")
+    EXISTING_NAME=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('agentName',''))" 2>/dev/null || echo "")
+    EXISTING_DATA=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('dataPath',''))" 2>/dev/null || echo "")
+    EXISTING_PATHS=$(python3 -c "import json; print(','.join(json.load(open('$CONFIG_FILE')).get('allowedPaths',[])))" 2>/dev/null || echo "")
+  fi
 
-  # Detect if this is a local setup (CCManagerData exists locally)
-  DEFAULT_DATA_PATH="$HOME/CCManagerData"
-  if [ -f "/home/CC/CCManagerData/server-url.txt" ]; then
+  # Detect defaults (use existing values if available)
+  DEFAULT_ID="${EXISTING_ID:-$(hostname | tr '[:upper:]' '[:lower:]' | tr ' .' '-')}"
+  DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"
+  DEFAULT_PATH="${EXISTING_PATHS:-$HOME/projects/*}"
+  DEFAULT_DATA_PATH="${EXISTING_DATA:-$HOME/CCManagerData}"
+  if [ -z "$EXISTING_DATA" ] && [ -f "/home/CC/CCManagerData/server-url.txt" ]; then
     DEFAULT_DATA_PATH="/home/CC/CCManagerData"
   fi
 
@@ -106,76 +129,70 @@ if [ -z "$CONFIG_FILE" ]; then
   read -rp "  CCManagerData path [$DEFAULT_DATA_PATH]: " DATA_PATH
   DATA_PATH="${DATA_PATH:-$DEFAULT_DATA_PATH}"
 
-  read -rp "  Executor (local/docker) [local]: " EXECUTOR
-  EXECUTOR="${EXECUTOR:-local}"
-
   read -rp "  Allowed Paths [$DEFAULT_PATH]: " ALLOWED_PATHS
   ALLOWED_PATHS="${ALLOWED_PATHS:-$DEFAULT_PATH}"
 
-  cat > "$CONFIG_FILE" <<CFGEOF
+  # Preserve authToken if reconfiguring
+  EXISTING_TOKEN=""
+  if [ -f "$CONFIG_FILE" ]; then
+    EXISTING_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('authToken',''))" 2>/dev/null || echo "")
+  fi
+
+  if [ -n "$EXISTING_TOKEN" ]; then
+    cat > "$CONFIG_FILE" <<CFGEOF
 {
   "agentId": "$AGENT_ID",
   "agentName": "$AGENT_NAME",
   "dataPath": "$DATA_PATH",
-  "executor": "$EXECUTOR",
+  "authToken": "$EXISTING_TOKEN",
   "allowedPaths": ["$ALLOWED_PATHS"],
   "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
   "capabilities": []
 }
 CFGEOF
+  else
+    cat > "$CONFIG_FILE" <<CFGEOF
+{
+  "agentId": "$AGENT_ID",
+  "agentName": "$AGENT_NAME",
+  "dataPath": "$DATA_PATH",
+  "allowedPaths": ["$ALLOWED_PATHS"],
+  "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
+  "capabilities": []
+}
+CFGEOF
+  fi
 
   echo
   ok "Config saved to $CONFIG_FILE"
   info "Auth token will be prompted on first run (generate via: ccmng agent create --id $AGENT_ID)"
-
-  if [ "$EXECUTOR" = "docker" ]; then
-    warn "Docker executor selected — you may need to configure dockerConfig in $CONFIG_FILE"
-  fi
-else
-  ok "Config found: $CONFIG_FILE"
 fi
 
 echo
 
-# ── 4. Docker setup (if docker executor) ───────────────
-EXECUTOR=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['executor'])" 2>/dev/null || echo "local")
-
-if [ "$EXECUTOR" = "docker" ]; then
-  info "Docker executor mode — checking Docker..."
-
-  if ! command -v docker &>/dev/null; then
-    err "Docker not found. Please install Docker."
-    err "  → https://docs.docker.com/get-docker/"
-    exit 1
-  fi
+# ── 4. Docker setup (auto-detect) ─────────────────────
+# Executor is now per-project (not per-agent). If Docker is available,
+# pre-build the runner image so Docker-mode projects are ready to go.
+if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 
-  if ! docker info &>/dev/null 2>&1; then
-    err "Docker daemon not running or no permission."
-    err "  → Start Docker or add user to docker group: sudo usermod -aG docker \$USER"
-    exit 1
-  fi
-  ok "Docker daemon accessible"
-
-  # Get image name from config
+  # Get image name from config (if dockerConfig exists) or use default
   IMAGE=$(python3 -c "import json; c=json.load(open('$CONFIG_FILE')); print(c.get('dockerConfig',{}).get('image','ccmanager-runner:latest'))" 2>/dev/null || echo "ccmanager-runner:latest")
 
   if ! docker image inspect "$IMAGE" &>/dev/null 2>&1; then
-    info "Docker image '$IMAGE' not found, building..."
     if [ -f "$SCRIPT_DIR/packages/agent/docker/Dockerfile" ]; then
+      info "Building Docker image '$IMAGE' for Docker-mode projects..."
       docker build -t "$IMAGE" "$SCRIPT_DIR/packages/agent/docker/"
       ok "Docker image built: $IMAGE"
     else
-      err "Dockerfile not found at packages/agent/docker/Dockerfile"
-      err "Please build or pull the image manually: docker pull $IMAGE"
-      exit 1
+      info "Docker available but no Dockerfile found — Docker-mode projects will need manual image setup"
     fi
   else
-    ok "Docker image: $IMAGE"
+    ok "Docker image ready: $IMAGE"
   fi
   echo
 else
-  ok "Executor: local (no Docker required)"
+  info "Docker not available — only local executor projects will work"
   echo
 fi
 
@@ -233,7 +250,6 @@ echo -e "${GREEN}═════════════════════
 echo
 echo -e "  Config:    ${CYAN}$CONFIG_FILE${NC}"
 echo -e "  Data Path: ${CYAN}$DATA_PATH${NC}"
-echo -e "  Executor:  ${CYAN}$EXECUTOR${NC}"
 echo
 echo -e "  Logs:      ${YELLOW}pm2 logs ccm-agent${NC}"
 echo -e "  Status:    ${YELLOW}pm2 status${NC}"

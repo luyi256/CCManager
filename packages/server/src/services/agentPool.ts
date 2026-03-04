@@ -26,14 +26,14 @@ class AgentPool {
     agentId: string;
     agentName: string;
     capabilities: string[];
-    executor: 'local' | 'docker';
+    executor?: 'local' | 'docker';
   }): void {
     const agent: ConnectedAgent = {
       socket,
       agentId: info.agentId,
       agentName: info.agentName,
       capabilities: info.capabilities,
-      executor: info.executor,
+      executor: info.executor || 'local',
       status: 'online',
       runningTasks: [],
       lastHeartbeat: Date.now(),
@@ -56,7 +56,7 @@ class AgentPool {
       info.agentId,
       info.agentName,
       JSON.stringify(info.capabilities),
-      info.executor
+      info.executor || 'local'
     );
 
     console.log(`Agent registered: ${info.agentName} (${info.agentId})`);
@@ -163,6 +163,7 @@ class AgentPool {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
+    executor?: 'local' | 'docker';
     worktreeBranch?: string;
     requiredCapabilities?: string[];
     continueSession?: boolean;
