@@ -151,4 +151,12 @@ try {
   // Column already exists, ignore
 }
 
+// Add docker_image column to projects table (optional per-project Docker image override)
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN docker_image TEXT`);
+  console.log('Migration: Added docker_image column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

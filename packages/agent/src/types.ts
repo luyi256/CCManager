@@ -32,6 +32,7 @@ export interface TaskRequest {
   prompt: string;
   isPlanMode: boolean;
   executor?: 'local' | 'docker';
+  dockerImage?: string;
   worktreeBranch?: string;
   continueSession?: boolean;
   sessionId?: string;

@@ -16,6 +16,7 @@ interface FormData {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   executor: 'local' | 'docker';
+  dockerImage: string;
   extraMounts: ExtraMount[];
   enableWorktree: boolean;
 }
@@ -26,6 +27,7 @@ const initialFormData: FormData = {
   projectPath: '',
   securityMode: 'auto',
   executor: 'local',
+  dockerImage: '',
   extraMounts: [],
   enableWorktree: false,
 };
@@ -49,6 +51,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
     try {
       const submitData = {
         ...formData,
+        dockerImage: formData.dockerImage || undefined,
         extraMounts: formData.extraMounts.length > 0
           ? formData.extraMounts.filter(m => m.source && m.target)
           : undefined,
@@ -298,6 +301,24 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
             </label>
           </div>
         </div>
+
+        {formData.executor === 'docker' && (
+          <div>
+            <label className="block text-sm font-medium text-dark-300 mb-1.5">
+              Docker Image <span className="text-dark-500">(optional, overrides agent default)</span>
+            </label>
+            <input
+              type="text"
+              className="input"
+              placeholder="e.g. ccrunner:latest"
+              value={formData.dockerImage}
+              onChange={(e) => setFormData({ ...formData, dockerImage: e.target.value })}
+            />
+            <p className="text-xs text-dark-500 mt-1">
+              Leave empty to use the agent&apos;s default Docker image
+            </p>
+          </div>
+        )}
 
         <div>
           <label className="flex items-center gap-3 cursor-pointer">

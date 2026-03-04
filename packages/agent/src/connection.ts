@@ -191,7 +191,10 @@ export class AgentConnection {
       // Create executor based on task's executor setting (per-project)
       const taskExecutor = task.executor ?? this.config.executor ?? 'local';
       if (taskExecutor === 'docker' && this.config.dockerConfig) {
-        executor = new DockerExecutor(this.config.dockerConfig);
+        const dockerConfig = task.dockerImage
+          ? { ...this.config.dockerConfig, image: task.dockerImage }
+          : this.config.dockerConfig;
+        executor = new DockerExecutor(dockerConfig);
       } else {
         executor = new ClaudeExecutor();
       }
