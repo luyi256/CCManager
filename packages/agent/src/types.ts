@@ -17,7 +17,7 @@ export interface AgentConfig {
   agentName: string;
   managerUrl: string;
   managerUrlSource?: string; // URL to fetch current managerUrl (e.g. GitHub raw URL)
-  authToken: string;
+  authToken?: string;
   executor: 'local' | 'docker';
   dockerConfig?: DockerConfig;
   allowedPaths: string[];
