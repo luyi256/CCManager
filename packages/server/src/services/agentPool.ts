@@ -164,6 +164,7 @@ class AgentPool {
     prompt: string;
     isPlanMode: boolean;
     executor?: 'local' | 'docker';
+    dockerImage?: string;
     worktreeBranch?: string;
     requiredCapabilities?: string[];
     continueSession?: boolean;

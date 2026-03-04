@@ -110,6 +110,7 @@ export async function getProjects(): Promise<Project[]> {
     security_mode: string;
     auth_type: string;
     executor: string | null;
+    docker_image: string | null;
     post_task_hook: string | null;
     extra_mounts: string | null;
     enable_worktree: number;
@@ -127,6 +128,7 @@ export async function getProjects(): Promise<Project[]> {
     securityMode: row.security_mode as 'auto' | 'safe',
     authType: row.auth_type as 'oauth' | 'apikey',
     executor: (row.executor as 'local' | 'docker') || 'local',
+    dockerImage: row.docker_image || undefined,
     postTaskHook: row.post_task_hook || undefined,
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
@@ -153,6 +155,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     security_mode: string;
     auth_type: string;
     executor: string | null;
+    docker_image: string | null;
     post_task_hook: string | null;
     extra_mounts: string | null;
     enable_worktree: number;
@@ -172,6 +175,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     securityMode: row.security_mode as 'auto' | 'safe',
     authType: row.auth_type as 'oauth' | 'apikey',
     executor: (row.executor as 'local' | 'docker') || 'local',
+    dockerImage: row.docker_image || undefined,
     postTaskHook: row.post_task_hook || undefined,
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
@@ -184,8 +188,8 @@ export async function getProject(projectId: string): Promise<Project | null> {
 
 export async function saveProject(project: Omit<Project, 'taskCount' | 'runningCount'>): Promise<void> {
   const stmt = db.prepare(`
-    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, post_task_hook, extra_mounts, enable_worktree, created_at, last_activity)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, docker_image, post_task_hook, extra_mounts, enable_worktree, created_at, last_activity)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       agent_id = excluded.agent_id,
@@ -193,6 +197,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
       security_mode = excluded.security_mode,
       auth_type = excluded.auth_type,
       executor = excluded.executor,
+      docker_image = excluded.docker_image,
       post_task_hook = excluded.post_task_hook,
       extra_mounts = excluded.extra_mounts,
       enable_worktree = excluded.enable_worktree,
@@ -206,6 +211,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
     project.securityMode,
     project.authType || 'oauth',
     project.executor || 'local',
+    project.dockerImage || null,
     project.postTaskHook || null,
     project.extraMounts ? JSON.stringify(project.extraMounts) : null,
     project.enableWorktree ? 1 : 0,

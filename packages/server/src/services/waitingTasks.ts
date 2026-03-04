@@ -113,6 +113,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     isPlanMode: task.isPlanMode,
     executor: project.executor,
     worktreeBranch: task.worktreeBranch,
+    dockerImage: project.dockerImage,
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
   });

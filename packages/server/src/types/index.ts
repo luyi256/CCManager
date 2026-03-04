@@ -21,6 +21,7 @@ export interface Project {
   securityMode: 'auto' | 'safe';
   authType?: 'oauth' | 'apikey';
   executor?: 'local' | 'docker';
+  dockerImage?: string;
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;
@@ -124,6 +125,7 @@ export interface ServerToAgentEvents {
     prompt: string;
     isPlanMode: boolean;
     executor?: 'local' | 'docker';
+    dockerImage?: string;
     worktreeBranch?: string;
     postTaskHook?: string;
     extraMounts?: ExtraMount[];
