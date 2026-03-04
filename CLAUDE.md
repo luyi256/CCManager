@@ -48,7 +48,8 @@ packages/
 ├── server/src/
 │   ├── index.ts              # Express 入口、路由注册、WebSocket
 │   ├── cli/
-│   │   └── token.ts          # CLI: 设备 token create/list/revoke
+│   │   ├── index.ts          # ccmng CLI 入口
+│   │   └── token.ts          # 设备 token create/list/revoke
 │   ├── routes/
 │   │   ├── agents.ts         # Agent 相关路由
 │   │   ├── auth.ts           # 设备认证 (GET /me, devices CRUD)
@@ -261,13 +262,13 @@ cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
 
 ```bash
 # 生成设备 Token
-pnpm run token:create -- --name "MacBook Pro"
+ccmng token create --name "MacBook Pro"
 
 # 查看已注册设备
-pnpm run token:list
+ccmng token list
 
 # 吊销设备 Token
-pnpm run token:revoke -- <id>
+ccmng token revoke <id>
 ```
 
 所有 API 和 WebSocket 连接都需要 Token 认证：
@@ -291,7 +292,7 @@ Token 存储:
 ## 环境变量 (.env)
 
 ```bash
-# 设备 Token 通过 CLI 管理 (pnpm run token:create -- --name "...")
+# 设备 Token 通过 CLI 管理 (ccmng token create --name "...")
 
 # Claude Code 认证
 # Docker 模式: 自动从 ~/.claude/.credentials.json 读取 OAuth 凭证

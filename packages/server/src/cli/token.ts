@@ -1,48 +1,28 @@
-#!/usr/bin/env node
 import { parseArgs } from 'node:util';
-import dotenv from 'dotenv';
-import { existsSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
 
-// Load .env BEFORE any DB-dependent imports (same logic as index.ts)
-const __cli_dir = dirname(fileURLToPath(import.meta.url));
-const envPath = resolve(__cli_dir, '../../../../.env');
-if (existsSync(envPath)) {
-  dotenv.config({ path: envPath });
-} else {
-  dotenv.config();
-}
+const USAGE = `Usage: ccmng token <subcommand> [options]
 
-const USAGE = `Usage: token <command> [options]
-
-Commands:
+Subcommands:
   create --name <name>   Create a new device token
   list                   List all registered devices
   revoke <id>            Revoke a device token by ID
-
-Examples:
-  token create --name "MacBook Pro"
-  token list
-  token revoke 3
 `;
 
-async function main() {
-  const args = process.argv.slice(2);
-  const command = args[0];
+export async function runTokenCommand(args: string[]) {
+  const subcommand = args[0];
 
-  if (!command || command === '--help' || command === '-h') {
+  if (!subcommand || subcommand === '--help' || subcommand === '-h') {
     console.log(USAGE);
     process.exit(0);
   }
 
-  // Dynamic imports so dotenv runs first
+  // Dynamic imports — env must be loaded first (done by cli/index.ts)
   const { generateToken, hashToken } = await import('../services/auth.js');
   const { createDevice, listDevices, deleteDevice } = await import('../services/storage.js');
   const { db } = await import('../services/database.js');
 
   try {
-    switch (command) {
+    switch (subcommand) {
       case 'create':
         cmdCreate(args.slice(1), { generateToken, hashToken, createDevice });
         break;
@@ -53,7 +33,7 @@ async function main() {
         cmdRevoke(args.slice(1), deleteDevice);
         break;
       default:
-        console.error(`Unknown command: ${command}\n`);
+        console.error(`Unknown subcommand: ${subcommand}\n`);
         console.log(USAGE);
         process.exit(1);
     }
@@ -70,19 +50,18 @@ function cmdCreate(
     createDevice: (name: string, hash: string) => { id: number; name: string };
   }
 ) {
-  // Filter out bare '--' separators injected by pnpm pass-through
-  const filtered = args.filter((a) => a !== '--');
   const { values } = parseArgs({
-    args: filtered,
+    args,
     options: {
       name: { type: 'string', short: 'n' },
     },
+    allowPositionals: true,
   });
 
   const name = values.name;
   if (!name || name.trim().length === 0) {
     console.error('Error: --name is required\n');
-    console.log('Usage: token create --name "MacBook Pro"');
+    console.log('Usage: ccmng token create --name "MacBook Pro"');
     process.exit(1);
   }
 
@@ -118,7 +97,6 @@ function cmdList(listDevices: () => Array<{ id: number; name: string; createdAt:
   console.log('Registered devices:');
   console.log('');
 
-  // Table header
   const header = ['ID', 'Name', 'Created', 'Last Used'];
   const rows = devices.map((d) => [
     String(d.id),
@@ -127,7 +105,6 @@ function cmdList(listDevices: () => Array<{ id: number; name: string; createdAt:
     d.lastUsedAt || '-',
   ]);
 
-  // Calculate column widths
   const widths = header.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => r[i].length))
   );
@@ -145,13 +122,11 @@ function cmdList(listDevices: () => Array<{ id: number; name: string; createdAt:
 }
 
 function cmdRevoke(args: string[], deleteDevice: (id: number) => boolean) {
-  // Filter out bare '--' separators injected by pnpm pass-through
-  const filtered = args.filter((a) => a !== '--');
-  const idStr = filtered[0];
+  const idStr = args[0];
   if (!idStr) {
     console.error('Error: device ID is required\n');
-    console.log('Usage: token revoke <id>');
-    console.log('Use "token list" to see device IDs.');
+    console.log('Usage: ccmng token revoke <id>');
+    console.log('Use "ccmng token list" to see device IDs.');
     process.exit(1);
   }
 
@@ -169,5 +144,3 @@ function cmdRevoke(args: string[], deleteDevice: (id: number) => boolean) {
 
   console.log(`Device ${id} revoked successfully.`);
 }
-
-main();

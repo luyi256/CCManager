@@ -112,7 +112,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
         </button>
 
         <p style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '1rem', textAlign: 'center' }}>
-          在服务器上运行 <code style={{ color: '#94a3b8' }}>pnpm run token:create -- --name "设备名"</code> 获取 Token
+          在服务器上运行 <code style={{ color: '#94a3b8' }}>ccmng token create --name "设备名"</code> 获取 Token
         </p>
       </form>
     </div>
