@@ -87,6 +87,12 @@ if [ -z "$CONFIG_FILE" ]; then
   DEFAULT_NAME=$(hostname)
   DEFAULT_PATH="$HOME/projects/*"
 
+  # Detect if this is a local setup (CCManagerData exists locally)
+  DEFAULT_DATA_PATH="$HOME/CCManagerData"
+  if [ -f "/home/CC/CCManagerData/server-url.txt" ]; then
+    DEFAULT_DATA_PATH="/home/CC/CCManagerData"
+  fi
+
   echo
   echo -e "${CYAN}Configure your agent:${NC}"
   echo
@@ -97,11 +103,8 @@ if [ -z "$CONFIG_FILE" ]; then
   read -rp "  Agent Name [$DEFAULT_NAME]: " AGENT_NAME
   AGENT_NAME="${AGENT_NAME:-$DEFAULT_NAME}"
 
-  read -rp "  Manager URL [http://localhost:3001]: " MANAGER_URL
-  MANAGER_URL="${MANAGER_URL:-http://localhost:3001}"
-
-  read -rp "  Auth Token [dev-token-123]: " AUTH_TOKEN
-  AUTH_TOKEN="${AUTH_TOKEN:-dev-token-123}"
+  read -rp "  CCManagerData path [$DEFAULT_DATA_PATH]: " DATA_PATH
+  DATA_PATH="${DATA_PATH:-$DEFAULT_DATA_PATH}"
 
   read -rp "  Executor (local/docker) [local]: " EXECUTOR
   EXECUTOR="${EXECUTOR:-local}"
@@ -113,8 +116,7 @@ if [ -z "$CONFIG_FILE" ]; then
 {
   "agentId": "$AGENT_ID",
   "agentName": "$AGENT_NAME",
-  "managerUrl": "$MANAGER_URL",
-  "authToken": "$AUTH_TOKEN",
+  "dataPath": "$DATA_PATH",
   "executor": "$EXECUTOR",
   "allowedPaths": ["$ALLOWED_PATHS"],
   "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
@@ -124,6 +126,7 @@ CFGEOF
 
   echo
   ok "Config saved to $CONFIG_FILE"
+  info "Auth token will be prompted on first run (generate via: ccmng agent create --id $AGENT_ID)"
 
   if [ "$EXECUTOR" = "docker" ]; then
     warn "Docker executor selected — you may need to configure dockerConfig in $CONFIG_FILE"
@@ -197,7 +200,7 @@ pm2 start npm --name ccm-agent \
 pm2 save
 
 # ── 7. Connection check ────────────────────────────────
-MANAGER_URL=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['managerUrl'])" 2>/dev/null || echo "http://localhost:3001")
+DATA_PATH=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['dataPath'])" 2>/dev/null || echo "")
 
 info "Waiting for agent to connect..."
 sleep 5
@@ -213,11 +216,14 @@ else
   fi
 fi
 
-# Try to reach manager
-if curl -sf "${MANAGER_URL}/api/health" &>/dev/null; then
-  ok "Manager server reachable at $MANAGER_URL"
-else
-  warn "Cannot reach manager at $MANAGER_URL — agent will retry automatically"
+# Try to read server URL and check health
+if [ -n "$DATA_PATH" ] && [ -f "$DATA_PATH/server-url.txt" ]; then
+  SERVER_URL=$(cat "$DATA_PATH/server-url.txt" | tr -d '[:space:]')
+  if curl -sf "${SERVER_URL}/api/health" &>/dev/null; then
+    ok "Manager server reachable at $SERVER_URL"
+  else
+    warn "Cannot reach manager at $SERVER_URL — agent will retry automatically"
+  fi
 fi
 
 echo
@@ -225,11 +231,11 @@ echo -e "${GREEN}═════════════════════
 echo -e "${GREEN}   Agent is ready!${NC}"
 echo -e "${GREEN}════════════════════════════════════════════${NC}"
 echo
-echo -e "  Config:   ${CYAN}$CONFIG_FILE${NC}"
-echo -e "  Manager:  ${CYAN}$MANAGER_URL${NC}"
-echo -e "  Executor: ${CYAN}$EXECUTOR${NC}"
+echo -e "  Config:    ${CYAN}$CONFIG_FILE${NC}"
+echo -e "  Data Path: ${CYAN}$DATA_PATH${NC}"
+echo -e "  Executor:  ${CYAN}$EXECUTOR${NC}"
 echo
-echo -e "  Logs:     ${YELLOW}pm2 logs ccm-agent${NC}"
-echo -e "  Status:   ${YELLOW}pm2 status${NC}"
-echo -e "  Restart:  ${YELLOW}pm2 restart ccm-agent${NC}"
+echo -e "  Logs:      ${YELLOW}pm2 logs ccm-agent${NC}"
+echo -e "  Status:    ${YELLOW}pm2 status${NC}"
+echo -e "  Restart:   ${YELLOW}pm2 restart ccm-agent${NC}"
 echo
