@@ -132,40 +132,42 @@ if [ "$NEED_CONFIG" = true ]; then
   read -rp "  Allowed Paths [$DEFAULT_PATH]: " ALLOWED_PATHS
   ALLOWED_PATHS="${ALLOWED_PATHS:-$DEFAULT_PATH}"
 
-  # Preserve authToken if reconfiguring
+  # Auth token — read existing or prompt for new one
   EXISTING_TOKEN=""
   if [ -f "$CONFIG_FILE" ]; then
     EXISTING_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('authToken',''))" 2>/dev/null || echo "")
   fi
 
   if [ -n "$EXISTING_TOKEN" ]; then
-    cat > "$CONFIG_FILE" <<CFGEOF
-{
-  "agentId": "$AGENT_ID",
-  "agentName": "$AGENT_NAME",
-  "dataPath": "$DATA_PATH",
-  "authToken": "$EXISTING_TOKEN",
-  "allowedPaths": ["$ALLOWED_PATHS"],
-  "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
-  "capabilities": []
-}
-CFGEOF
+    MASKED="${EXISTING_TOKEN:0:8}..."
+    read -rp "  Auth Token [$MASKED]: " AUTH_TOKEN
+    AUTH_TOKEN="${AUTH_TOKEN:-$EXISTING_TOKEN}"
   else
-    cat > "$CONFIG_FILE" <<CFGEOF
+    echo
+    info "Generate a token on the server: ccmng agent create --id $AGENT_ID"
+    info "Or in Web UI → Settings → Agent Management → Register/Generate Token"
+    echo
+    read -rp "  Auth Token: " AUTH_TOKEN
+    if [ -z "$AUTH_TOKEN" ]; then
+      err "Auth token is required. Agent cannot connect without it."
+      exit 1
+    fi
+  fi
+
+  cat > "$CONFIG_FILE" <<CFGEOF
 {
   "agentId": "$AGENT_ID",
   "agentName": "$AGENT_NAME",
   "dataPath": "$DATA_PATH",
+  "authToken": "$AUTH_TOKEN",
   "allowedPaths": ["$ALLOWED_PATHS"],
   "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
   "capabilities": []
 }
 CFGEOF
-  fi
 
   echo
   ok "Config saved to $CONFIG_FILE"
-  info "Auth token will be prompted on first run (generate via: ccmng agent create --id $AGENT_ID)"
 fi
 
 echo
