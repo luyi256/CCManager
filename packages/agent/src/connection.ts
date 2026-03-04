@@ -22,7 +22,7 @@ export class AgentConnection {
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.currentUrl = config.managerUrl;
+    this.currentUrl = config.managerUrl!;
   }
 
   connect(): void {
@@ -55,7 +55,7 @@ export class AgentConnection {
       this.reconnectAttempts++;
       this.consecutiveErrors++;
 
-      if (this.config.managerUrlSource && this.consecutiveErrors >= 3) {
+      if (this.consecutiveErrors >= 3) {
         this.reconnectWithDiscovery().catch((e) => {
           console.error('URL discovery failed:', e instanceof Error ? e.message : e);
         });
@@ -294,16 +294,25 @@ export class AgentConnection {
   }
 
   private async discoverUrl(): Promise<string | null> {
-    if (!this.config.managerUrlSource) return null;
+    const dataPath = this.config.dataPath;
     try {
-      const res = await fetch(this.config.managerUrlSource);
-      if (!res.ok) {
-        console.error(`URL discovery HTTP ${res.status}`);
-        return null;
+      let text: string;
+      if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
+        const url = `${dataPath.replace(/\/$/, '')}/server-url.txt`;
+        const res = await fetch(url);
+        if (!res.ok) {
+          console.error(`URL discovery HTTP ${res.status}`);
+          return null;
+        }
+        text = (await res.text()).trim();
+      } else {
+        const { readFileSync, existsSync } = await import('fs');
+        const { join } = await import('path');
+        const filePath = join(dataPath, 'server-url.txt');
+        if (!existsSync(filePath)) return null;
+        text = readFileSync(filePath, 'utf-8').trim();
       }
-      const text = (await res.text()).trim();
-      // Validate it looks like a URL
-      new URL(text);
+      new URL(text); // Validate
       return text;
     } catch (e) {
       console.error('URL discovery error:', e instanceof Error ? e.message : e);

@@ -15,8 +15,8 @@ export interface DockerConfig {
 export interface AgentConfig {
   agentId: string;
   agentName: string;
-  managerUrl: string;
-  managerUrlSource?: string; // URL to fetch current managerUrl (e.g. GitHub raw URL)
+  dataPath: string; // Path to CCManagerData (local path or GitHub raw URL base)
+  managerUrl?: string; // Resolved at runtime from dataPath/server-url.txt
   authToken?: string;
   executor: 'local' | 'docker';
   dockerConfig?: DockerConfig;

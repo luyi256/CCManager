@@ -109,9 +109,7 @@ ccmng token revoke <id>
 {
   "agentId": "my-agent",
   "agentName": "My Agent",
-  "managerUrl": "http://your-server:3001",
-  "managerUrlSource": "https://raw.githubusercontent.com/your-org/CCManagerData/main/tunnel-url.txt",
-  "authToken": "在 Settings 页面生成的 agent token",
+  "dataPath": "/path/to/CCManagerData",
   "executor": "local",
   "allowedPaths": ["/home/me/projects/*"],
   "blockedPaths": ["/home/me/.ssh"],
@@ -123,14 +121,15 @@ ccmng token revoke <id>
 |------|------|------|------|
 | `agentId` | string | Yes | 唯一标识，仅限字母数字和 `-_` |
 | `agentName` | string | Yes | 显示名称 |
-| `managerUrl` | string | Yes | Server 地址 |
-| `managerUrlSource` | string | No | 动态 URL 源（如 GitHub raw URL），连接失败时自动拉取最新地址 |
-| `authToken` | string | Yes | Agent 认证 Token（Web UI Settings 页面生成） |
+| `dataPath` | string | Yes | CCManagerData 路径（本地路径或 GitHub raw URL base） |
+| `authToken` | string | Auto | 首次运行时交互输入并自动保存 |
 | `executor` | string | Yes | `local` 或 `docker` |
 | `allowedPaths` | string[] | Yes | 允许操作的路径，支持 glob |
 | `blockedPaths` | string[] | No | 禁止访问的路径 |
 | `capabilities` | string[] | No | 能力标签，用于任务路由 |
 | `dockerConfig` | object | docker 时必填 | Docker 容器配置 |
+
+Agent 从 `<dataPath>/server-url.txt` 自动读取服务器地址。本地 agent 使用本地路径，远程 agent 可用 GitHub raw URL（如 `https://raw.githubusercontent.com/user/CCManagerData/main`）。连接失败 3 次后自动重新读取，支持 tunnel URL 动态变更。
 
 ### Docker 模式
 

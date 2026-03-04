@@ -30,8 +30,7 @@ function loadConfig(): AgentConfig {
       {
         agentId: 'my-agent',
         agentName: 'My Agent',
-        managerUrl: 'http://localhost:3001',
-        authToken: 'your-token',
+        dataPath: '/path/to/CCManagerData',
         executor: 'local',
         allowedPaths: ['/path/to/projects/*'],
       },
@@ -69,8 +68,27 @@ function saveTokenToConfig(configPath: string, token: string): void {
   }
 }
 
+/** Read server URL from dataPath/server-url.txt (local file or remote URL) */
+async function resolveServerUrl(dataPath: string): Promise<string> {
+  // Remote: dataPath is a URL base (e.g. https://raw.githubusercontent.com/.../main)
+  if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
+    const url = `${dataPath.replace(/\/$/, '')}/server-url.txt`;
+    console.log(`Fetching server URL from: ${url}`);
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${url}`);
+    return (await res.text()).trim();
+  }
+
+  // Local: dataPath is a filesystem path
+  const filePath = path.join(dataPath, 'server-url.txt');
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`${filePath} not found`);
+  }
+  return fs.readFileSync(filePath, 'utf-8').trim();
+}
+
 function validateConfig(config: AgentConfig): void {
-  const required = ['agentId', 'agentName', 'managerUrl', 'executor', 'allowedPaths'];
+  const required = ['agentId', 'agentName', 'dataPath', 'executor', 'allowedPaths'];
   const missing = required.filter((key) => !(key in config));
 
   if (missing.length > 0) {
@@ -78,18 +96,9 @@ function validateConfig(config: AgentConfig): void {
     process.exit(1);
   }
 
-  // Bug #23: Validate config value formats
   // Validate agentId format (alphanumeric, hyphens, underscores only)
   if (!/^[a-zA-Z0-9_-]+$/.test(config.agentId)) {
     console.error('Invalid agentId format: must be alphanumeric with hyphens and underscores only');
-    process.exit(1);
-  }
-
-  // Validate managerUrl format
-  try {
-    new URL(config.managerUrl);
-  } catch {
-    console.error(`Invalid managerUrl format: ${config.managerUrl}`);
     process.exit(1);
   }
 
@@ -157,6 +166,7 @@ async function main(): Promise<void> {
 
   console.log(`Agent ID: ${config.agentId}`);
   console.log(`Agent Name: ${config.agentName}`);
+  console.log(`Data Path: ${config.dataPath}`);
   console.log(`Executor: ${config.executor}`);
   console.log(`Allowed Paths: ${config.allowedPaths.join(', ')}`);
 
@@ -173,22 +183,15 @@ async function main(): Promise<void> {
     console.log('Docker setup complete.');
   }
 
-  // If managerUrlSource is configured, fetch latest URL before connecting
-  if (config.managerUrlSource) {
-    console.log(`Fetching manager URL from: ${config.managerUrlSource}`);
-    try {
-      const res = await fetch(config.managerUrlSource);
-      if (res.ok) {
-        const url = (await res.text()).trim();
-        new URL(url); // Validate
-        console.log(`Resolved manager URL: ${url}`);
-        config.managerUrl = url;
-      } else {
-        console.warn(`URL source returned HTTP ${res.status}, using configured managerUrl`);
-      }
-    } catch (e) {
-      console.warn(`Failed to fetch manager URL: ${e instanceof Error ? e.message : e}, using configured managerUrl`);
-    }
+  // Resolve server URL from dataPath/server-url.txt
+  try {
+    const serverUrl = await resolveServerUrl(config.dataPath);
+    new URL(serverUrl); // Validate
+    config.managerUrl = serverUrl;
+    console.log(`Server URL: ${serverUrl}`);
+  } catch (e) {
+    console.error(`Failed to resolve server URL from ${config.dataPath}: ${e instanceof Error ? e.message : e}`);
+    process.exit(1);
   }
 
   const connection = new AgentConnection(config);

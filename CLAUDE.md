@@ -180,9 +180,7 @@ cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
 {
   "agentId": "my-agent",
   "agentName": "My Agent",
-  "managerUrl": "http://localhost:3001",
-  "managerUrlSource": "https://raw.githubusercontent.com/your-org/CCManagerData/main/tunnel-url.txt",
-  "authToken": "change-this-token",
+  "dataPath": "/path/to/CCManagerData",
   "executor": "local",
   "allowedPaths": ["/path/to/projects/*"],
   "blockedPaths": ["/path/to/.ssh"],
@@ -195,6 +193,8 @@ cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
   }
 }
 ```
+
+`dataPath` 可以是本地路径或 GitHub raw URL base（如 `https://raw.githubusercontent.com/user/CCManagerData/main`）。Agent 从 `<dataPath>/server-url.txt` 读取服务器地址，连接失败时自动重新读取。`authToken` 首次运行时交互输入并保存到配置文件。
 
 ## API 路由
 

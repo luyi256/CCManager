@@ -1,8 +1,7 @@
 {
   "agentId": "my-agent",
   "agentName": "My Agent",
-  "managerUrl": "http://localhost:3001",
-  "managerUrlSource": "https://raw.githubusercontent.com/your-org/CCManagerData/main/tunnel-url.txt",
+  "dataPath": "/path/to/CCManagerData",
   "executor": "local",
   "allowedPaths": ["/Users/me/projects/*"],
   "blockedPaths": ["/Users/me/.ssh"],
