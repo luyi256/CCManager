@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import { existsSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -154,6 +154,18 @@ server.listen(Number(PORT), HOST, () => {
   console.log(`- Socket.IO: http://localhost:${PORT}`);
   console.log(`  - Agent namespace: /agent`);
   console.log(`  - User namespace: /`);
+
+  // Write server URL to DATA_PATH/server-url.txt for agent discovery
+  const dataPath = process.env.DATA_PATH;
+  if (dataPath) {
+    try {
+      const serverUrl = `http://localhost:${PORT}`;
+      writeFileSync(resolve(dataPath, 'server-url.txt'), serverUrl + '\n');
+      console.log(`Server URL written to ${resolve(dataPath, 'server-url.txt')}`);
+    } catch (e) {
+      console.warn('Failed to write server-url.txt:', e instanceof Error ? e.message : e);
+    }
+  }
 });
 
 // Graceful shutdown
