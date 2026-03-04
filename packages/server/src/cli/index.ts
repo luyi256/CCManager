@@ -14,18 +14,24 @@ if (existsSync(envPath)) {
 }
 
 import { runTokenCommand } from './token.js';
+import { runAgentCommand } from './agent.js';
 
 const USAGE = `Usage: ccmng <command> [subcommand] [options]
 
 Commands:
-  token create --name <name>   Create a new device token
-  token list                   List all registered devices
-  token revoke <id>            Revoke a device token by ID
+  token create --name <name>              Create a new device token
+  token list                              List all registered devices
+  token revoke <id>                       Revoke a device token by ID
+
+  agent create --id <id> [--name <name>]  Register agent and generate token
+  agent list                              List all registered agents
+  agent token <id>                        Regenerate token for an agent
+  agent revoke <id>                       Revoke an agent's token
 
 Examples:
   ccmng token create --name "MacBook Pro"
-  ccmng token list
-  ccmng token revoke 3
+  ccmng agent create --id macbook-agent --name "MacBook Agent"
+  ccmng agent list
 `;
 
 async function main() {
@@ -40,6 +46,9 @@ async function main() {
   switch (command) {
     case 'token':
       await runTokenCommand(args.slice(1));
+      break;
+    case 'agent':
+      await runAgentCommand(args.slice(1));
       break;
     default:
       console.error(`Unknown command: ${command}\n`);
