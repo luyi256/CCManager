@@ -1,5 +1,8 @@
 import { spawn, ChildProcess } from 'child_process';
 import { EventEmitter } from 'events';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { sanitizeEnv } from './security.js';
 import type { TaskRequest } from './types.js';
 
@@ -23,6 +26,7 @@ export class ClaudeExecutor extends EventEmitter {
   private timeoutHandle: NodeJS.Timeout | null = null;
   private sessionId: string | null = null;
   private hasStreamedDelta = false; // Track if content_block_delta has emitted text
+  private tempImageFiles: string[] = [];
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT) {
     super();
@@ -34,8 +38,30 @@ export class ClaudeExecutor extends EventEmitter {
 
   async execute(task: TaskRequest, workingDir: string): Promise<void> {
     this.currentTaskId = task.taskId;
+    this.tempImageFiles = [];
 
-    const args = ['-p', task.prompt, '--output-format', 'stream-json', '--verbose'];
+    // Save base64 images to temp files so Claude Code can read them
+    let prompt = task.prompt;
+    if (task.images && task.images.length > 0) {
+      const imagePaths: string[] = [];
+      for (let i = 0; i < task.images.length; i++) {
+        const dataUrl = task.images[i];
+        const match = dataUrl.match(/^data:image\/(\w+);base64,(.+)$/);
+        if (!match) continue;
+        const ext = match[1] === 'jpeg' ? 'jpg' : match[1];
+        const base64Data = match[2];
+        const tmpPath = path.join(os.tmpdir(), `ccm-img-${task.taskId}-${i}-${Date.now()}.${ext}`);
+        fs.writeFileSync(tmpPath, Buffer.from(base64Data, 'base64'));
+        this.tempImageFiles.push(tmpPath);
+        imagePaths.push(tmpPath);
+      }
+      if (imagePaths.length > 0) {
+        const pathsList = imagePaths.map(p => `- ${p}`).join('\n');
+        prompt = `${prompt}\n\nI've attached ${imagePaths.length} screenshot(s). Please read and analyze them:\n${pathsList}`;
+      }
+    }
+
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
 
     if (task.isPlanMode) {
       args.push('--permission-mode', 'plan');
@@ -47,7 +73,24 @@ export class ClaudeExecutor extends EventEmitter {
 
     args.push('--dangerously-skip-permissions');
 
-    await this.runClaudeCode(args, workingDir);
+    try {
+      await this.runClaudeCode(args, workingDir);
+    } finally {
+      this.cleanupTempImages();
+    }
+  }
+
+  private cleanupTempImages(): void {
+    for (const tmpFile of this.tempImageFiles) {
+      try {
+        if (fs.existsSync(tmpFile)) {
+          fs.unlinkSync(tmpFile);
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    this.tempImageFiles = [];
   }
 
   private async runClaudeCode(args: string[], cwd: string): Promise<void> {

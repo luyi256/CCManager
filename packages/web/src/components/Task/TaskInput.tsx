@@ -1,10 +1,16 @@
-import { useState } from 'react';
-import { Send, Loader2, AlertCircle } from 'lucide-react';
+import { useState, useCallback } from 'react';
+import { Send, Loader2, AlertCircle, X, Image } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
 import type { Task } from '../../types';
 
+interface PastedImage {
+  id: string;
+  dataUrl: string; // data:image/png;base64,...
+  name: string;
+}
+
 interface TaskInputProps {
-  onSubmit: (data: { prompt: string; isPlanMode: boolean; dependsOn?: number }) => Promise<void>;
+  onSubmit: (data: { prompt: string; isPlanMode: boolean; dependsOn?: number; images?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   tasks: Task[];
 }
@@ -14,20 +20,70 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
   const [isPlanMode, setIsPlanMode] = useState(false);
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
+  const [images, setImages] = useState<PastedImage[]>([]);
 
   const pendingTasks = tasks.filter((t) =>
     ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)
   );
 
+  const addImagesFromClipboard = useCallback((items: DataTransferItemList) => {
+    const newImages: PastedImage[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.type.startsWith('image/')) {
+        const file = item.getAsFile();
+        if (!file) continue;
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          const dataUrl = e.target?.result as string;
+          if (dataUrl) {
+            setImages((prev) => [
+              ...prev,
+              {
+                id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                dataUrl,
+                name: file.name || `screenshot-${Date.now()}.png`,
+              },
+            ]);
+          }
+        };
+        reader.readAsDataURL(file);
+        newImages.push({ id: '', dataUrl: '', name: '' }); // placeholder to track we found images
+      }
+    }
+    return newImages.length > 0;
+  }, []);
+
+  const handlePaste = useCallback(
+    (e: React.ClipboardEvent) => {
+      if (e.clipboardData?.items) {
+        const hasImage = addImagesFromClipboard(e.clipboardData.items);
+        if (hasImage) {
+          // Don't prevent default — allow text paste to still work
+          // Images are handled separately
+        }
+      }
+    },
+    [addImagesFromClipboard]
+  );
+
+  const removeImage = useCallback((id: string) => {
+    setImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!prompt.trim() || isSubmitting) return;
+    if ((!prompt.trim() && images.length === 0) || isSubmitting) return;
 
     setError(null);
     try {
-      await onSubmit({ prompt: prompt.trim(), isPlanMode, dependsOn });
+      const imageBase64s = images.length > 0
+        ? images.map((img) => img.dataUrl)
+        : undefined;
+      await onSubmit({ prompt: prompt.trim(), isPlanMode, dependsOn, images: imageBase64s });
       setPrompt('');
       setDependsOn(undefined);
+      setImages([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create task');
     }
@@ -59,24 +115,53 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
+            onPaste={handlePaste}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && e.shiftKey) {
                 e.preventDefault();
-                if (prompt.trim() && !isSubmitting) {
+                if ((prompt.trim() || images.length > 0) && !isSubmitting) {
                   handleSubmit(e);
                 }
               }
             }}
-            placeholder="Describe the task for Claude Code... (Shift+Enter to send)"
+            placeholder="Describe the task for Claude Code... (Shift+Enter to send, Ctrl+V to paste screenshot)"
             className="input resize-none h-20"
             disabled={isSubmitting}
           />
+          {/* Pasted image previews */}
+          {images.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {images.map((img) => (
+                <div
+                  key={img.id}
+                  className="relative group w-16 h-16 rounded-lg overflow-hidden border border-dark-600 bg-dark-800"
+                >
+                  <img
+                    src={img.dataUrl}
+                    alt={img.name}
+                    className="w-full h-full object-cover"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(img.id)}
+                    className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
+              ))}
+              <div className="flex items-center text-dark-500 text-xs gap-1">
+                <Image size={12} />
+                <span>{images.length}</span>
+              </div>
+            </div>
+          )}
         </div>
         <div className="flex flex-col gap-2">
           <VoiceInput onTranscription={handleVoiceTranscription} />
           <button
             type="submit"
-            disabled={!prompt.trim() || isSubmitting}
+            disabled={(!prompt.trim() && images.length === 0) || isSubmitting}
             className="btn btn-primary p-2"
           >
             {isSubmitting ? (

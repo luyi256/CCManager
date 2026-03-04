@@ -21,6 +21,7 @@ export default function ProjectPage() {
     prompt: string;
     isPlanMode: boolean;
     dependsOn?: number;
+    images?: string[];
   }) => {
     const task = await createTask.mutateAsync(data);
     if (data.isPlanMode) {

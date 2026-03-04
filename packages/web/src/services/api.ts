@@ -124,6 +124,7 @@ export async function createTask(projectId: string, data: {
   prompt: string;
   isPlanMode: boolean;
   dependsOn?: number;
+  images?: string[];
 }): Promise<Task> {
   return request(`/projects/${projectId}/tasks`, {
     method: 'POST',

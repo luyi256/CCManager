@@ -24,7 +24,7 @@ export function useCreateTask(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { prompt: string; isPlanMode: boolean; dependsOn?: number }) =>
+    mutationFn: (data: { prompt: string; isPlanMode: boolean; dependsOn?: number; images?: string[] }) =>
       api.createTask(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });

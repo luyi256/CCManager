@@ -42,6 +42,7 @@ export interface TaskRequest {
     target: string;
     readonly?: boolean;
   }>;
+  images?: string[]; // base64 data URLs for screenshots
 }
 
 export interface TaskOutput {

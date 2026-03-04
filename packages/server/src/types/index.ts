@@ -129,6 +129,7 @@ export interface ServerToAgentEvents {
     worktreeBranch?: string;
     postTaskHook?: string;
     extraMounts?: ExtraMount[];
+    images?: string[];
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;
   'task:cancel': (data: { taskId: number }) => void;
