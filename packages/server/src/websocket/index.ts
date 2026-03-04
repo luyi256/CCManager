@@ -2,7 +2,7 @@ import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
 import { getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
-import { checkDependentTasks } from '../services/waitingTasks.js';
+import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
 import { hashToken } from '../services/auth.js';
 import type {
   ServerToAgentEvents,
@@ -245,6 +245,9 @@ export function setupWebSocket(server: HttpServer): Server {
           status: 'failed',
           error: data.error,
         });
+
+        // Cascade cancel any pending tasks that depend on this failed task
+        await cancelDependentTasks(data.taskId);
       } catch (error) {
         console.error('Error handling task:failed:', error);
       }

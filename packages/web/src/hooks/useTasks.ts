@@ -53,6 +53,7 @@ export function useCancelTask() {
     mutationFn: api.cancelTask,
     onSuccess: (task) => {
       queryClient.invalidateQueries({ queryKey: ['tasks', task.projectId] });
+      queryClient.invalidateQueries({ queryKey: ['task', task.id] });
     },
   });
 }

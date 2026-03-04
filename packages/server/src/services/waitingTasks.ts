@@ -172,6 +172,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             prompt: currentTask.prompt,
             isPlanMode: currentTask.isPlanMode,
             executor: project.executor,
+            dockerImage: project.dockerImage,
             worktreeBranch: currentTask.worktreeBranch,
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
@@ -181,6 +182,8 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             currentTask.status = 'running';
             currentTask.startedAt = new Date().toISOString();
             await storage.saveTask(project.id, currentTask);
+            // Broadcast status change so UI updates immediately
+            broadcast(currentTask.id, { type: 'task:status', taskId: currentTask.id, status: 'running' });
           }
         } finally {
           releaseLock(task.id);
@@ -189,5 +192,36 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
     }
   } catch (error) {
     console.error('Error checking dependent tasks:', error);
+  }
+}
+
+// Cancel all tasks that depend on a cancelled/failed task (cascade)
+export async function cancelDependentTasks(parentTaskId: number): Promise<void> {
+  try {
+    const projects = await storage.getProjects();
+
+    for (const project of projects) {
+      const tasks = await storage.getTasks(project.id);
+      const dependentTasks = tasks.filter(
+        (t) => t.dependsOn === parentTaskId && t.status === 'pending'
+      );
+
+      for (const task of dependentTasks) {
+        const currentTask = await storage.getTaskById(task.id);
+        if (!currentTask || currentTask.status !== 'pending') continue;
+
+        console.log(`Cascade cancelling dependent task ${task.id} (parent: ${parentTaskId})`);
+        currentTask.status = 'cancelled';
+        currentTask.error = `Dependency task #${parentTaskId} was cancelled or failed`;
+        currentTask.completedAt = new Date().toISOString();
+        await storage.saveTask(project.id, currentTask);
+        broadcast(currentTask.id, { type: 'task:cancelled', taskId: currentTask.id });
+
+        // Recursively cancel tasks depending on this one
+        await cancelDependentTasks(currentTask.id);
+      }
+    }
+  } catch (error) {
+    console.error('Error cancelling dependent tasks:', error);
   }
 }
