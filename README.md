@@ -110,6 +110,7 @@ ccmng token revoke <id>
   "agentId": "my-agent",
   "agentName": "My Agent",
   "managerUrl": "http://your-server:3001",
+  "managerUrlSource": "https://raw.githubusercontent.com/your-org/CCManagerData/main/tunnel-url.txt",
   "authToken": "在 Settings 页面生成的 agent token",
   "executor": "local",
   "allowedPaths": ["/home/me/projects/*"],
@@ -123,6 +124,7 @@ ccmng token revoke <id>
 | `agentId` | string | Yes | 唯一标识，仅限字母数字和 `-_` |
 | `agentName` | string | Yes | 显示名称 |
 | `managerUrl` | string | Yes | Server 地址 |
+| `managerUrlSource` | string | No | 动态 URL 源（如 GitHub raw URL），连接失败时自动拉取最新地址 |
 | `authToken` | string | Yes | Agent 认证 Token（Web UI Settings 页面生成） |
 | `executor` | string | Yes | `local` 或 `docker` |
 | `allowedPaths` | string[] | Yes | 允许操作的路径，支持 glob |
