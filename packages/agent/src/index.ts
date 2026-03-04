@@ -132,6 +132,24 @@ async function main(): Promise<void> {
     console.log('Docker setup complete.');
   }
 
+  // If managerUrlSource is configured, fetch latest URL before connecting
+  if (config.managerUrlSource) {
+    console.log(`Fetching manager URL from: ${config.managerUrlSource}`);
+    try {
+      const res = await fetch(config.managerUrlSource);
+      if (res.ok) {
+        const url = (await res.text()).trim();
+        new URL(url); // Validate
+        console.log(`Resolved manager URL: ${url}`);
+        config.managerUrl = url;
+      } else {
+        console.warn(`URL source returned HTTP ${res.status}, using configured managerUrl`);
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch manager URL: ${e instanceof Error ? e.message : e}, using configured managerUrl`);
+    }
+  }
+
   const connection = new AgentConnection(config);
 
   // Graceful shutdown

@@ -12,18 +12,21 @@ export class AgentConnection {
   private socket: Socket | null = null;
   private executors: Map<number, ClaudeExecutor | DockerExecutor> = new Map();
   private config: AgentConfig;
+  private currentUrl: string;
   private reconnectAttempts = 0;
+  private consecutiveErrors = 0;
   private maxReconnectAttempts = Infinity;
   private heartbeatInterval: NodeJS.Timeout | null = null;
 
   constructor(config: AgentConfig) {
     this.config = config;
+    this.currentUrl = config.managerUrl;
   }
 
   connect(): void {
-    console.log(`Connecting to manager: ${this.config.managerUrl}`);
+    console.log(`Connecting to manager: ${this.currentUrl}`);
 
-    this.socket = io(`${this.config.managerUrl}/agent`, {
+    this.socket = io(`${this.currentUrl}/agent`, {
       auth: {
         token: this.config.authToken,
         agentId: this.config.agentId,
@@ -37,6 +40,7 @@ export class AgentConnection {
     this.socket.on('connect', () => {
       console.log('Connected to manager');
       this.reconnectAttempts = 0;
+      this.consecutiveErrors = 0;
       this.register();
     });
 
@@ -47,6 +51,13 @@ export class AgentConnection {
     this.socket.on('connect_error', (error) => {
       console.error(`Connection error: ${error.message}`);
       this.reconnectAttempts++;
+      this.consecutiveErrors++;
+
+      if (this.config.managerUrlSource && this.consecutiveErrors >= 3) {
+        this.reconnectWithDiscovery().catch((e) => {
+          console.error('URL discovery failed:', e instanceof Error ? e.message : e);
+        });
+      }
     });
 
     this.socket.on('task:execute', (task: TaskRequest) => {
@@ -233,6 +244,41 @@ export class AgentConnection {
         taskCount: this.executors.size
       });
     }
+  }
+
+  private async discoverUrl(): Promise<string | null> {
+    if (!this.config.managerUrlSource) return null;
+    try {
+      const res = await fetch(this.config.managerUrlSource);
+      if (!res.ok) {
+        console.error(`URL discovery HTTP ${res.status}`);
+        return null;
+      }
+      const text = (await res.text()).trim();
+      // Validate it looks like a URL
+      new URL(text);
+      return text;
+    } catch (e) {
+      console.error('URL discovery error:', e instanceof Error ? e.message : e);
+      return null;
+    }
+  }
+
+  private async reconnectWithDiscovery(): Promise<void> {
+    this.consecutiveErrors = 0; // Reset to avoid re-triggering while discovering
+    const newUrl = await this.discoverUrl();
+    if (!newUrl || newUrl === this.currentUrl) {
+      console.log('URL discovery: no change, continuing default reconnect');
+      return;
+    }
+    console.log(`URL discovery: new URL found: ${newUrl}`);
+    this.currentUrl = newUrl;
+    // Tear down old socket and reconnect with new URL
+    this.stopHeartbeat();
+    this.socket?.removeAllListeners();
+    this.socket?.disconnect();
+    this.socket = null;
+    this.connect();
   }
 
   disconnect(): void {

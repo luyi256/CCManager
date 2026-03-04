@@ -37,6 +37,10 @@ cloudflared tunnel --url http://localhost:3001 2>&1 | while IFS= read -r line; d
         if [ "$URL" != "$LAST_URL" ]; then
             echo "$URL" > "$LAST_URL_FILE"
             send_telegram "$URL"
+
+            # Write URL to CCManagerData and push to GitHub for agent discovery
+            echo "$URL" > /home/CC/CCManagerData/tunnel-url.txt
+            (cd /home/CC/CCManagerData && git add tunnel-url.txt && git commit -m "tunnel: $URL" && git push) &
         fi
     fi
 done

@@ -181,6 +181,7 @@ cd ~/CCManagerData && git add -A && git commit -m "Data sync" && git push
   "agentId": "my-agent",
   "agentName": "My Agent",
   "managerUrl": "http://localhost:3001",
+  "managerUrlSource": "https://raw.githubusercontent.com/your-org/CCManagerData/main/tunnel-url.txt",
   "authToken": "change-this-token",
   "executor": "local",
   "allowedPaths": ["/path/to/projects/*"],
