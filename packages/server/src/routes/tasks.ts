@@ -2,6 +2,7 @@ import { Router, Response } from 'express';
 import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { broadcast } from '../websocket/index.js';
+import { cancelDependentTasks } from '../services/waitingTasks.js';
 import type { Task } from '../types/index.js';
 
 const router = Router();
@@ -163,6 +164,10 @@ router.post('/tasks/:id/cancel', async (req, res) => {
     await storage.saveTask(task.projectId, task);
 
     broadcast(taskId, { type: 'task:cancelled', taskId });
+
+    // Cascade cancel any pending tasks that depend on this one
+    await cancelDependentTasks(taskId);
+
     res.json(task);
   } catch (error) {
     console.error('Failed to cancel task:', error);
