@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
 import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
+import { WorktreeManager } from './worktree.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 
 const execAsync = promisify(exec);
@@ -17,6 +18,7 @@ export class AgentConnection {
   private consecutiveErrors = 0;
   private maxReconnectAttempts = Infinity;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private worktreeManager = new WorktreeManager();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -80,6 +82,38 @@ export class AgentConnection {
         this.executors.delete(data.taskId);
       }
     });
+
+    this.socket.on('task:merge', async (data: { taskId: number; projectPath: string; branch: string; deleteBranch?: boolean }) => {
+      try {
+        console.log(`Merging worktree branch ${data.branch} for task ${data.taskId}`);
+        const result = await this.worktreeManager.merge(data.projectPath, data.branch, data.deleteBranch || false);
+        this.socket?.emit('task:merge-result', {
+          taskId: data.taskId,
+          ...result,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.socket?.emit('task:merge-result', {
+          taskId: data.taskId,
+          success: false,
+          error: message,
+        });
+      }
+    });
+
+    this.socket.on('task:cleanup-worktree', async (data: { taskId: number; projectPath: string; branch: string }) => {
+      try {
+        console.log(`Cleaning up worktree branch ${data.branch} for task ${data.taskId}`);
+        await this.worktreeManager.cleanup(data.projectPath, data.branch);
+        await this.worktreeManager.deleteBranch(data.projectPath, data.branch);
+        this.socket?.emit('task:worktree-cleaned', {
+          taskId: data.taskId,
+          branch: data.branch,
+        });
+      } catch (error) {
+        console.error(`Failed to cleanup worktree for task ${data.taskId}:`, error);
+      }
+    });
   }
 
   private register(): void {
@@ -135,12 +169,25 @@ export class AgentConnection {
     }
 
     let executor: ClaudeExecutor | DockerExecutor;
+    let executionPath = task.projectPath;
 
     try {
       // Validate path
       console.log(`Task ${task.taskId}: Validating path...`);
       validatePath(task.projectPath, this.config);
       console.log(`Task ${task.taskId}: Path validated, creating executor...`);
+
+      // Create worktree if branch is specified
+      if (task.worktreeBranch) {
+        try {
+          executionPath = await this.worktreeManager.create(task.projectPath, task.worktreeBranch);
+          console.log(`Task ${task.taskId}: Using worktree at ${executionPath}`);
+        } catch (wtError) {
+          console.warn(`Task ${task.taskId}: Worktree creation failed, falling back to direct execution:`, wtError);
+          // Fall back to direct execution
+          executionPath = task.projectPath;
+        }
+      }
 
       // Create executor based on config
       if (this.config.executor === 'docker' && this.config.dockerConfig) {
@@ -188,9 +235,9 @@ export class AgentConnection {
         this.socket?.emit('task:session_id', { taskId: task.taskId, sessionId });
       });
 
-      // Execute task
-      console.log(`Task ${task.taskId}: Starting execution...`);
-      await executor.execute(task, task.projectPath);
+      // Execute task (use worktree path if available)
+      console.log(`Task ${task.taskId}: Starting execution in ${executionPath}...`);
+      await executor.execute(task, executionPath);
       console.log(`Task ${task.taskId}: Execution completed`);
 
       // Run post-task hook if configured
@@ -202,7 +249,7 @@ export class AgentConnection {
         });
         try {
           const { stdout, stderr } = await execAsync(task.postTaskHook, {
-            cwd: task.projectPath,
+            cwd: executionPath,
             timeout: 30000,
           });
           if (stdout) {

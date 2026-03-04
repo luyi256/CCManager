@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
 import { io, Socket } from 'socket.io-client';
 import type { Agent } from '../types';
+import { getApiToken } from '../services/auth';
 
 interface WebSocketMessage {
   type: string;
@@ -32,7 +33,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     const protocol = window.location.protocol === 'https:' ? 'https:' : 'http:';
     const socketUrl = `${protocol}//${window.location.host}`;
 
+    const token = getApiToken();
     const socket = io(socketUrl, {
+      auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 1000,

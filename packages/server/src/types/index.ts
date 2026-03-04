@@ -22,6 +22,7 @@ export interface Project {
   authType?: 'oauth' | 'apikey';
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
+  enableWorktree?: boolean;
   createdAt: string;
   lastActivity?: string;
   taskCount: number;
@@ -110,7 +111,6 @@ export interface GlobalConfig {
   defaultSecurityMode: 'auto' | 'safe';
   oauthToken?: string;
   anthropicApiKey?: string;
-  agentAuthToken?: string;
   updatedAt?: string;
 }
 
@@ -128,6 +128,8 @@ export interface ServerToAgentEvents {
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;
   'task:cancel': (data: { taskId: number }) => void;
+  'task:merge': (data: { taskId: number; projectPath: string; branch: string; deleteBranch?: boolean }) => void;
+  'task:cleanup-worktree': (data: { taskId: number; projectPath: string; branch: string }) => void;
 }
 
 export interface AgentToServerEvents {
@@ -146,6 +148,8 @@ export interface AgentToServerEvents {
   'task:completed': (data: { taskId: number; status: string; summary?: string }) => void;
   'task:failed': (data: { taskId: number; error: string }) => void;
   'task:error': (data: { taskId: number; error: string }) => void;
+  'task:merge-result': (data: { taskId: number; success: boolean; mergeCommit?: string; conflicts?: string[]; error?: string }) => void;
+  'task:worktree-cleaned': (data: { taskId: number; branch: string }) => void;
 }
 
 export interface ServerToUserEvents {

@@ -1,8 +1,9 @@
 import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
-import { getConfig, getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent } from '../services/storage.js';
+import { getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
 import { checkDependentTasks } from '../services/waitingTasks.js';
+import { hashToken } from '../services/auth.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -20,8 +21,7 @@ const userSubscriptions = new Map<string, Set<number>>();
 export function setupWebSocket(server: HttpServer): Server {
   io = new Server(server, {
     cors: {
-      origin: '*',
-      methods: ['GET', 'POST'],
+      origin: false,
     },
   });
 
@@ -31,7 +31,6 @@ export function setupWebSocket(server: HttpServer): Server {
   agentNamespace.use(async (socket, next) => {
     const token = socket.handshake.auth.token;
     const agentId = socket.handshake.auth.agentId;
-    const config = await getConfig();
 
     // Validate agentId is provided
     if (!agentId || typeof agentId !== 'string' || agentId.trim().length === 0) {
@@ -43,31 +42,24 @@ export function setupWebSocket(server: HttpServer): Server {
       return next(new Error('Invalid agent ID format'));
     }
 
-    if (!config.agentAuthToken) {
-      // No token configured - log warning but allow for development
-      console.warn('WARNING: No agent auth token configured. Set agentAuthToken in settings for production use.');
-      return next();
-    }
-
-    // Constant-time comparison to prevent timing attacks (Bug #19 fix)
     if (!token || typeof token !== 'string') {
       return next(new Error('Auth token is required'));
     }
 
-    const expectedToken = config.agentAuthToken;
-    if (token.length !== expectedToken.length) {
+    // Look up per-agent token by hash
+    const tokenHash = hashToken(token);
+    const agentToken = findAgentTokenByHash(tokenHash);
+
+    if (!agentToken) {
       return next(new Error('Invalid agent auth token'));
     }
 
-    let mismatch = 0;
-    for (let i = 0; i < token.length; i++) {
-      mismatch |= token.charCodeAt(i) ^ expectedToken.charCodeAt(i);
+    // Verify the token belongs to the connecting agent
+    if (agentToken.agentId !== agentId) {
+      return next(new Error('Token does not match agent ID'));
     }
 
-    if (mismatch !== 0) {
-      return next(new Error('Invalid agent auth token'));
-    }
-
+    updateAgentTokenLastUsed(tokenHash);
     return next();
   });
 
@@ -257,6 +249,38 @@ export function setupWebSocket(server: HttpServer): Server {
       broadcastToTask(data.taskId, 'task:failed', { taskId: data.taskId, error: data.error });
     });
 
+    socket.on('task:merge-result', async (data) => {
+      try {
+        const task = await getTaskById(data.taskId);
+        if (task && data.success) {
+          // Update git info with merge details
+          const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
+          gitInfo.mergedTo = 'main';
+          gitInfo.mergedAt = new Date().toISOString();
+          if (data.mergeCommit) gitInfo.mergeCommit = data.mergeCommit;
+          task.gitInfo = JSON.stringify(gitInfo);
+          await saveTask(task.projectId, task);
+        }
+        broadcastToTask(data.taskId, 'task:merge-result', data);
+      } catch (error) {
+        console.error('Error handling task:merge-result:', error);
+      }
+    });
+
+    socket.on('task:worktree-cleaned', async (data) => {
+      try {
+        const task = await getTaskById(data.taskId);
+        if (task) {
+          // Clear the worktree branch since it's been cleaned up
+          task.worktreeBranch = undefined;
+          await saveTask(task.projectId, task);
+        }
+        broadcastToTask(data.taskId, 'task:worktree-cleaned', data);
+      } catch (error) {
+        console.error('Error handling task:worktree-cleaned:', error);
+      }
+    });
+
     socket.on('disconnect', () => {
       const agentId = socket.handshake.auth.agentId;
       if (agentId) {
@@ -270,8 +294,22 @@ export function setupWebSocket(server: HttpServer): Server {
   // Set namespace for agent pool
   agentPool.setNamespace(agentNamespace);
 
-  // User namespace (default)
+  // User namespace (default) with authentication
   userNamespace = io.of('/');
+
+  userNamespace.use((socket, next) => {
+    const token = socket.handshake.auth.token;
+    if (!token || typeof token !== 'string') {
+      return next(new Error('Authentication required'));
+    }
+    const tokenHash = hashToken(token);
+    const device = findDeviceByHash(tokenHash);
+    if (!device) {
+      return next(new Error('Invalid token'));
+    }
+    updateDeviceLastUsed(tokenHash);
+    return next();
+  });
 
   userNamespace.on('connection', (socket: Socket) => {
     console.log('User connected:', socket.id);
