@@ -12,7 +12,6 @@ router.get('/', async (req, res) => {
       ...config,
       oauthToken: config.oauthToken ? '***' + config.oauthToken.slice(-8) : undefined,
       anthropicApiKey: config.anthropicApiKey ? '***' + config.anthropicApiKey.slice(-8) : undefined,
-      agentAuthToken: config.agentAuthToken ? '***' + config.agentAuthToken.slice(-8) : undefined,
     });
   } catch (error) {
     console.error('Failed to get settings:', error);
@@ -23,14 +22,13 @@ router.get('/', async (req, res) => {
 // Update settings
 router.put('/', async (req, res) => {
   try {
-    const { defaultAuthType, defaultSecurityMode, oauthToken, anthropicApiKey, agentAuthToken } = req.body;
+    const { defaultAuthType, defaultSecurityMode, oauthToken, anthropicApiKey } = req.body;
 
     const updates: Record<string, unknown> = {};
     if (defaultAuthType) updates.defaultAuthType = defaultAuthType;
     if (defaultSecurityMode) updates.defaultSecurityMode = defaultSecurityMode;
     if (oauthToken) updates.oauthToken = oauthToken;
     if (anthropicApiKey) updates.anthropicApiKey = anthropicApiKey;
-    if (agentAuthToken) updates.agentAuthToken = agentAuthToken;
 
     const config = await storage.updateConfig(updates);
 
@@ -38,7 +36,6 @@ router.put('/', async (req, res) => {
       ...config,
       oauthToken: config.oauthToken ? '***' + config.oauthToken.slice(-8) : undefined,
       anthropicApiKey: config.anthropicApiKey ? '***' + config.anthropicApiKey.slice(-8) : undefined,
-      agentAuthToken: config.agentAuthToken ? '***' + config.agentAuthToken.slice(-8) : undefined,
     });
   } catch (error) {
     console.error('Failed to update settings:', error);

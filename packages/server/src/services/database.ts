@@ -85,11 +85,32 @@ db.exec(`
     FOREIGN KEY (task_id) REFERENCES tasks(id)
   );
 
+  -- Device tokens table (per-device authentication)
+  CREATE TABLE IF NOT EXISTS device_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT
+  );
+
+  -- Agent tokens table (per-agent authentication)
+  CREATE TABLE IF NOT EXISTS agent_tokens (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    agent_id TEXT NOT NULL UNIQUE,
+    token_hash TEXT NOT NULL UNIQUE,
+    created_at TEXT DEFAULT (datetime('now')),
+    last_used_at TEXT,
+    FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
+  );
+
   -- Create indexes
   CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);
   CREATE INDEX IF NOT EXISTS idx_projects_agent ON projects(agent_id);
+  CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_agent_tokens_hash ON agent_tokens(token_hash);
 `);
 
 // Migrations
@@ -105,6 +126,19 @@ try {
 try {
   db.exec(`ALTER TABLE projects ADD COLUMN extra_mounts TEXT`);
   console.log('Migration: Added extra_mounts column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
+// Migration: Remove legacy agentAuthToken from config
+try {
+  db.exec(`DELETE FROM config WHERE key = 'agentAuthToken'`);
+} catch { /* ignore */ }
+
+// Add enable_worktree column to projects table
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN enable_worktree INTEGER DEFAULT 0`);
+  console.log('Migration: Added enable_worktree column to projects table');
 } catch {
   // Column already exists, ignore
 }

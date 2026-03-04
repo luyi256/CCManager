@@ -22,6 +22,7 @@ export interface Project {
   authType?: 'oauth' | 'apikey';
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
+  enableWorktree?: boolean;
   createdAt: string;
   lastActivity?: string;
   taskCount: number;
@@ -116,5 +117,4 @@ export interface GlobalConfig {
   defaultSecurityMode: 'auto' | 'safe';
   oauthToken?: string;
   anthropicApiKey?: string;
-  agentAuthToken?: string;
 }

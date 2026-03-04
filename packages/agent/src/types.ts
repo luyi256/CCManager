@@ -62,3 +62,10 @@ export interface AgentInfo {
   executor: 'local' | 'docker';
   status: 'online' | 'busy';
 }
+
+export interface MergeResult {
+  success: boolean;
+  mergeCommit?: string;
+  conflicts?: string[];
+  error?: string;
+}

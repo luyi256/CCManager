@@ -20,7 +20,12 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
   try {
     return (
       <div className={className}>
-        <ReactMarkdown>{children}</ReactMarkdown>
+        <ReactMarkdown
+          disallowedElements={['script', 'iframe', 'object', 'embed']}
+          unwrapDisallowed
+        >
+          {children}
+        </ReactMarkdown>
       </div>
     );
   } catch (error) {

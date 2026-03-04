@@ -59,7 +59,15 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
-            placeholder="Describe the task for Claude Code..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && e.shiftKey) {
+                e.preventDefault();
+                if (prompt.trim() && !isSubmitting) {
+                  handleSubmit(e);
+                }
+              }
+            }}
+            placeholder="Describe the task for Claude Code... (Shift+Enter to send)"
             className="input resize-none h-20"
             disabled={isSubmitting}
           />
