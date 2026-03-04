@@ -52,11 +52,11 @@ router.get('/tasks/:id', async (req, res) => {
 // Create task
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
-    const { prompt, isPlanMode, dependsOn } = req.body;
+    const { prompt, isPlanMode, dependsOn, images } = req.body;
     const projectId = req.params.projectId;
 
-    if (!prompt) {
-      return res.status(400).json({ message: 'Prompt is required' });
+    if (!prompt && (!images || images.length === 0)) {
+      return res.status(400).json({ message: 'Prompt or images required' });
     }
 
     const project = await storage.getProject(projectId);
@@ -101,6 +101,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         worktreeBranch: task.worktreeBranch,
         postTaskHook: project.postTaskHook,
         extraMounts: project.extraMounts,
+        images: images as string[] | undefined,
       });
 
       if (dispatched) {
