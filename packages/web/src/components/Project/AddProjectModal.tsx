@@ -16,7 +16,6 @@ interface FormData {
   projectPath: string;
   securityMode: 'auto' | 'safe';
   executor: 'local' | 'docker';
-  postTaskHook: string;
   extraMounts: ExtraMount[];
   enableWorktree: boolean;
 }
@@ -27,7 +26,6 @@ const initialFormData: FormData = {
   projectPath: '',
   securityMode: 'auto',
   executor: 'local',
-  postTaskHook: '',
   extraMounts: [],
   enableWorktree: false,
 };
@@ -316,22 +314,6 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
               </p>
             </div>
           </label>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-dark-300 mb-1.5">
-            Post-Task Hook <span className="text-dark-500">(optional)</span>
-          </label>
-          <input
-            type="text"
-            className="input"
-            placeholder="pm2 restart my-app"
-            value={formData.postTaskHook}
-            onChange={(e) => setFormData({ ...formData, postTaskHook: e.target.value })}
-          />
-          <p className="text-xs text-dark-500 mt-1">
-            Shell command to run on the agent after each successful task
-          </p>
         </div>
 
         {formData.executor === 'docker' && <div>
