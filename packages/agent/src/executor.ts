@@ -55,6 +55,9 @@ export class ClaudeExecutor extends EventEmitter {
       // Use full environment to ensure Claude Code can access credentials
       const env = { ...process.env };
 
+      // Remove CLAUDECODE to prevent "nested session" detection
+      delete env.CLAUDECODE;
+
       this.process = spawn('claude', args, {
         cwd,
         env,
