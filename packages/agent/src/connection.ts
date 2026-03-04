@@ -1,5 +1,5 @@
 import { io, Socket } from 'socket.io-client';
-import { exec } from 'child_process';
+import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
 import { DockerExecutor } from './docker.js';
@@ -312,6 +312,18 @@ export class AgentConnection {
           const res = await fetch(`${localhostUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
           if (res.ok) return localhostUrl;
         } catch { /* not reachable */ }
+
+        // git pull to get latest tunnel URL
+        try {
+          const { existsSync: gitExists } = await import('fs');
+          const { join: gitJoin } = await import('path');
+          if (gitExists(gitJoin(dataPath, '.git'))) {
+            execSync('git pull --ff-only', { cwd: dataPath, timeout: 15000, stdio: 'pipe' });
+            console.log('URL discovery: git pull updated dataPath');
+          }
+        } catch (e) {
+          console.warn('URL discovery: git pull failed (non-fatal):', e instanceof Error ? e.message : e);
+        }
 
         // Fall back to server-url.txt (tunnel URL)
         const { readFileSync, existsSync } = await import('fs');

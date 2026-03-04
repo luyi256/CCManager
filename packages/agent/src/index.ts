@@ -3,6 +3,7 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { execSync } from 'child_process';
 import { AgentConnection } from './connection.js';
 import type { AgentConfig } from './types.js';
 
@@ -67,6 +68,18 @@ function saveTokenToConfig(configPath: string, token: string): void {
   }
 }
 
+/** git pull the dataPath repo to get latest server-url.txt */
+function gitPullDataPath(dataPath: string): void {
+  try {
+    const gitDir = path.join(dataPath, '.git');
+    if (!fs.existsSync(gitDir)) return; // not a git repo
+    execSync('git pull --ff-only', { cwd: dataPath, timeout: 15000, stdio: 'pipe' });
+    console.log('git pull dataPath: updated');
+  } catch (e) {
+    console.warn('git pull dataPath failed (non-fatal):', e instanceof Error ? e.message : e);
+  }
+}
+
 /** Read server URL from dataPath/server-url.txt (local file or remote URL).
  *  For local agents (dataPath is a filesystem path): try localhost first,
  *  then fall back to server-url.txt (which contains the tunnel URL). */
@@ -91,6 +104,9 @@ async function resolveServerUrl(dataPath: string): Promise<string> {
   } catch {
     // localhost not reachable, fall back to server-url.txt
   }
+
+  // git pull to get latest tunnel URL before reading
+  gitPullDataPath(dataPath);
 
   // Fall back to server-url.txt (contains tunnel URL for remote access)
   const filePath = path.join(dataPath, 'server-url.txt');
