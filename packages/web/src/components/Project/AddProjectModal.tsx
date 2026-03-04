@@ -17,6 +17,7 @@ interface FormData {
   securityMode: 'auto' | 'safe';
   postTaskHook: string;
   extraMounts: ExtraMount[];
+  enableWorktree: boolean;
 }
 
 const initialFormData: FormData = {
@@ -26,6 +27,7 @@ const initialFormData: FormData = {
   securityMode: 'auto',
   postTaskHook: '',
   extraMounts: [],
+  enableWorktree: false,
 };
 
 export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProps) {
@@ -237,6 +239,23 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
               </div>
             </label>
           </div>
+        </div>
+
+        <div>
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={formData.enableWorktree}
+              onChange={(e) => setFormData({ ...formData, enableWorktree: e.target.checked })}
+              className="rounded border-dark-600 bg-dark-800 text-primary-500 focus:ring-primary-500"
+            />
+            <div>
+              <span className="text-sm font-medium text-dark-300">Git Worktree Isolation</span>
+              <p className="text-xs text-dark-500 mt-0.5">
+                Each task runs in an isolated git worktree branch. Merge changes back after review.
+              </p>
+            </div>
+          </label>
         </div>
 
         <div>

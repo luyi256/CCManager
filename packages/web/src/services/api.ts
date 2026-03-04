@@ -157,6 +157,19 @@ export async function continueTask(taskId: number, prompt: string): Promise<Task
   });
 }
 
+export async function mergeTask(taskId: number, deleteBranch = false): Promise<{ message: string }> {
+  return request(`/tasks/${taskId}/merge`, {
+    method: 'POST',
+    body: JSON.stringify({ deleteBranch }),
+  });
+}
+
+export async function cleanupWorktree(taskId: number): Promise<{ message: string }> {
+  return request(`/tasks/${taskId}/cleanup-worktree`, {
+    method: 'POST',
+  });
+}
+
 export interface TaskLog {
   timestamp: string;
   type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request' | 'user_message';
