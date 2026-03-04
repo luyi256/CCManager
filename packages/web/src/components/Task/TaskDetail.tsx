@@ -6,6 +6,8 @@ import {
   Square,
   RotateCcw,
   GitBranch,
+  GitMerge,
+  Trash2,
   Clock,
   AlertTriangle,
   ArrowDown,
@@ -18,6 +20,7 @@ import ErrorBoundary from '../common/ErrorBoundary';
 import SafeMarkdown from '../common/SafeMarkdown';
 import { useTaskStream } from '../../hooks/useTaskStream';
 import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask } from '../../hooks/useTasks';
+import { mergeTask, cleanupWorktree } from '../../services/api';
 import type { Task } from '../../types';
 
 // Safe JSON stringify that handles circular references
@@ -98,6 +101,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
+  const [mergeStatus, setMergeStatus] = useState<'idle' | 'merging' | 'merged' | 'error'>('idle');
+  const [mergeError, setMergeError] = useState<string | null>(null);
 
   // Handle task status transitions
   useEffect(() => {
@@ -546,6 +551,84 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                 <pre className="text-red-300 text-sm bg-red-500/10 p-3 rounded overflow-x-auto">
                   {task.error}
                 </pre>
+              </div>
+            )}
+
+            {/* Worktree Actions */}
+            {task.worktreeBranch && ['completed', 'completed_with_warnings', 'failed'].includes(task.status) && (
+              <div className="p-4 border-t border-dark-700 flex-shrink-0">
+                <h3 className="text-xs font-medium text-dark-500 uppercase mb-2 flex items-center gap-1">
+                  <GitBranch size={14} /> Worktree: {task.worktreeBranch}
+                </h3>
+                {mergeStatus === 'merged' ? (
+                  <div className="text-green-400 text-sm flex items-center gap-1">
+                    <GitMerge size={14} /> Merged successfully
+                  </div>
+                ) : mergeStatus === 'error' ? (
+                  <div className="space-y-2">
+                    <div className="text-red-400 text-sm">{mergeError}</div>
+                    <button
+                      onClick={() => { setMergeStatus('idle'); setMergeError(null); }}
+                      className="text-xs text-dark-400 hover:text-dark-200"
+                    >
+                      Dismiss
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={async () => {
+                        setMergeStatus('merging');
+                        try {
+                          await mergeTask(task.id, false);
+                          setMergeStatus('merged');
+                        } catch (err) {
+                          setMergeStatus('error');
+                          setMergeError(err instanceof Error ? err.message : 'Merge failed');
+                        }
+                      }}
+                      disabled={mergeStatus === 'merging'}
+                      className="btn btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
+                    >
+                      <GitMerge size={14} />
+                      {mergeStatus === 'merging' ? 'Merging...' : 'Merge'}
+                    </button>
+                    <button
+                      onClick={async () => {
+                        setMergeStatus('merging');
+                        try {
+                          await mergeTask(task.id, true);
+                          setMergeStatus('merged');
+                        } catch (err) {
+                          setMergeStatus('error');
+                          setMergeError(err instanceof Error ? err.message : 'Merge failed');
+                        }
+                      }}
+                      disabled={mergeStatus === 'merging'}
+                      className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1"
+                    >
+                      <GitMerge size={14} />
+                      Merge & Delete Branch
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!confirm('Delete worktree and discard all changes?')) return;
+                        try {
+                          await cleanupWorktree(task.id);
+                          setMergeStatus('merged');
+                        } catch (err) {
+                          setMergeStatus('error');
+                          setMergeError(err instanceof Error ? err.message : 'Cleanup failed');
+                        }
+                      }}
+                      disabled={mergeStatus === 'merging'}
+                      className="btn btn-secondary text-xs py-1.5 px-3 flex items-center gap-1 text-red-400 hover:text-red-300"
+                    >
+                      <Trash2 size={14} />
+                      Discard
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </div>

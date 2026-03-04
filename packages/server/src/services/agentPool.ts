@@ -207,6 +207,20 @@ class AgentPool {
     }
   }
 
+  mergeWorktree(agentId: string, data: { taskId: number; projectPath: string; branch: string; deleteBranch: boolean }): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.socket.emit('task:merge', data);
+    return true;
+  }
+
+  cleanupWorktree(agentId: string, data: { taskId: number; projectPath: string; branch: string }): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent) return false;
+    agent.socket.emit('task:cleanup-worktree', data);
+    return true;
+  }
+
   private startHeartbeatMonitor(): void {
     if (this.heartbeatInterval) {
       clearInterval(this.heartbeatInterval);

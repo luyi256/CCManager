@@ -81,6 +81,12 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       createdAt: new Date().toISOString(),
     });
 
+    // If project has worktree enabled, set the branch name
+    if (project.enableWorktree) {
+      task.worktreeBranch = `ccm-task-${task.id}`;
+      await storage.saveTask(projectId, task);
+    }
+
     // Start execution if no dependencies
     if (!dependsOn) {
       // Try to dispatch first, only update status if successful
@@ -368,6 +374,80 @@ router.post('/tasks/:id/plan/confirm', async (req, res) => {
   } catch (error) {
     console.error('Failed to confirm:', error);
     res.status(500).json({ message: 'Failed to confirm plan' });
+  }
+});
+
+// Merge worktree branch
+router.post('/tasks/:id/merge', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const { deleteBranch } = req.body;
+
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    if (!task.worktreeBranch) {
+      return res.status(400).json({ message: 'Task has no worktree branch' });
+    }
+
+    const project = await storage.getProject(task.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const dispatched = agentPool.mergeWorktree(project.agentId, {
+      taskId: task.id,
+      projectPath: project.projectPath,
+      branch: task.worktreeBranch,
+      deleteBranch: deleteBranch || false,
+    });
+
+    if (!dispatched) {
+      return res.status(503).json({ message: 'Agent not available for merge operation' });
+    }
+
+    res.json({ message: 'Merge request sent to agent' });
+  } catch (error) {
+    console.error('Failed to merge worktree:', error);
+    res.status(500).json({ message: 'Failed to merge worktree' });
+  }
+});
+
+// Cleanup worktree
+router.post('/tasks/:id/cleanup-worktree', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    if (!task.worktreeBranch) {
+      return res.status(400).json({ message: 'Task has no worktree branch' });
+    }
+
+    const project = await storage.getProject(task.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const dispatched = agentPool.cleanupWorktree(project.agentId, {
+      taskId: task.id,
+      projectPath: project.projectPath,
+      branch: task.worktreeBranch,
+    });
+
+    if (!dispatched) {
+      return res.status(503).json({ message: 'Agent not available for cleanup operation' });
+    }
+
+    res.json({ message: 'Cleanup request sent to agent' });
+  } catch (error) {
+    console.error('Failed to cleanup worktree:', error);
+    res.status(500).json({ message: 'Failed to cleanup worktree' });
   }
 });
 
