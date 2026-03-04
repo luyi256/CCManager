@@ -2,6 +2,7 @@
 
 import fs from 'fs';
 import path from 'path';
+import readline from 'readline';
 import { AgentConnection } from './connection.js';
 import type { AgentConfig } from './types.js';
 
@@ -41,8 +42,35 @@ function loadConfig(): AgentConfig {
   process.exit(1);
 }
 
+function getConfigPath(): string {
+  const configArg = process.argv.find((arg) => arg.startsWith('--config='));
+  if (configArg) return path.resolve(configArg.split('=')[1]);
+  return path.resolve(CONFIG_PATH);
+}
+
+function promptInput(question: string): Promise<string> {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+function saveTokenToConfig(configPath: string, token: string): void {
+  try {
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    raw.authToken = token;
+    fs.writeFileSync(configPath, JSON.stringify(raw, null, 2) + '\n');
+    console.log(`Token saved to ${configPath}`);
+  } catch (e) {
+    console.warn(`Failed to save token to config: ${e instanceof Error ? e.message : e}`);
+  }
+}
+
 function validateConfig(config: AgentConfig): void {
-  const required = ['agentId', 'agentName', 'managerUrl', 'authToken', 'executor', 'allowedPaths'];
+  const required = ['agentId', 'agentName', 'managerUrl', 'executor', 'allowedPaths'];
   const missing = required.filter((key) => !(key in config));
 
   if (missing.length > 0) {
@@ -113,6 +141,19 @@ async function main(): Promise<void> {
 
   const config = loadConfig();
   validateConfig(config);
+
+  // Prompt for auth token if not configured
+  if (!config.authToken) {
+    console.log('\nNo auth token found in config.');
+    console.log('Generate one in Web UI → Settings → Agent Management → Register/Generate Token\n');
+    const token = await promptInput('Enter agent token: ');
+    if (!token) {
+      console.error('Token is required to connect.');
+      process.exit(1);
+    }
+    config.authToken = token;
+    saveTokenToConfig(getConfigPath(), token);
+  }
 
   console.log(`Agent ID: ${config.agentId}`);
   console.log(`Agent Name: ${config.agentName}`);
