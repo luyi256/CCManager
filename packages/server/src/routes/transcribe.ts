@@ -10,24 +10,25 @@ router.post('/', upload.single('audio'), async (req, res) => {
       return res.status(400).json({ message: 'No audio file provided' });
     }
 
-    // Groq API configuration
-    const groqApiKey = process.env.GROQ_API_KEY;
-    const groqModel = process.env.GROQ_MODEL || 'whisper-large-v3-turbo';
+    // Whisper API configuration (supports Groq, OpenAI, etc.)
+    const apiKey = process.env.WHISPER_API_KEY || process.env.GROQ_API_KEY;
+    const apiUrl = process.env.WHISPER_API_URL || 'https://api.groq.com/openai/v1';
+    const model = process.env.WHISPER_MODEL || process.env.GROQ_MODEL || 'whisper-large-v3-turbo';
 
-    if (!groqApiKey) {
-      return res.status(500).json({ message: 'Groq API not configured' });
+    if (!apiKey) {
+      return res.status(500).json({ message: 'Whisper API not configured (set WHISPER_API_KEY)' });
     }
 
     // Create form data for Groq API
     const formData = new FormData();
     formData.append('file', new Blob([req.file.buffer], { type: req.file.mimetype }), 'audio.webm');
-    formData.append('model', groqModel);
+    formData.append('model', model);
     formData.append('response_format', 'json');
 
-    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+    const response = await fetch(`${apiUrl}/audio/transcriptions`, {
       method: 'POST',
       headers: {
-        'Authorization': `Bearer ${groqApiKey}`,
+        'Authorization': `Bearer ${apiKey}`,
       },
       body: formData,
     });
