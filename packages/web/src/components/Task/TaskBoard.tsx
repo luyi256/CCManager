@@ -16,8 +16,7 @@ interface ColumnConfig {
 
 const columns: ColumnConfig[] = [
   { id: 'pending', title: 'Pending', statuses: ['pending'] },
-  { id: 'running', title: 'Running', statuses: ['running', 'waiting', 'waiting_permission'] },
-  { id: 'review', title: 'Review', statuses: ['plan_review'] },
+  { id: 'running', title: 'Running', statuses: ['running', 'waiting', 'waiting_permission', 'plan_review'] },
   { id: 'completed', title: 'Completed', statuses: ['completed', 'completed_with_warnings'] },
   { id: 'failed', title: 'Failed', statuses: ['failed', 'cancelled'] },
 ];
@@ -49,7 +48,7 @@ export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoar
   }, [tasks]);
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4">
+    <div className="flex justify-center gap-4 overflow-x-auto pb-4 -mx-4 px-4">
       {columns.map((column) => (
         <TaskColumn
           key={column.id}
