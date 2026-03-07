@@ -1,28 +1,28 @@
 #!/bin/bash
 
-# CCManager 启动脚本 (使用 pm2 守护进程)
-# Telegram 通知由 tunnel-notify.sh 自动处理（已集成到 pm2）
+# CCManager startup script (uses pm2 for process management)
+# Telegram notifications handled by tunnel-notify.sh (integrated into pm2)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# 清除旧的 URL 记录，确保新启动时发送通知
+# Clear old URL record to ensure notification on fresh start
 rm -f /tmp/ccm-tunnel-last-url
 
-# 停止旧进程
+# Stop existing processes
 echo "Stopping existing services..."
 npx pm2 delete all 2>/dev/null
 sleep 1
 
-# 清空旧日志
+# Clear old logs
 > /tmp/ccm-tunnel.log 2>/dev/null
 
-# 启动所有服务 (包括 ccm-agent 和 ccm-tunnel)
+# Start all services (including ccm-agent and ccm-tunnel)
 echo "Starting services with pm2..."
 npx pm2 start ecosystem.config.cjs
 sleep 3
 
-# 等待获取隧道 URL
+# Wait for tunnel URL
 echo "Waiting for tunnel URL..."
 for i in {1..30}; do
     TUNNEL_URL=$(grep -o "https://[a-z0-9-]*\.trycloudflare\.com" /tmp/ccm-tunnel.log 2>/dev/null | tail -1)

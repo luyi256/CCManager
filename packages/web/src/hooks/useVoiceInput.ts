@@ -41,8 +41,8 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
         isStarting: false,
         isTranscribing: false,
         error: !window.isSecureContext
-          ? '当前为 HTTP 连接，浏览器禁止访问麦克风。请点击下方上传按钮上传音频文件转文字。'
-          : '浏览器不支持录音，请点击下方上传按钮上传音频文件',
+          ? 'HTTP connection detected. Browser blocks microphone access over HTTP. Please upload an audio file instead.'
+          : 'Browser does not support recording. Please upload an audio file instead.',
       });
       return;
     }
@@ -75,7 +75,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
         chunksRef.current = [];
 
         if (blob.size === 0) {
-          setState({ isRecording: false, isStarting: false, isTranscribing: false, error: '未录到音频' });
+          setState({ isRecording: false, isStarting: false, isTranscribing: false, error: 'No audio recorded' });
           return;
         }
 
@@ -93,7 +93,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
             isRecording: false,
             isStarting: false,
             isTranscribing: false,
-            error: err instanceof Error ? err.message : '转写失败',
+            error: err instanceof Error ? err.message : 'Transcription failed',
           });
         }
       };
@@ -102,12 +102,12 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
       mediaRecorderRef.current = recorder;
       setState({ isRecording: true, isStarting: false, isTranscribing: false, error: null });
     } catch (err) {
-      let message = '无法访问麦克风';
+      let message = 'Cannot access microphone';
       if (err instanceof DOMException) {
         if (err.name === 'NotAllowedError') {
-          message = '麦克风权限被拒绝，请在浏览器设置中允许麦克风访问';
+          message = 'Microphone permission denied. Please allow microphone access in browser settings.';
         } else if (err.name === 'NotFoundError') {
-          message = '未找到麦克风设备';
+          message = 'No microphone device found';
         }
       }
       setState({ isRecording: false, isStarting: false, isTranscribing: false, error: message });
@@ -143,7 +143,7 @@ export function useVoiceInput(onTranscription: (text: string) => void) {
         isRecording: false,
         isStarting: false,
         isTranscribing: false,
-        error: err instanceof Error ? err.message : '转写失败',
+        error: err instanceof Error ? err.message : 'Transcription failed',
       });
     }
   }, [onTranscription]);
