@@ -12,7 +12,6 @@ import {
   AlertTriangle,
   ArrowDown,
   Send,
-  Terminal,
   MessageSquare,
   ChevronRight,
   ChevronDown,
@@ -82,15 +81,14 @@ function ToolCallItem({ item }: { item: TimelineItem }) {
 
   return (
     <div className="flex gap-2">
-      <Terminal size={14} className="text-green-400 flex-shrink-0 mt-1" />
       <div className="flex-1 min-w-0">
         <button
           onClick={() => setExpanded(!expanded)}
           className="flex items-center gap-1 w-full text-left group"
         >
           {expanded
-            ? <ChevronDown size={14} className="text-dark-500 flex-shrink-0" />
-            : <ChevronRight size={14} className="text-dark-500 flex-shrink-0" />
+            ? <ChevronDown size={14} className="text-green-400 flex-shrink-0" />
+            : <ChevronRight size={14} className="text-green-400 flex-shrink-0" />
           }
           <span className="font-medium text-green-400 text-sm">
             {item.toolName}
