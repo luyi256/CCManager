@@ -1,17 +1,34 @@
 #!/bin/bash
 
-# Cloudflare Tunnel 包装脚本
-# 启动 cloudflared 并实时监听 URL 变化，立即发送 Telegram 通知
+# Cloudflare Tunnel wrapper script
+# Starts cloudflared and monitors URL changes, sends Telegram notifications
+#
+# Required env vars (or set in <DATA_PATH>/secrets.env):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Optional env var:
+#   DATA_PATH - path to CCManagerData directory
 
-TELEGRAM_BOT_TOKEN="8405186727:AAE-iYAD16cepFoITGG8ORReznv9ngKgIns"
-TELEGRAM_CHAT_ID="8562069932"
+DATA_PATH="${DATA_PATH:-./data}"
+SECRETS_FILE="${DATA_PATH}/secrets.env"
+
+if [ -f "$SECRETS_FILE" ]; then
+    source "$SECRETS_FILE"
+else
+    echo "[WARN] secrets.env not found at $SECRETS_FILE"
+    echo "       Create it with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+fi
+
 LAST_URL_FILE="/tmp/ccm-tunnel-last-url"
 
 send_telegram() {
     local url="$1"
+    if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+        echo "[WARN] Telegram not configured, skipping notification"
+        return
+    fi
     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        -d "text=🌐 *CCManager 公网地址*
+        -d "text=🌐 *CCManager Public URL*
 
 ${url}
 
@@ -20,17 +37,14 @@ ${url}
     echo "[$(date)] Telegram sent: $url"
 }
 
-# 启动 cloudflared，stderr 通过管道实时处理
-# cloudflared 的 URL 输出在 stderr
+# Start cloudflared, process stderr for URL detection
 exec 2>&1
 cloudflared tunnel --url http://localhost:3001 2>&1 | while IFS= read -r line; do
     echo "$line"
 
-    # 检测 URL
     if [[ "$line" =~ (https://[a-z0-9-]+\.trycloudflare\.com) ]]; then
         URL="${BASH_REMATCH[1]}"
 
-        # 检查是否是新 URL
         LAST_URL=""
         [ -f "$LAST_URL_FILE" ] && LAST_URL=$(cat "$LAST_URL_FILE" 2>/dev/null)
 
@@ -38,9 +52,11 @@ cloudflared tunnel --url http://localhost:3001 2>&1 | while IFS= read -r line; d
             echo "$URL" > "$LAST_URL_FILE"
             send_telegram "$URL"
 
-            # Write tunnel URL to CCManagerData/server-url.txt (overrides localhost) and push for remote agent discovery
-            echo "$URL" > /home/CC/CCManagerData/server-url.txt
-            (cd /home/CC/CCManagerData && git add server-url.txt && git commit -m "tunnel: $URL" && git push) &
+            # Write tunnel URL to DATA_PATH/server-url.txt for remote agent discovery
+            if [ -d "$DATA_PATH" ]; then
+                echo "$URL" > "${DATA_PATH}/server-url.txt"
+                (cd "$DATA_PATH" && git add server-url.txt && git commit -m "tunnel: $URL" && git push) &
+            fi
         fi
     fi
 done

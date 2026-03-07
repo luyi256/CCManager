@@ -1,3 +1,5 @@
+const DATA_PATH = process.env.DATA_PATH || require('path').resolve(__dirname, 'data');
+
 module.exports = {
   apps: [
     {
@@ -15,6 +17,7 @@ module.exports = {
     {
       name: 'ccm-tunnel',
       script: './tunnel-notify.sh',
+      env: { DATA_PATH },
       out_file: '/tmp/ccm-tunnel.log',
       error_file: '/tmp/ccm-tunnel.log',
       merge_logs: true,

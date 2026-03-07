@@ -3,6 +3,7 @@ node_modules/
 
 # Build outputs
 dist/
+dist_old/
 build/
 .next/
 
@@ -11,9 +12,11 @@ build/
 .env.local
 .env.*.local
 
-# Data directory (synced separately, may contain large logs)
-# Uncomment if you want to exclude data from git:
-# data/projects/*/logs/
+# Data directory (runtime data, managed separately)
+data/
+
+# Claude Code local settings
+.claude/
 
 # IDE
 .idea/
@@ -30,6 +33,9 @@ yarn-error.log*
 
 # Test coverage
 coverage/
+
+# Internal docs
+PLAN.md
 
 # Temp files
 *.tmp

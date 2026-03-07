@@ -1,22 +1,20 @@
-import { useEffect, useRef } from 'react';
-import { Mic, MicOff, Loader2, Upload } from 'lucide-react';
+import { useEffect } from 'react';
+import { Mic, MicOff, Loader2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { useVoiceInput } from '../../hooks/useVoiceInput';
 
 interface VoiceInputProps {
   onTranscription: (text: string) => void;
   className?: string;
+  compact?: boolean;
 }
 
-const AUDIO_ACCEPT = 'audio/webm,audio/ogg,audio/mp3,audio/mp4,audio/wav,audio/flac,audio/m4a,audio/mpeg,.webm,.ogg,.mp3,.mp4,.wav,.flac,.m4a';
-
-export default function VoiceInput({ onTranscription, className }: VoiceInputProps) {
+export default function VoiceInput({ onTranscription, className, compact }: VoiceInputProps) {
   const {
     isRecording, isStarting, isTranscribing,
-    toggleRecording, transcribeFile, error, clearError,
+    toggleRecording, error, clearError,
   } = useVoiceInput(onTranscription);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const busy = isStarting || isTranscribing;
 
   // Auto-dismiss inline error after 8 seconds
@@ -26,38 +24,21 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
     return () => clearTimeout(timer);
   }, [error, clearError]);
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      transcribeFile(file);
-    }
-    e.target.value = '';
-  };
-
   return (
     <div className={clsx('relative flex flex-col gap-1', className)}>
-      {/* Hidden file input for audio upload */}
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept={AUDIO_ACCEPT}
-        onChange={handleFileChange}
-        tabIndex={-1}
-        style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden', clip: 'rect(0,0,0,0)' }}
-      />
-
       {/* Mic button - always shown, tries to record; shows error if unavailable */}
       <button
         type="button"
         onClick={() => !busy && toggleRecording()}
         disabled={busy}
         className={clsx(
-          'p-2 rounded-lg transition-all duration-200',
+          'rounded-lg transition-all duration-200',
+          compact ? 'p-1.5' : 'p-2',
           isRecording
             ? 'bg-red-500 text-white animate-pulse'
             : busy
-              ? 'bg-dark-700 text-dark-500 cursor-wait'
-              : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
+              ? compact ? 'text-dark-500 cursor-wait' : 'bg-dark-700 text-dark-500 cursor-wait'
+              : compact ? 'text-dark-400 hover:text-dark-200' : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
         )}
         title={
           isStarting ? '请求麦克风权限...'
@@ -67,28 +48,12 @@ export default function VoiceInput({ onTranscription, className }: VoiceInputPro
         }
       >
         {busy ? (
-          <Loader2 size={20} className="animate-spin" />
+          <Loader2 size={compact ? 16 : 20} className="animate-spin" />
         ) : isRecording ? (
-          <MicOff size={20} />
+          <MicOff size={compact ? 16 : 20} />
         ) : (
-          <Mic size={20} />
+          <Mic size={compact ? 16 : 20} />
         )}
-      </button>
-
-      {/* Upload button - always visible as fallback for HTTP / no-mic environments */}
-      <button
-        type="button"
-        onClick={() => !busy && fileInputRef.current?.click()}
-        disabled={busy}
-        className={clsx(
-          'p-1.5 rounded-lg transition-all duration-200',
-          busy
-            ? 'bg-dark-700 text-dark-500 cursor-wait'
-            : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
-        )}
-        title="上传音频文件转文字"
-      >
-        <Upload size={16} />
       </button>
 
       {error && (

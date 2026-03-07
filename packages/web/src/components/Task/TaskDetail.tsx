@@ -213,6 +213,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
 
   // Track previous status to detect transitions
   const prevStatusRef = useRef(task.status);
+  const followUpTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   // Always load saved logs (for history)
   const { data: savedLogs, refetch: refetchLogs } = useTaskLogs(task.id);
@@ -765,54 +766,62 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     const prompt = continuePrompt.trim();
                     if (!prompt) return;
                     if (task.status === 'completed') {
-                      // Add optimistic message to timeline immediately
                       setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
-                      // Send immediately
                       continueTask.mutate({ taskId: task.id, prompt });
                     } else {
-                      // Queue for when task completes
                       setFollowUpQueue(prev => [...prev, prompt]);
                     }
                     setContinuePrompt('');
-                    const textarea = e.currentTarget.querySelector('textarea');
-                    if (textarea) textarea.style.height = 'auto';
+                    if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
                   }}
-                  className="flex gap-2 items-end"
                 >
-                  <textarea
-                    value={continuePrompt}
-                    onChange={(e) => {
-                      setContinuePrompt(e.target.value);
-                      e.target.style.height = 'auto';
-                      e.target.style.height = `${e.target.scrollHeight}px`;
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.shiftKey) {
-                        e.preventDefault();
-                        e.currentTarget.form?.requestSubmit();
-                      }
-                    }}
-                    placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
-                    disabled={continueTask.isPending}
-                    rows={1}
-                    className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500 resize-none overflow-hidden max-h-40"
-                  />
-                  <VoiceInput
-                    onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))}
-                  />
-                  <button
-                    type="submit"
-                    disabled={continueTask.isPending || !continuePrompt.trim()}
-                    className="btn btn-primary flex items-center justify-center gap-2 px-4"
-                  >
-                    <Send size={16} />
-                    {isActive ? 'Queue' : 'Send'}
-                  </button>
+                  <div className="relative bg-dark-800 border border-dark-600 rounded-lg focus-within:border-primary-500">
+                    <textarea
+                      ref={followUpTextareaRef}
+                      value={continuePrompt}
+                      onChange={(e) => {
+                        setContinuePrompt(e.target.value);
+                        e.target.style.height = 'auto';
+                        e.target.style.height = `${e.target.scrollHeight}px`;
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          e.currentTarget.form?.requestSubmit();
+                        }
+                      }}
+                      placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
+                      disabled={continueTask.isPending}
+                      rows={1}
+                      className="w-full bg-transparent px-3 py-2 pr-20 text-sm text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
+                    />
+                    <div className="absolute right-2 bottom-1.5 flex items-center gap-1">
+                      <VoiceInput
+                        compact
+                        onTranscription={(text) => {
+                          setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text));
+                          requestAnimationFrame(() => {
+                            if (followUpTextareaRef.current) {
+                              followUpTextareaRef.current.style.height = 'auto';
+                              followUpTextareaRef.current.style.height = `${followUpTextareaRef.current.scrollHeight}px`;
+                            }
+                          });
+                        }}
+                      />
+                      <button
+                        type="submit"
+                        disabled={continueTask.isPending || !continuePrompt.trim()}
+                        className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
+                      >
+                        <Send size={16} />
+                      </button>
+                    </div>
+                  </div>
                 </form>
               </>
             )}
             <div className="flex gap-2">
-              {(isActive || task.status === 'pending') && (
+              {isActive && (
                 <button
                   onClick={() => cancelTask.mutate(task.id)}
                   disabled={cancelTask.isPending}

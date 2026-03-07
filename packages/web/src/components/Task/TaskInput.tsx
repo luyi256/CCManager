@@ -144,14 +144,14 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
             onChange={(e) => setPrompt(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && e.shiftKey) {
+              if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 if ((prompt.trim() || images.length > 0) && !isSubmitting) {
                   handleSubmit(e);
                 }
               }
             }}
-            placeholder="Describe the task for Claude Code... (Shift+Enter to send, Ctrl+V to paste screenshot)"
+            placeholder="Describe the task for Claude Code..."
             className="input resize-none flex-1"
             disabled={isSubmitting}
           />
