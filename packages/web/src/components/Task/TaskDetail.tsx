@@ -71,61 +71,124 @@ interface TimelineItem {
   toolStatus?: 'pending' | 'running' | 'completed';
 }
 
-// Collapsible tool call component
-function ToolCallItem({ item }: { item: TimelineItem }) {
-  const [expanded, setExpanded] = useState(false);
+// Single collapsible tool call
+function ToolCallItem({ item, defaultExpanded = false }: { item: TimelineItem; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const inputStr = safeStringify(item.toolInput);
   const resultStr = item.toolResult != null
     ? (typeof item.toolResult === 'string' ? item.toolResult : safeStringify(item.toolResult))
     : null;
 
   return (
-    <div className="flex gap-2">
-      <div className="flex-1 min-w-0">
-        <button
-          onClick={() => setExpanded(!expanded)}
-          className="flex items-center gap-1 w-full text-left group"
-        >
-          {expanded
-            ? <ChevronDown size={14} className="text-green-400 flex-shrink-0" />
-            : <ChevronRight size={14} className="text-green-400 flex-shrink-0" />
-          }
-          <span className="font-medium text-green-400 text-sm">
-            {item.toolName}
+    <div className="flex-1 min-w-0">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1 w-full text-left group"
+      >
+        {expanded
+          ? <ChevronDown size={14} className="text-green-400 flex-shrink-0" />
+          : <ChevronRight size={14} className="text-green-400 flex-shrink-0" />
+        }
+        <span className="font-medium text-green-400 text-sm">
+          {item.toolName}
+        </span>
+        {item.toolStatus && (
+          <span className={`text-xs ${
+            item.toolStatus === 'completed' ? 'text-green-500' :
+            item.toolStatus === 'running' ? 'text-blue-400 animate-pulse' :
+            'text-dark-500'
+          }`}>
+            {item.toolStatus}
           </span>
-          {item.toolStatus && (
-            <span className={`text-xs ${
-              item.toolStatus === 'completed' ? 'text-green-500' :
-              item.toolStatus === 'running' ? 'text-blue-400 animate-pulse' :
-              'text-dark-500'
-            }`}>
-              {item.toolStatus}
-            </span>
-          )}
-          {!expanded && (
-            <span className="text-xs text-dark-600 ml-auto truncate max-w-[50%]">
-              {inputStr.length > 60 ? inputStr.slice(0, 60) + '...' : inputStr}
-            </span>
-          )}
-        </button>
-        {expanded && (
-          <div className="mt-1">
-            <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
-              {inputStr}
-            </pre>
-            {resultStr != null && (
-              <div className="mt-2">
-                <span className="text-xs text-dark-500">Result:</span>
-                <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all mt-1">
-                  {resultStr.length > 500 ? resultStr.slice(0, 500) + '...' : resultStr}
-                </pre>
-              </div>
-            )}
-          </div>
         )}
-      </div>
+        {!expanded && (
+          <span className="text-xs text-dark-600 ml-auto truncate max-w-[50%]">
+            {inputStr.length > 60 ? inputStr.slice(0, 60) + '...' : inputStr}
+          </span>
+        )}
+      </button>
+      {expanded && (
+        <div className="mt-1 ml-5">
+          <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
+            {inputStr}
+          </pre>
+          {resultStr != null && (
+            <div className="mt-2">
+              <span className="text-xs text-dark-500">Result:</span>
+              <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all mt-1">
+                {resultStr.length > 500 ? resultStr.slice(0, 500) + '...' : resultStr}
+              </pre>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+// Grouped display for consecutive tool calls
+function ToolCallGroup({ items }: { items: TimelineItem[] }) {
+  const [expanded, setExpanded] = useState(false);
+
+  if (items.length === 1) {
+    return <ToolCallItem item={items[0]} />;
+  }
+
+  const lastItem = items[items.length - 1];
+  const hiddenCount = items.length - 1;
+
+  return (
+    <div className="flex-1 min-w-0">
+      {expanded && (
+        <div className="space-y-2 mb-2">
+          {items.slice(0, -1).map((item) => (
+            <ToolCallItem key={item.id} item={item} />
+          ))}
+        </div>
+      )}
+      <ToolCallItem item={lastItem} defaultExpanded={false} />
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="mt-1 ml-5 text-xs text-dark-500 hover:text-dark-300 transition-colors"
+      >
+        {expanded ? 'Hide' : `Show ${hiddenCount} more tool call${hiddenCount > 1 ? 's' : ''}`}
+      </button>
+    </div>
+  );
+}
+
+// Group consecutive tool_use items in timeline
+type GroupedItem =
+  | { type: 'single'; item: TimelineItem }
+  | { type: 'tool_group'; items: TimelineItem[] };
+
+function groupTimeline(timeline: TimelineItem[]): GroupedItem[] {
+  const groups: GroupedItem[] = [];
+  let toolBuffer: TimelineItem[] = [];
+
+  const flushTools = () => {
+    if (toolBuffer.length === 0) return;
+    if (toolBuffer.length === 1) {
+      groups.push({ type: 'single', item: toolBuffer[0] });
+    } else {
+      groups.push({ type: 'tool_group', items: [...toolBuffer] });
+    }
+    toolBuffer = [];
+  };
+
+  for (const item of timeline) {
+    if (item.type === 'tool_use' || item.type === 'tool_result') {
+      if (item.type === 'tool_use') {
+        toolBuffer.push(item);
+      }
+      // tool_result items are already embedded in tool_use via toolResult, skip standalone
+    } else {
+      flushTools();
+      groups.push({ type: 'single', item });
+    }
+  }
+  flushTools();
+  return groups;
 }
 
 interface TaskDetailProps {
@@ -333,6 +396,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     return items;
   }, [savedLogs, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt, task.continuePrompt, task.startedAt]);
 
+  const grouped = useMemo(() => groupTimeline(timeline), [timeline]);
+
   const hasContent = timeline.length > 0 || isActive;
 
   // Track if user has scrolled up
@@ -464,30 +529,40 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       </div>
                     ) : (
                       <div className="divide-y divide-dark-700">
-                        {timeline.map((item) => (
-                          <div key={item.id} className="p-3">
-                            {item.type === 'output' ? (
-                              <div className="flex gap-2">
-                                <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />
-                                <div className="flex-1 prose prose-invert prose-sm max-w-none overflow-hidden break-words">
-                                  <SafeMarkdown>{item.content}</SafeMarkdown>
-                                </div>
+                        {grouped.map((group, gi) => {
+                          if (group.type === 'tool_group') {
+                            return (
+                              <div key={`group-${gi}`} className="p-3">
+                                <ToolCallGroup items={group.items} />
                               </div>
-                            ) : item.type === 'user_message' ? (
-                              <div className="flex gap-2 bg-primary-500/10 rounded-lg -mx-1 px-1 py-1">
-                                <Send size={14} className="text-primary-400 flex-shrink-0 mt-1" />
-                                <div className="flex-1">
-                                  <div className="text-xs font-medium text-primary-400 uppercase mb-1">
-                                    {item.id === 'initial-prompt' ? 'Prompt' : 'Follow-up'}
+                            );
+                          }
+                          const item = group.item;
+                          return (
+                            <div key={item.id} className="p-3">
+                              {item.type === 'output' ? (
+                                <div className="flex gap-2">
+                                  <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />
+                                  <div className="flex-1 prose prose-invert prose-sm max-w-none overflow-hidden break-words">
+                                    <SafeMarkdown>{item.content}</SafeMarkdown>
                                   </div>
-                                  <p className="text-dark-200 break-words">{item.content}</p>
                                 </div>
-                              </div>
-                            ) : item.type === 'tool_use' ? (
-                              <ToolCallItem item={item} />
-                            ) : null}
-                          </div>
-                        ))}
+                              ) : item.type === 'user_message' ? (
+                                <div className="flex gap-2 bg-primary-500/10 rounded-lg -mx-1 px-1 py-1">
+                                  <Send size={14} className="text-primary-400 flex-shrink-0 mt-1" />
+                                  <div className="flex-1">
+                                    <div className="text-xs font-medium text-primary-400 uppercase mb-1">
+                                      {item.id === 'initial-prompt' ? 'Prompt' : 'Follow-up'}
+                                    </div>
+                                    <p className="text-dark-200 break-words">{item.content}</p>
+                                  </div>
+                                </div>
+                              ) : item.type === 'tool_use' ? (
+                                <ToolCallItem item={item} />
+                              ) : null}
+                            </div>
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -699,16 +774,28 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       setFollowUpQueue(prev => [...prev, prompt]);
                     }
                     setContinuePrompt('');
+                    const textarea = e.currentTarget.querySelector('textarea');
+                    if (textarea) textarea.style.height = 'auto';
                   }}
-                  className="flex gap-2"
+                  className="flex gap-2 items-end"
                 >
-                  <input
-                    type="text"
+                  <textarea
                     value={continuePrompt}
-                    onChange={(e) => setContinuePrompt(e.target.value)}
+                    onChange={(e) => {
+                      setContinuePrompt(e.target.value);
+                      e.target.style.height = 'auto';
+                      e.target.style.height = `${e.target.scrollHeight}px`;
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) {
+                        e.preventDefault();
+                        e.currentTarget.form?.requestSubmit();
+                      }
+                    }}
                     placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
                     disabled={continueTask.isPending}
-                    className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
+                    rows={1}
+                    className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500 resize-none overflow-hidden max-h-40"
                   />
                   <VoiceInput
                     onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))}
