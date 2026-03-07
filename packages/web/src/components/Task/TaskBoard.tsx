@@ -48,7 +48,7 @@ export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoar
   }, [tasks]);
 
   return (
-    <div className="flex justify-center gap-4 overflow-x-auto pb-4 -mx-4 px-4">
+    <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4">
       {columns.map((column) => (
         <TaskColumn
           key={column.id}
