@@ -138,7 +138,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
         </div>
       )}
       <div className="flex gap-3">
-        <div className="flex-1">
+        <div className="flex-1 flex flex-col">
           <textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -152,7 +152,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
               }
             }}
             placeholder="Describe the task for Claude Code... (Shift+Enter to send, Ctrl+V to paste screenshot)"
-            className="input resize-none h-20"
+            className="input resize-none flex-1"
             disabled={isSubmitting}
           />
           {/* Pasted image previews */}
