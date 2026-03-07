@@ -19,10 +19,18 @@ export default function SafeMarkdown({ children, className }: SafeMarkdownProps)
 
   try {
     return (
-      <div className={className}>
+      <div className={`overflow-hidden ${className || ''}`}>
         <ReactMarkdown
           disallowedElements={['script', 'iframe', 'object', 'embed']}
           unwrapDisallowed
+          components={{
+            pre: ({ children: c, ...props }) => (
+              <pre className="whitespace-pre-wrap break-words overflow-x-auto" {...props}>{c}</pre>
+            ),
+            code: ({ children: c, ...props }) => (
+              <code className="break-words" {...props}>{c}</code>
+            ),
+          }}
         >
           {children}
         </ReactMarkdown>
