@@ -14,6 +14,8 @@ import {
   Send,
   Terminal,
   MessageSquare,
+  ChevronRight,
+  ChevronDown,
 } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import ErrorBoundary from '../common/ErrorBoundary';
@@ -68,6 +70,64 @@ interface TimelineItem {
   toolInput?: unknown;
   toolResult?: unknown;
   toolStatus?: 'pending' | 'running' | 'completed';
+}
+
+// Collapsible tool call component
+function ToolCallItem({ item }: { item: TimelineItem }) {
+  const [expanded, setExpanded] = useState(false);
+  const inputStr = safeStringify(item.toolInput);
+  const resultStr = item.toolResult != null
+    ? (typeof item.toolResult === 'string' ? item.toolResult : safeStringify(item.toolResult))
+    : null;
+
+  return (
+    <div className="flex gap-2">
+      <Terminal size={14} className="text-green-400 flex-shrink-0 mt-1" />
+      <div className="flex-1 min-w-0">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1 w-full text-left group"
+        >
+          {expanded
+            ? <ChevronDown size={14} className="text-dark-500 flex-shrink-0" />
+            : <ChevronRight size={14} className="text-dark-500 flex-shrink-0" />
+          }
+          <span className="font-medium text-green-400 text-sm">
+            {item.toolName}
+          </span>
+          {item.toolStatus && (
+            <span className={`text-xs ${
+              item.toolStatus === 'completed' ? 'text-green-500' :
+              item.toolStatus === 'running' ? 'text-blue-400 animate-pulse' :
+              'text-dark-500'
+            }`}>
+              {item.toolStatus}
+            </span>
+          )}
+          {!expanded && (
+            <span className="text-xs text-dark-600 ml-auto truncate max-w-[50%]">
+              {inputStr.length > 60 ? inputStr.slice(0, 60) + '...' : inputStr}
+            </span>
+          )}
+        </button>
+        {expanded && (
+          <div className="mt-1">
+            <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
+              {inputStr}
+            </pre>
+            {resultStr != null && (
+              <div className="mt-2">
+                <span className="text-xs text-dark-500">Result:</span>
+                <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all mt-1">
+                  {resultStr.length > 500 ? resultStr.slice(0, 500) + '...' : resultStr}
+                </pre>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 interface TaskDetailProps {
@@ -426,38 +486,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                                 </div>
                               </div>
                             ) : item.type === 'tool_use' ? (
-                              <div className="flex gap-2">
-                                <Terminal size={14} className="text-green-400 flex-shrink-0 mt-1" />
-                                <div className="flex-1">
-                                  <div className="flex items-center gap-2 mb-1">
-                                    <span className="font-medium text-green-400 text-sm">
-                                      {item.toolName}
-                                    </span>
-                                    {item.toolStatus && (
-                                      <span className={`text-xs ${
-                                        item.toolStatus === 'completed' ? 'text-green-500' :
-                                        item.toolStatus === 'running' ? 'text-blue-400 animate-pulse' :
-                                        'text-dark-500'
-                                      }`}>
-                                        {item.toolStatus}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
-                                    {safeStringify(item.toolInput)}
-                                  </pre>
-                                  {item.toolResult != null ? (
-                                    <div className="mt-2">
-                                      <span className="text-xs text-dark-500">Result:</span>
-                                      <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all mt-1">
-                                        {typeof item.toolResult === 'string'
-                                          ? (item.toolResult as string).slice(0, 500) + ((item.toolResult as string).length > 500 ? '...' : '')
-                                          : safeStringify(item.toolResult)}
-                                      </pre>
-                                    </div>
-                                  ) : null}
-                                </div>
-                              </div>
+                              <ToolCallItem item={item} />
                             ) : null}
                           </div>
                         ))}
