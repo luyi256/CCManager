@@ -15,6 +15,8 @@ import {
   MessageSquare,
   ChevronRight,
   ChevronDown,
+  Paperclip,
+  Image,
 } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
 import ErrorBoundary from '../common/ErrorBoundary';
@@ -24,6 +26,12 @@ import { useTaskStream } from '../../hooks/useTaskStream';
 import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask } from '../../hooks/useTasks';
 import { mergeTask, cleanupWorktree } from '../../services/api';
 import type { Task } from '../../types';
+
+interface PastedImage {
+  id: string;
+  dataUrl: string;
+  name: string;
+}
 
 // Safe JSON stringify that handles circular references
 function safeStringify(obj: unknown, indent = 2): string {
@@ -200,7 +208,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const [autoScroll, setAutoScroll] = useState(true);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
-  const [followUpQueue, setFollowUpQueue] = useState<string[]>([]);
+  const [followUpQueue, setFollowUpQueue] = useState<Array<{ prompt: string; images?: string[] }>>([]);
   const [sentMessages, setSentMessages] = useState<Array<{ content: string; timestamp: number }>>([]);
 
   // Use live task data with refetch, falling back to initial prop
@@ -224,6 +232,64 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
+  const [followUpImages, setFollowUpImages] = useState<PastedImage[]>([]);
+  const followUpFileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFollowUpPaste = useCallback((e: React.ClipboardEvent) => {
+    if (e.clipboardData?.items) {
+      for (let i = 0; i < e.clipboardData.items.length; i++) {
+        const item = e.clipboardData.items[i];
+        if (item.type.startsWith('image/')) {
+          const file = item.getAsFile();
+          if (!file) continue;
+          const reader = new FileReader();
+          reader.onload = (ev) => {
+            const dataUrl = ev.target?.result as string;
+            if (dataUrl) {
+              setFollowUpImages(prev => [
+                ...prev,
+                {
+                  id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+                  dataUrl,
+                  name: file.name || `screenshot-${Date.now()}.png`,
+                },
+              ]);
+            }
+          };
+          reader.readAsDataURL(file);
+        }
+      }
+    }
+  }, []);
+
+  const handleFollowUpFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('image/')) continue;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (dataUrl) {
+          setFollowUpImages(prev => [
+            ...prev,
+            {
+              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              dataUrl,
+              name: file.name || `image-${Date.now()}.png`,
+            },
+          ]);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    e.target.value = '';
+  }, []);
+
+  const removeFollowUpImage = useCallback((id: string) => {
+    setFollowUpImages(prev => prev.filter(img => img.id !== id));
+  }, []);
 
   useEffect(() => {
     const el = followUpTextareaRef.current;
@@ -260,10 +326,10 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   // Auto-send queued follow-ups when task completes
   useEffect(() => {
     if (task.status === 'completed' && followUpQueue.length > 0 && !continueTask.isPending) {
-      const nextPrompt = followUpQueue[0];
+      const nextItem = followUpQueue[0];
       setFollowUpQueue(prev => prev.slice(1));
-      setSentMessages(prev => [...prev, { content: nextPrompt, timestamp: Date.now() }]);
-      continueTask.mutate({ taskId: task.id, prompt: nextPrompt });
+      setSentMessages(prev => [...prev, { content: nextItem.prompt, timestamp: Date.now() }]);
+      continueTask.mutate({ taskId: task.id, prompt: nextItem.prompt, images: nextItem.images });
     }
   }, [task.status, followUpQueue, continueTask, task.id]);
 
@@ -757,7 +823,12 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     <div className="text-xs text-dark-400 mb-1">Queued follow-ups (will send when task completes):</div>
                     {followUpQueue.map((msg, idx) => (
                       <div key={idx} className="flex items-center justify-between text-sm text-dark-300 py-1">
-                        <span className="truncate flex-1">{msg}</span>
+                        <span className="truncate flex-1">
+                          {msg.prompt}
+                          {msg.images && msg.images.length > 0 && (
+                            <span className="ml-1 text-dark-500">({msg.images.length} image{msg.images.length > 1 ? 's' : ''})</span>
+                          )}
+                        </span>
                         <button
                           type="button"
                           onClick={() => setFollowUpQueue(prev => prev.filter((_, i) => i !== idx))}
@@ -773,14 +844,16 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                   onSubmit={(e) => {
                     e.preventDefault();
                     const prompt = continuePrompt.trim();
-                    if (!prompt) return;
+                    if (!prompt && followUpImages.length === 0) return;
+                    const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
                     if (task.status === 'completed') {
                       setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
-                      continueTask.mutate({ taskId: task.id, prompt });
+                      continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s });
                     } else {
-                      setFollowUpQueue(prev => [...prev, prompt]);
+                      setFollowUpQueue(prev => [...prev, { prompt, images: imageBase64s }]);
                     }
                     setContinuePrompt('');
+                    setFollowUpImages([]);
                     if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
                   }}
                 >
@@ -789,6 +862,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       ref={followUpTextareaRef}
                       value={continuePrompt}
                       onChange={(e) => setContinuePrompt(e.target.value)}
+                      onPaste={handleFollowUpPaste}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
@@ -801,19 +875,64 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       className="w-full bg-transparent px-3 py-1 pr-20 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
                     />
                     <div className="absolute right-2 bottom-1 flex items-center gap-1">
+                      <input
+                        ref={followUpFileInputRef}
+                        type="file"
+                        accept="image/*"
+                        multiple
+                        className="hidden"
+                        onChange={handleFollowUpFileSelect}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => followUpFileInputRef.current?.click()}
+                        disabled={continueTask.isPending}
+                        className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
+                        title="Attach images"
+                      >
+                        <Paperclip size={14} />
+                      </button>
                       <VoiceInput
                         compact
                         onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))}
                       />
                       <button
                         type="submit"
-                        disabled={continueTask.isPending || !continuePrompt.trim()}
+                        disabled={continueTask.isPending || (!continuePrompt.trim() && followUpImages.length === 0)}
                         className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
                       >
                         <Send size={16} />
                       </button>
                     </div>
                   </div>
+                  {/* Image previews */}
+                  {followUpImages.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-1.5">
+                      {followUpImages.map((img) => (
+                        <div
+                          key={img.id}
+                          className="relative group w-12 h-12 rounded-lg overflow-hidden border border-dark-600 bg-dark-800"
+                        >
+                          <img
+                            src={img.dataUrl}
+                            alt={img.name}
+                            className="w-full h-full object-cover"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => removeFollowUpImage(img.id)}
+                            className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          >
+                            <X size={10} />
+                          </button>
+                        </div>
+                      ))}
+                      <div className="flex items-center text-dark-500 text-xs gap-1">
+                        <Image size={10} />
+                        <span>{followUpImages.length}</span>
+                      </div>
+                    </div>
+                  )}
                 </form>
               </>
             )}

@@ -151,10 +151,10 @@ export async function retryTask(taskId: number): Promise<Task> {
   });
 }
 
-export async function continueTask(taskId: number, prompt: string): Promise<Task> {
+export async function continueTask(taskId: number, prompt: string, images?: string[]): Promise<Task> {
   return request(`/tasks/${taskId}/continue`, {
     method: 'POST',
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, images }),
   });
 }
 

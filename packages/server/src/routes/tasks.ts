@@ -251,10 +251,10 @@ router.post('/tasks/:id/retry', async (req, res) => {
 router.post('/tasks/:id/continue', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id, 10);
-    const { prompt } = req.body;
+    const { prompt, images } = req.body;
 
-    if (!prompt) {
-      return res.status(400).json({ message: 'Prompt is required' });
+    if (!prompt && (!images || images.length === 0)) {
+      return res.status(400).json({ message: 'Prompt or images required' });
     }
 
     const task = await storage.getTaskById(taskId);
@@ -322,6 +322,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       sessionId: sessionId,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
+      images: images as string[] | undefined,
     });
 
     if (!dispatched) {
