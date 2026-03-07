@@ -66,7 +66,7 @@ app.use(helmet({
 
 // CORS — only allow same-origin requests
 app.use(cors({ origin: false }));
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // Rate limiting — 100 requests per minute per IP
 const apiLimiter = rateLimit({

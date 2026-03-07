@@ -1,46 +1,55 @@
 # CCManager
 
-Claude Code 多设备任务管理系统 — 通过 Web UI 管理多台设备上的 Claude Code 任务执行。
+A multi-device task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Manage and execute Claude Code tasks across multiple machines through a centralized Web UI.
 
-## 架构
+## Features
+
+- **Multi-Agent Architecture** — Distribute Claude Code tasks across multiple machines (Linux, macOS, etc.)
+- **Real-time Web UI** — Monitor task status, view streaming output, and manage projects from your browser
+- **Dual Execution Modes** — Run tasks locally or in isolated Docker containers with security hardening
+- **Plan Mode** — Review AI-generated plans before execution, with approval/rejection workflow
+- **Continue Conversations** — Resume completed tasks with Claude's session context preserved
+- **Voice Input** — Dictate task prompts via Groq Whisper integration (optional)
+- **Security** — Device token auth (CLI-managed, SHA-256 hashed), CORS, rate limiting, path whitelisting, symlink protection
+- **Cloudflare Tunnel** — Optional public access with automatic URL notification via Telegram
+
+## Architecture
 
 ```
 ┌──────────────────────────────────┐
-│  Server (Express + Socket.IO)    │    ← 中心服务器
+│  Server (Express + Socket.IO)    │    ← Central server
 │  Web UI (React SPA)              │
 │  SQLite Database                 │
 │  Port: 3001                      │
 └────────┬────────────┬────────────┘
          │ WebSocket  │ WebSocket
     ┌────┴────┐  ┌────┴────┐
-    │ Agent A │  │ Agent B │           ← 分布式 Agent
+    │ Agent A │  │ Agent B │           ← Distributed agents
     │ (Linux) │  │ (macOS) │
     │ Docker  │  │ Local   │
     └─────────┘  └─────────┘
 ```
 
-| 组件 | 说明 |
-|------|------|
-| **Server** | API 服务器 + Web 前端，管理项目和任务队列 |
-| **Agent** | 连接 Server 的客户端，在本地 spawn `claude` CLI 执行任务 |
-| **Web UI** | 浏览器访问，实时查看任务状态和输出 |
-| **ccmng** | 服务器端 CLI 工具，管理设备 Token |
+| Component | Description |
+|-----------|-------------|
+| **Server** (`@ccmanager/server`) | Express API + Socket.IO + SQLite — manages projects, task queue, and WebSocket events |
+| **Web UI** (`@ccmanager/web`) | React 18 + Vite + TailwindCSS + TanStack Query — SPA frontend with real-time updates |
+| **Agent** (`@ccmanager/agent`) | Socket.IO client + child_process — connects to server, spawns `claude` CLI to execute tasks |
+| **ccmng** | Server-side CLI tool for managing device tokens |
 
-## 快速开始
+## Prerequisites
 
-### 前置要求
+| Dependency | Version | Required For |
+|------------|---------|--------------|
+| [Node.js](https://nodejs.org/) | >= 18 | Runtime |
+| [pnpm](https://pnpm.io/) | 9.x | Package manager (`npm i -g pnpm@9`) |
+| [PM2](https://pm2.keymetrics.io/) | >= 5 | Process management (`npm i -g pm2`) |
+| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) | latest | Task execution (`npm i -g @anthropic-ai/claude-code`) |
+| [Docker](https://www.docker.com/) | (optional) | Docker executor mode only |
 
-| 依赖 | 版本 | 说明 |
-|------|------|------|
-| Node.js | >= 18 | 运行时 |
-| pnpm | 9.x | 包管理器 (`npm i -g pnpm@9`) |
-| PM2 | >= 5 | 进程管理 (`npm i -g pm2`) |
-| Claude CLI | latest | Agent 执行需要 (`npm i -g @anthropic-ai/claude-code`) |
-| Docker | (可选) | 仅 Docker executor 模式需要 |
+## Quick Start
 
-### 一键部署
-
-#### Server 端
+### Server Setup
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -48,13 +57,20 @@ cd CCManager
 bash setup-server.sh
 ```
 
-部署完成后，生成设备 Token 用于 Web UI 登录：
+The setup script will install dependencies, build the project, configure PM2, and start the server.
+
+After setup, generate a device token for Web UI login:
 
 ```bash
-ccmng token create --name "我的电脑"
+ccmng token create --name "My Computer"
+# Copy the token — it's only shown once
 ```
 
-#### Client 端 (Agent)
+Open `http://localhost:3001` in your browser and paste the token to log in.
+
+### Agent Setup (Client)
+
+On each machine that will execute tasks:
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -62,80 +78,95 @@ cd CCManager
 bash setup-client.sh
 ```
 
-### 手动安装
+The setup script will guide you through:
+1. Installing dependencies
+2. Configuring agent ID, name, and allowed paths
+3. Entering the auth token (generated via `ccmng agent create` on the server or Web UI Settings)
+4. Building and starting the agent with PM2
+
+### Manual Installation
 
 ```bash
-# 1. 安装依赖
+# 1. Install dependencies
 pnpm install
 
-# 2. 配置环境变量
+# 2. Configure environment
 cp .env.example .env
-# 编辑 .env 填入必要配置
+# Edit .env with your settings
 
-# 3. 构建
+# 3. Build
 pnpm run build
 
-# 4. 启动服务
+# 4. Start the server
 pm2 start packages/server/dist/index.js --name ccm-server
 pm2 save
 
-# 5. 生成设备 Token
-ccmng token create --name "我的电脑"
-# 用输出的 Token 在浏览器登录 http://localhost:3001
+# 5. Generate a device token
+ccmng token create --name "My Computer"
+# Use the token to log in at http://localhost:3001
 ```
 
-## 设备 Token 管理
+## Configuration
 
-设备 Token 通过服务器端 `ccmng` CLI 管理，无公开注册端点：
+### Environment Variables (`.env`)
+
+Copy `.env.example` to `.env` and configure:
 
 ```bash
-# 创建 Token（仅显示一次，请立即复制）
-ccmng token create --name "MacBook Pro"
+# Claude Code Authentication (choose one)
+CLAUDE_CODE_OAUTH_TOKEN=clt_xxx    # Pro/Max subscription (OAuth)
+ANTHROPIC_API_KEY=sk-ant-xxx       # Pay-per-use (API key)
 
-# 查看所有已注册设备
-ccmng token list
+# Server
+PORT=3001                          # Server port (default: 3001)
+HOST=127.0.0.1                     # Listen address
+DATA_PATH=/path/to/data            # Data directory (default: ./data)
 
-# 吊销指定设备
-ccmng token revoke <id>
+# Production mode
+SERVE_STATIC=true                  # Serve frontend static files
+STATIC_PATH=/path/to/web/dist     # Path to built frontend
+
+# Voice transcription (optional)
+GROQ_API_KEY=gsk_xxx               # Get from https://console.groq.com/keys
+GROQ_MODEL=whisper-large-v3-turbo  # or whisper-large-v3
 ```
 
-用生成的 Token 在 Web UI 登录页粘贴即可。
+### Agent Configuration
 
-## Agent 配置
+Config file: `~/.ccm-agent.json` (or specify with `--config=<path>`)
 
-配置文件：`~/.ccm-agent.json`（或 `--config=<path>` 指定）
+See `packages/agent/agent.config.example.json` for a full example.
 
 ```json
 {
   "agentId": "my-agent",
   "agentName": "My Agent",
-  "dataPath": "/path/to/CCManagerData",
-  "executor": "local",
+  "dataPath": "/path/to/data",
   "allowedPaths": ["/home/me/projects/*"],
   "blockedPaths": ["/home/me/.ssh"],
   "capabilities": ["linux", "gpu"]
 }
 ```
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `agentId` | string | Yes | 唯一标识，仅限字母数字和 `-_` |
-| `agentName` | string | Yes | 显示名称 |
-| `dataPath` | string | Yes | CCManagerData 路径（本地路径或 GitHub raw URL base） |
-| `authToken` | string | Auto | 首次运行时交互输入并自动保存 |
-| `executor` | string | Yes | `local` 或 `docker` |
-| `allowedPaths` | string[] | Yes | 允许操作的路径，支持 glob |
-| `blockedPaths` | string[] | No | 禁止访问的路径 |
-| `capabilities` | string[] | No | 能力标签，用于任务路由 |
-| `dockerConfig` | object | docker 时必填 | Docker 容器配置 |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `agentId` | string | Yes | Unique identifier (alphanumeric, `-`, `_` only) |
+| `agentName` | string | Yes | Display name |
+| `dataPath` | string | Yes | Path to data directory (local path or GitHub raw URL) |
+| `authToken` | string | Auto | Entered interactively on first run, saved to config |
+| `allowedPaths` | string[] | Yes | Glob patterns for allowed project paths |
+| `blockedPaths` | string[] | No | Paths to block access to |
+| `capabilities` | string[] | No | Tags for task routing (e.g., `gpu`, `linux`) |
+| `dockerConfig` | object | No | Docker container settings (see below) |
 
-Agent 从 `<dataPath>/server-url.txt` 自动读取服务器地址。本地 agent 使用本地路径，远程 agent 可用 GitHub raw URL（如 `https://raw.githubusercontent.com/user/CCManagerData/main`）。连接失败 3 次后自动重新读取，支持 tunnel URL 动态变更。
+The agent reads the server URL from `<dataPath>/server-url.txt`. Remote agents can use a GitHub raw URL as `dataPath` (e.g., `https://raw.githubusercontent.com/user/data-repo/main`). The agent automatically re-reads the server URL on connection failure, supporting dynamic tunnel URLs.
 
-### Docker 模式
+### Docker Executor Mode
+
+Configure per-project in the Web UI, or set in agent config:
 
 ```json
 {
-  "executor": "docker",
   "dockerConfig": {
     "image": "ccmanager-runner:latest",
     "memory": "8g",
@@ -147,122 +178,159 @@ Agent 从 `<dataPath>/server-url.txt` 自动读取服务器地址。本地 agent
 }
 ```
 
-每个任务在独立容器中运行，项目目录挂载到 `/workspace`，Claude CLI 凭证自动注入。容器使用 `--cap-drop=ALL` + 最小权限安全加固。
+Each task runs in an isolated container:
+- Project directory mounted at `/workspace`
+- Claude CLI credentials auto-injected
+- Security: `--cap-drop=ALL` + minimal capabilities + `--no-new-privileges`
 
-## 环境变量
+Build the runner image: `docker build -t ccmanager-runner:latest packages/agent/docker/`
 
-```bash
-# Claude Code 认证 (二选一)
-CLAUDE_CODE_OAUTH_TOKEN=clt_xxx    # Pro/Max 订阅
-ANTHROPIC_API_KEY=sk-ant-xxx       # 按用量付费
+## Device Token Management
 
-# 服务器
-PORT=3001                          # 默认端口
-HOST=127.0.0.1                     # 监听地址
-DATA_PATH=/path/to/data            # 数据目录 (默认 ./data)
-
-# 生产模式
-SERVE_STATIC=true                  # 托管前端静态文件
-STATIC_PATH=/path/to/web/dist     # 前端构建产物路径
-
-# 语音转文字 (可选)
-GROQ_API_KEY=gsk_xxx
-GROQ_MODEL=whisper-large-v3-turbo
-```
-
-## 常用命令
+Device tokens are managed via the server-side `ccmng` CLI. There is no public registration endpoint.
 
 ```bash
-# 设备 Token
-ccmng token create --name "设备名"
+# Create a token (shown once — copy immediately)
+ccmng token create --name "MacBook Pro"
+
+# List registered devices
 ccmng token list
+
+# Revoke a device token
 ccmng token revoke <id>
-
-# 开发
-pnpm run dev                  # server:3001 + web:5173 (HMR)
-pnpm run build                # 构建所有包
-pnpm run typecheck            # 类型检查
-
-# 部署
-pnpm run build && pm2 restart ccm-server
-
-# 日志
-pm2 logs ccm-server
-pm2 logs ccm-agent
 ```
 
-## 安全
+All API and WebSocket connections require token authentication:
+- **REST API**: `Authorization: Bearer <TOKEN>` header
+- **WebSocket (UI)**: `auth: { token }` connection parameter
+- **WebSocket (Agent)**: Uses `agentAuthToken` (configured in Settings)
+- **Exception**: `GET /api/health` is unauthenticated
 
-- **设备 Token 认证**：Token 通过服务器端 CLI 生成（SHA-256 hash 存储），无公开注册端点
-- **Agent Token 认证**：在 Web UI Settings 页面管理，每个 Agent 独立 Token
-- **CORS 同源限制**：`origin: false`，仅允许同源请求
-- **速率限制**：100 请求/分钟/IP
-- **路径白名单**：Agent 仅可操作 `allowedPaths` 内的项目，含符号链接检查
-- **Docker 沙箱**：`--cap-drop=ALL` + 最小权限 + `--no-new-privileges`
-- **Plan Mode**：任务可设为计划模式，需用户确认后执行
-
-## API
-
-所有请求需要 `Authorization: Bearer <TOKEN>` 头（`/api/health` 除外）。
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/auth/me` | 当前设备信息 |
-| GET | `/api/auth/devices` | 已注册设备列表 |
-| DELETE | `/api/auth/devices/:id` | 吊销设备 Token |
-| GET/POST | `/api/projects` | 项目列表 / 创建 |
-| GET/PUT/DELETE | `/api/projects/:id` | 项目 CRUD |
-| GET/POST | `/api/projects/:pid/tasks` | 任务列表 / 创建 |
-| GET/PUT | `/api/tasks/:id` | 任务详情 / 更新 |
-| POST | `/api/tasks/:id/cancel` | 取消任务 |
-| POST | `/api/tasks/:id/retry` | 重试任务 |
-| POST | `/api/tasks/:id/continue` | 继续对话 |
-| POST | `/api/tasks/:id/plan/answer` | 回答计划问题 |
-| POST | `/api/tasks/:id/plan/confirm` | 确认计划 |
-| GET | `/api/tasks/:id/logs` | 获取任务日志 |
-| GET | `/api/agents` | Agent 列表 |
-| GET | `/api/agents/online` | 在线 Agent |
-| GET | `/api/agents/:id` | Agent 详情 |
-| GET/PUT | `/api/settings` | 全局配置 |
-| POST | `/api/transcribe` | 语音转文字 |
-
-## 任务生命周期
+## Task Lifecycle
 
 ```
 pending → running → completed / completed_with_warnings / failed / cancelled
 
-运行中可进入:
-  running → waiting            (等待外部条件)
-  running → waiting_permission (等待用户授权)
-  running → plan_review        (等待计划确认)
+While running, a task may enter:
+  running → waiting              (waiting for external condition)
+  running → waiting_permission   (waiting for user authorization)
+  running → plan_review          (waiting for plan confirmation)
 ```
 
-## 项目结构
+## Development
+
+```bash
+pnpm install                  # Install dependencies
+
+pnpm run dev                  # Start server (3001) + web (5173) with HMR
+pnpm run dev:server           # Server only
+pnpm run dev:web              # Web only
+
+pnpm run build                # Build all packages
+pnpm run build:server         # Build server only
+pnpm run build:web            # Build web only
+
+pnpm run lint                 # Lint
+pnpm run typecheck            # Type check
+```
+
+### Deployment
+
+```bash
+pnpm run build && pm2 restart ccm-server
+```
+
+### PM2 Process Management
+
+The `ecosystem.config.cjs` file manages local processes:
+
+| Process | Description |
+|---------|-------------|
+| `ccm-agent` | Agent process (`packages/agent`) |
+| `ccm-tunnel` | Cloudflare tunnel + Telegram notification (optional) |
+
+```bash
+pm2 start ecosystem.config.cjs   # Start all processes
+pm2 status                       # View status
+pm2 logs ccm-server              # View server logs
+pm2 restart ccm-server           # Restart server
+```
+
+### Cloudflare Tunnel (Optional)
+
+For remote access without port forwarding, use the included tunnel scripts:
+
+1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
+2. Configure Telegram notifications in `<DATA_PATH>/secrets.env`:
+   ```bash
+   TELEGRAM_BOT_TOKEN="your-bot-token"
+   TELEGRAM_CHAT_ID="your-chat-id"
+   ```
+3. Start via PM2: `pm2 start ecosystem.config.cjs`
+
+The tunnel URL is automatically written to `<DATA_PATH>/server-url.txt` for remote agent discovery.
+
+## API Reference
+
+All endpoints require `Authorization: Bearer <TOKEN>` header (except `/api/health`).
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+| GET | `/api/auth/me` | Current device info |
+| GET | `/api/auth/devices` | List registered devices |
+| DELETE | `/api/auth/devices/:id` | Revoke device token |
+| GET/POST | `/api/projects` | List / create projects |
+| GET/PUT/DELETE | `/api/projects/:id` | Project CRUD |
+| GET/POST | `/api/projects/:pid/tasks` | List / create tasks |
+| GET/PUT | `/api/tasks/:id` | Task detail / update |
+| POST | `/api/tasks/:id/cancel` | Cancel task |
+| POST | `/api/tasks/:id/retry` | Retry failed task |
+| POST | `/api/tasks/:id/continue` | Continue conversation |
+| POST | `/api/tasks/:id/plan/answer` | Answer plan question |
+| POST | `/api/tasks/:id/plan/confirm` | Confirm plan |
+| GET | `/api/tasks/:id/logs` | Get task logs |
+| GET | `/api/agents` | List agents |
+| GET | `/api/agents/online` | List online agents |
+| GET | `/api/agents/:id` | Agent detail |
+| GET/PUT | `/api/settings` | Global settings |
+| POST | `/api/transcribe` | Voice-to-text (Whisper) |
+
+## Project Structure
 
 ```
 packages/
 ├── server/         Express API + Socket.IO + SQLite
 │   └── src/
-│       ├── index.ts             # 入口
-│       ├── cli/                 # ccmng CLI (token 管理)
-│       ├── routes/              # REST API 路由
+│       ├── index.ts             # Entry point
+│       ├── cli/                 # ccmng CLI (token & agent management)
+│       ├── routes/              # REST API routes
 │       ├── services/            # DB, Agent Pool, Stream Parser
-│       └── websocket/           # WebSocket 事件
+│       └── websocket/           # WebSocket events
 ├── web/            React 18 + Vite + TailwindCSS
 │   └── src/
-│       ├── pages/               # 页面 (Home, Project, Login, Settings)
-│       ├── components/          # UI 组件
-│       ├── hooks/               # 自定义 Hooks
-│       └── contexts/            # WebSocket Context
+│       ├── pages/               # Home, Project, Login, Settings
+│       ├── components/          # UI components
+│       ├── hooks/               # Custom hooks
+│       └── contexts/            # WebSocket context
 └── agent/          Socket.IO Client + child_process
     └── src/
-        ├── index.ts             # CLI 入口
-        ├── connection.ts        # WebSocket 连接
-        ├── executor.ts          # Claude CLI 执行器
-        ├── docker.ts            # Docker 容器执行
-        └── security.ts          # 路径安全校验
+        ├── index.ts             # CLI entry
+        ├── connection.ts        # WebSocket connection
+        ├── executor.ts          # Claude CLI executor
+        ├── docker.ts            # Docker container execution
+        └── security.ts          # Path security validation
 ```
+
+## Security
+
+- **Device Token Auth**: CLI-managed tokens, SHA-256 hashed storage, no public registration
+- **Agent Auth Token**: Configured in Web UI Settings, per-agent isolation
+- **CORS**: Same-origin only (`origin: false`)
+- **Rate Limiting**: 100 requests/min/IP
+- **Path Whitelisting**: Agents can only operate within `allowedPaths`, with symlink checking
+- **Docker Sandbox**: `--cap-drop=ALL` + minimal capabilities + `--no-new-privileges`
+- **Plan Mode**: Tasks can require user approval before execution
 
 ## License
 

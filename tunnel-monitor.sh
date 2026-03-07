@@ -1,16 +1,33 @@
 #!/bin/bash
 
-# Cloudflare Tunnel URL 监控脚本
-# 检测 URL 变化并发送 Telegram 通知
+# Cloudflare Tunnel URL monitor script
+# Detects URL changes and sends Telegram notifications
+#
+# Required env vars (or set in <DATA_PATH>/secrets.env):
+#   TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+# Optional env var:
+#   DATA_PATH - path to CCManagerData directory
+
+DATA_PATH="${DATA_PATH:-./data}"
+SECRETS_FILE="${DATA_PATH}/secrets.env"
+
+if [ -f "$SECRETS_FILE" ]; then
+    source "$SECRETS_FILE"
+else
+    echo "[WARN] secrets.env not found at $SECRETS_FILE"
+    echo "       Create it with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID"
+fi
 
 TUNNEL_LOG="/tmp/ccm-tunnel.log"
 LAST_URL_FILE="/tmp/ccm-tunnel-last-url"
-TELEGRAM_BOT_TOKEN="8405186727:AAE-iYAD16cepFoITGG8ORReznv9ngKgIns"
-TELEGRAM_CHAT_ID="8562069932"
-CHECK_INTERVAL=10  # 检查间隔（秒）
+CHECK_INTERVAL=10  # seconds
 
 send_telegram() {
     local message="$1"
+    if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
+        echo "[WARN] Telegram not configured, skipping notification"
+        return
+    fi
     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         -d "text=${message}" \
@@ -25,7 +42,6 @@ get_tunnel_url() {
 
 echo "Starting tunnel URL monitor..."
 
-# 初始化上次 URL
 LAST_URL=""
 if [ -f "$LAST_URL_FILE" ]; then
     LAST_URL=$(cat "$LAST_URL_FILE")
@@ -37,12 +53,10 @@ while true; do
     if [ -n "$CURRENT_URL" ] && [ "$CURRENT_URL" != "$LAST_URL" ]; then
         echo "$(date): URL changed: $CURRENT_URL"
 
-        # 保存新 URL
         echo "$CURRENT_URL" > "$LAST_URL_FILE"
         LAST_URL="$CURRENT_URL"
 
-        # 发送 Telegram 通知
-        send_telegram "🌐 *CCManager 公网地址更新*
+        send_telegram "🌐 *CCManager Public URL Updated*
 
 $CURRENT_URL
 

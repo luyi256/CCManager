@@ -1,11 +1,22 @@
 #!/bin/bash
-# CCManager 部署脚本
-# 用法: ./deploy.sh [commit message]
-# 如果不提供消息，会根据修改的文件自动生成
+# CCManager deploy script
+# Usage: ./deploy.sh [commit message]
+# Auto-generates commit message from changed files if not provided
+#
+# Configure deploy target in <DATA_PATH>/secrets.env:
+#   DEPLOY_HOST - SSH host alias
+#   DEPLOY_USER - remote user
 
 set -e
 
-# 自动生成 commit 消息
+DATA_PATH="${DATA_PATH:-./data}"
+SECRETS_FILE="${DATA_PATH}/secrets.env"
+
+if [ -f "$SECRETS_FILE" ]; then
+    source "$SECRETS_FILE"
+fi
+
+# Auto-generate commit message
 if [ -z "$1" ]; then
   CHANGED_FILES=$(git diff --name-only HEAD 2>/dev/null | head -3 | tr '\n' ', ' | sed 's/,$//')
   if [ -z "$CHANGED_FILES" ]; then
@@ -22,19 +33,21 @@ fi
 
 echo "=== CCManager Deploy ==="
 
-# 1. 添加并提交代码
+# 1. Add and commit
 echo ">>> Git add and commit..."
 git add -A
-git commit -m "$COMMIT_MSG
+git commit -m "$COMMIT_MSG" || echo "Nothing to commit"
 
-Co-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>" || echo "Nothing to commit"
-
-# 2. 推送到 GitHub
+# 2. Push to GitHub
 echo ">>> Pushing to GitHub..."
 git push origin main
 
-# 3. 在 rack 服务器上更新并重启 (以 CC 用户)
-echo ">>> Updating rack server..."
-ssh rack "su - CC -c 'cd ~/CCManager && git pull && pnpm run build && pm2 restart ccm-server'"
+# 3. Update remote server (if configured)
+if [ -n "$DEPLOY_HOST" ] && [ -n "$DEPLOY_USER" ]; then
+    echo ">>> Updating remote server ($DEPLOY_HOST)..."
+    ssh "$DEPLOY_HOST" "su - $DEPLOY_USER -c 'cd ~/CCManager && git pull && pnpm run build && pm2 restart ccm-server'"
+else
+    echo ">>> No remote deploy target configured (set DEPLOY_HOST and DEPLOY_USER in secrets.env)"
+fi
 
 echo "=== Deploy Complete ==="

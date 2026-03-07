@@ -112,8 +112,9 @@ if [ "$NEED_CONFIG" = true ]; then
   DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"
   DEFAULT_PATH="${EXISTING_PATHS:-$HOME/projects/*}"
   DEFAULT_DATA_PATH="${EXISTING_DATA:-$HOME/CCManagerData}"
-  if [ -z "$EXISTING_DATA" ] && [ -f "/home/CC/CCManagerData/server-url.txt" ]; then
-    DEFAULT_DATA_PATH="/home/CC/CCManagerData"
+  # Check common data paths
+  if [ -z "$EXISTING_DATA" ] && [ -d "$HOME/CCManagerData" ]; then
+    DEFAULT_DATA_PATH="$HOME/CCManagerData"
   fi
 
   echo
