@@ -1,5 +1,5 @@
-import { useState, useCallback } from 'react';
-import { Send, Loader2, AlertCircle, X, Image } from 'lucide-react';
+import { useState, useCallback, useRef } from 'react';
+import { Send, Loader2, AlertCircle, X, Image, Paperclip } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
 import type { Task } from '../../types';
 
@@ -21,6 +21,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<PastedImage[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const pendingTasks = tasks.filter((t) =>
     ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)
@@ -69,6 +70,32 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => prev.filter((img) => img.id !== id));
+  }, []);
+
+  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      if (!file.type.startsWith('image/')) continue;
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        if (dataUrl) {
+          setImages((prev) => [
+            ...prev,
+            {
+              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+              dataUrl,
+              name: file.name || `image-${Date.now()}.png`,
+            },
+          ]);
+        }
+      };
+      reader.readAsDataURL(file);
+    }
+    // Reset so selecting the same file again triggers onChange
+    e.target.value = '';
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -159,6 +186,23 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
         </div>
         <div className="flex flex-col gap-2">
           <VoiceInput onTranscription={handleVoiceTranscription} />
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={handleFileSelect}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isSubmitting}
+            className="p-2 rounded-lg bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600 transition-colors"
+            title="Upload images"
+          >
+            <Paperclip size={20} />
+          </button>
           <button
             type="submit"
             disabled={(!prompt.trim() && images.length === 0) || isSubmitting}
