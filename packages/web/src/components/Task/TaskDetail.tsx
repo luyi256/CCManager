@@ -18,6 +18,7 @@ import {
 import StatusBadge from '../common/StatusBadge';
 import ErrorBoundary from '../common/ErrorBoundary';
 import SafeMarkdown from '../common/SafeMarkdown';
+import VoiceInput from '../common/VoiceInput';
 import { useTaskStream } from '../../hooks/useTaskStream';
 import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask } from '../../hooks/useTasks';
 import { mergeTask, cleanupWorktree } from '../../services/api';
@@ -410,7 +411,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                             {item.type === 'output' ? (
                               <div className="flex gap-2">
                                 <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />
-                                <div className="flex-1 prose prose-invert prose-sm max-w-none">
+                                <div className="flex-1 prose prose-invert prose-sm max-w-none overflow-hidden break-words">
                                   <SafeMarkdown>{item.content}</SafeMarkdown>
                                 </div>
                               </div>
@@ -421,7 +422,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                                   <div className="text-xs font-medium text-primary-400 uppercase mb-1">
                                     {item.id === 'initial-prompt' ? 'Prompt' : 'Follow-up'}
                                   </div>
-                                  <p className="text-dark-200">{item.content}</p>
+                                  <p className="text-dark-200 break-words">{item.content}</p>
                                 </div>
                               </div>
                             ) : item.type === 'tool_use' ? (
@@ -442,13 +443,13 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                                       </span>
                                     )}
                                   </div>
-                                  <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto">
+                                  <pre className="text-xs text-dark-400 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all">
                                     {safeStringify(item.toolInput)}
                                   </pre>
                                   {item.toolResult != null ? (
                                     <div className="mt-2">
                                       <span className="text-xs text-dark-500">Result:</span>
-                                      <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto mt-1">
+                                      <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-all mt-1">
                                         {typeof item.toolResult === 'string'
                                           ? (item.toolResult as string).slice(0, 500) + ((item.toolResult as string).length > 500 ? '...' : '')
                                           : safeStringify(item.toolResult)}
@@ -548,7 +549,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
             {task.error && (
               <div className="p-4 border-t border-dark-700 flex-shrink-0">
                 <h3 className="text-xs font-medium text-red-400 uppercase mb-2">Error</h3>
-                <pre className="text-red-300 text-sm bg-red-500/10 p-3 rounded overflow-x-auto">
+                <pre className="text-red-300 text-sm bg-red-500/10 p-3 rounded overflow-x-auto whitespace-pre-wrap break-words">
                   {task.error}
                 </pre>
               </div>
@@ -682,6 +683,9 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     disabled={continueTask.isPending}
                     className="flex-1 bg-dark-800 border border-dark-600 rounded-lg px-3 py-2 text-sm text-dark-200 placeholder-dark-500 focus:outline-none focus:border-primary-500"
                   />
+                  <VoiceInput
+                    onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))}
+                  />
                   <button
                     type="submit"
                     disabled={continueTask.isPending || !continuePrompt.trim()}
@@ -694,7 +698,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
               </>
             )}
             <div className="flex gap-2">
-              {isActive && (
+              {(isActive || task.status === 'pending') && (
                 <button
                   onClick={() => cancelTask.mutate(task.id)}
                   disabled={cancelTask.isPending}
