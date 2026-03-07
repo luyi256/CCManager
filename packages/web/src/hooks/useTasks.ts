@@ -73,8 +73,8 @@ export function useContinueTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ taskId, prompt }: { taskId: number; prompt: string }) =>
-      api.continueTask(taskId, prompt),
+    mutationFn: ({ taskId, prompt, images }: { taskId: number; prompt: string; images?: string[] }) =>
+      api.continueTask(taskId, prompt, images),
     onSuccess: (task) => {
       // Immediately update the task cache with new data
       queryClient.setQueryData(['task', task.id], task);
