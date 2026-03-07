@@ -224,6 +224,15 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
+
+  useEffect(() => {
+    const el = followUpTextareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [continuePrompt]);
+
   const [mergeStatus, setMergeStatus] = useState<'idle' | 'merging' | 'merged' | 'error'>('idle');
   const [mergeError, setMergeError] = useState<string | null>(null);
 
@@ -779,11 +788,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     <textarea
                       ref={followUpTextareaRef}
                       value={continuePrompt}
-                      onChange={(e) => {
-                        setContinuePrompt(e.target.value);
-                        e.target.style.height = 'auto';
-                        e.target.style.height = `${e.target.scrollHeight}px`;
-                      }}
+                      onChange={(e) => setContinuePrompt(e.target.value)}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
                           e.preventDefault();
@@ -793,20 +798,12 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
                       disabled={continueTask.isPending}
                       rows={1}
-                      className="w-full bg-transparent px-3 py-2 pr-20 text-sm text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
+                      className="w-full bg-transparent px-3 py-1 pr-20 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
                     />
-                    <div className="absolute right-2 bottom-1.5 flex items-center gap-1">
+                    <div className="absolute right-2 bottom-1 flex items-center gap-1">
                       <VoiceInput
                         compact
-                        onTranscription={(text) => {
-                          setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text));
-                          requestAnimationFrame(() => {
-                            if (followUpTextareaRef.current) {
-                              followUpTextareaRef.current.style.height = 'auto';
-                              followUpTextareaRef.current.style.height = `${followUpTextareaRef.current.scrollHeight}px`;
-                            }
-                          });
-                        }}
+                        onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))}
                       />
                       <button
                         type="submit"

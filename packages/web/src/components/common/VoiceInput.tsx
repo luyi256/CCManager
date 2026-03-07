@@ -41,10 +41,10 @@ export default function VoiceInput({ onTranscription, className, compact }: Voic
               : compact ? 'text-dark-400 hover:text-dark-200' : 'bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600',
         )}
         title={
-          isStarting ? '请求麦克风权限...'
-            : isRecording ? '停止录音'
-              : isTranscribing ? '转写中...'
-                : '语音输入（录音）'
+          isStarting ? 'Requesting microphone access...'
+            : isRecording ? 'Stop recording'
+              : isTranscribing ? 'Transcribing...'
+                : 'Voice input (record)'
         }
       >
         {busy ? (

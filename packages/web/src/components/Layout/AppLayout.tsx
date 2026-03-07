@@ -14,7 +14,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
 
   return (
     <div className="min-h-screen bg-dark-900 flex flex-col">
-      <header className="sticky top-0 z-50 bg-dark-900 border-b border-dark-800">
+      <header className="sticky top-0 z-50 bg-dark-900 border-b border-dark-800 pt-[env(safe-area-inset-top)]">
         <div className="max-w-7xl mx-auto px-4 h-14 flex items-center justify-between">
           <div className="flex items-center gap-4">
             {!isHome && (

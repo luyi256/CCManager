@@ -18,7 +18,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
 
     // Validate format: 64-char hex
     if (!/^[0-9a-f]{64}$/i.test(trimmed)) {
-      setError('Token 格式无效（应为 64 位十六进制字符串）');
+      setError('Invalid token format (expected 64-character hex string)');
       return;
     }
 
@@ -35,7 +35,7 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       // Clear invalid token
       setApiToken('');
       localStorage.removeItem('ccm_api_token');
-      setError('Token 无效或已过期');
+      setError('Invalid or expired token');
     } finally {
       setLoading(false);
     }
@@ -61,17 +61,17 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
           CCManager
         </h1>
         <p style={{ color: '#94a3b8', fontSize: '0.875rem', marginBottom: '1.5rem' }}>
-          输入设备 Token 以继续
+          Enter device token to continue
         </p>
 
         <label style={{ display: 'block', color: '#94a3b8', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
-          设备 Token
+          Device Token
         </label>
         <input
           type="password"
           value={token}
           onChange={(e) => setToken(e.target.value)}
-          placeholder="粘贴通过 CLI 生成的 token"
+          placeholder="Paste token generated via CLI"
           autoFocus
           style={{
             width: '100%',
@@ -108,11 +108,11 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             cursor: loading ? 'not-allowed' : 'pointer',
           }}
         >
-          {loading ? '验证中...' : '登录'}
+          {loading ? 'Verifying...' : 'Login'}
         </button>
 
         <p style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '1rem', textAlign: 'center' }}>
-          在服务器上运行 <code style={{ color: '#94a3b8' }}>ccmng token create --name "设备名"</code> 获取 Token
+          Run <code style={{ color: '#94a3b8' }}>ccmng token create --name "device"</code> on the server to get a token
         </p>
       </form>
     </div>

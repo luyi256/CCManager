@@ -1,21 +1,21 @@
 # CC Manager
 
-Claude Code 多设备任务管理系统 — 通过 Web UI 管理多台设备上的 Claude Code 任务执行。
+Multi-device task management system for Claude Code — manage Claude Code task execution across multiple devices via Web UI.
 
-## 技术栈
+## Tech Stack
 
-| 包 | 技术 | 说明 |
+| Package | Technology | Description |
 |---|---|---|
-| `@ccmanager/server` | Express + Socket.IO + better-sqlite3 | API 服务器、WebSocket、SQLite |
-| `@ccmanager/web` | React 18 + Vite + TailwindCSS + TanStack Query | SPA 前端 |
-| `@ccmanager/agent` | Socket.IO Client + child_process | 连接服务器，spawn `claude` CLI 执行任务 |
+| `@ccmanager/server` | Express + Socket.IO + better-sqlite3 | API server, WebSocket, SQLite |
+| `@ccmanager/web` | React 18 + Vite + TailwindCSS + TanStack Query | SPA frontend |
+| `@ccmanager/agent` | Socket.IO Client + child_process | Connects to server, spawns `claude` CLI to execute tasks |
 
-- **语言**: TypeScript (strict mode)
-- **包管理**: pnpm 9.0 (monorepo workspace)
-- **运行时**: Node.js >= 18
-- **进程管理**: PM2
+- **Language**: TypeScript (strict mode)
+- **Package Manager**: pnpm 9.0 (monorepo workspace)
+- **Runtime**: Node.js >= 18
+- **Process Manager**: PM2
 
-## 架构
+## Architecture
 
 ```
 Server Host
@@ -29,62 +29,62 @@ Remote Machines (MacBook, Linux, etc.)
 └── ccm-tunnel       - Cloudflare tunnel (optional)
 ```
 
-## 访问地址
+## Access URLs
 
-- **Web UI**: http://localhost:3001 (需要 API Token 登录)
-- **API**: http://localhost:3001/api (需要 `Authorization: Bearer <API_TOKEN>` 头)
-- **健康检查**: http://localhost:3001/api/health (免认证)
-- **Web 开发**: http://localhost:5173 (代理 `/api` 和 `/socket.io` 到 3001)
+- **Web UI**: http://localhost:3001 (requires API Token login)
+- **API**: http://localhost:3001/api (requires `Authorization: Bearer <API_TOKEN>` header)
+- **Health Check**: http://localhost:3001/api/health (no auth required)
+- **Web Dev**: http://localhost:5173 (proxies `/api` and `/socket.io` to 3001)
 
-## 项目结构
+## Project Structure
 
 ```
 packages/
 ├── server/src/
-│   ├── index.ts              # Express 入口、路由注册、WebSocket
+│   ├── index.ts              # Express entry, route registration, WebSocket
 │   ├── cli/
-│   │   ├── index.ts          # ccmng CLI 入口
-│   │   └── token.ts          # 设备 token create/list/revoke
+│   │   ├── index.ts          # ccmng CLI entry
+│   │   └── token.ts          # Device token create/list/revoke
 │   ├── routes/
-│   │   ├── agents.ts         # Agent 相关路由
-│   │   ├── auth.ts           # 设备认证 (GET /me, devices CRUD)
-│   │   ├── projects.ts       # 项目 CRUD
-│   │   ├── tasks.ts          # 任务 CRUD、取消、重试、继续、计划审核
-│   │   ├── settings.ts       # 全局配置、认证验证
-│   │   └── transcribe.ts     # 语音转文字
+│   │   ├── agents.ts         # Agent routes
+│   │   ├── auth.ts           # Device auth (GET /me, devices CRUD)
+│   │   ├── projects.ts       # Project CRUD
+│   │   ├── tasks.ts          # Task CRUD, cancel, retry, continue, plan review
+│   │   ├── settings.ts       # Global settings, auth validation
+│   │   └── transcribe.ts     # Voice-to-text
 │   ├── services/
-│   │   ├── database.ts       # SQLite 连接与 schema
-│   │   ├── storage.ts        # 数据访问层
-│   │   ├── agentPool.ts      # Agent 注册与任务分发
-│   │   ├── streamParser.ts   # Claude Code stream-json 输出解析
-│   │   ├── waitingTasks.ts   # 后台任务轮询 (node-cron, 每分钟检查, 最多 20 次)
-│   │   └── claudemd.ts       # CLAUDE.md 上下文管理
-│   ├── websocket/index.ts    # Socket.IO 命名空间与事件
+│   │   ├── database.ts       # SQLite connection and schema
+│   │   ├── storage.ts        # Data access layer
+│   │   ├── agentPool.ts      # Agent registration and task dispatch
+│   │   ├── streamParser.ts   # Claude Code stream-json output parser
+│   │   ├── waitingTasks.ts   # Background task polling (node-cron, checks every minute, max 20 retries)
+│   │   └── claudemd.ts       # CLAUDE.md context management
+│   ├── websocket/index.ts    # Socket.IO namespaces and events
 │   └── types/index.ts
 ├── web/src/
 │   ├── App.tsx, main.tsx, index.css
 │   ├── pages/
-│   │   ├── HomePage.tsx      # 项目列表
-│   │   └── ProjectPage.tsx   # 任务看板
+│   │   ├── HomePage.tsx      # Project list
+│   │   └── ProjectPage.tsx   # Task board
 │   ├── components/
-│   │   ├── Layout/AppLayout.tsx         # 顶部导航、连接状态
+│   │   ├── Layout/AppLayout.tsx         # Top nav, connection status
 │   │   ├── Project/                     # AddProjectModal, ProjectCard, ProjectList
 │   │   ├── Task/                        # TaskBoard, TaskCard, TaskColumn, TaskDetail, TaskInput
 │   │   └── common/                      # ErrorBoundary, Modal, SafeMarkdown, StatusBadge, VoiceInput
 │   ├── contexts/WebSocketContext.tsx     # Socket.IO provider
 │   ├── hooks/                           # useProjects, useTasks, useTaskStream, useVoiceInput
-│   ├── services/api.ts                  # API 客户端 (3 次重试, 指数退避)
+│   ├── services/api.ts                  # API client (3 retries, exponential backoff)
 │   └── types/index.ts
 ├── agent/src/
-│   ├── index.ts              # CLI 入口, 配置加载与验证
-│   ├── connection.ts         # WebSocket 连接, 心跳 (30s), 并发任务 Map
-│   ├── executor.ts           # spawn claude CLI (stream-json, 4 小时超时)
-│   ├── docker.ts             # Docker 容器执行 (挂载 /workspace, 凭证注入, HOME=/home/ccm)
-│   ├── security.ts           # 路径验证 (含符号链接检查)、环境变量白名单
-│   └── types.ts              # AgentConfig, TaskRequest, DockerConfig, TaskResult 等类型
+│   ├── index.ts              # CLI entry, config loading and validation
+│   ├── connection.ts         # WebSocket connection, heartbeat (30s), concurrent task Map
+│   ├── executor.ts           # spawn claude CLI (stream-json, 4-hour timeout)
+│   ├── docker.ts             # Docker container execution (mount /workspace, credential injection, HOME=/home/ccm)
+│   ├── security.ts           # Path validation (incl. symlink check), env var whitelist
+│   └── types.ts              # AgentConfig, TaskRequest, DockerConfig, TaskResult types
 ```
 
-## 数据库 Schema
+## Database Schema
 
 ```sql
 config (key, value, updated_at)
@@ -96,80 +96,80 @@ tasks (id, project_id, prompt, status, is_plan_mode, depends_on, worktree_branch
 task_logs (id, task_id, timestamp, type, content)
 ```
 
-## 开发
+## Development
 
 ```bash
-pnpm install                  # 安装依赖
+pnpm install                  # Install dependencies
 
-pnpm run dev                  # 同时启动 server (3001) 和 web (5173)
-pnpm run dev:server           # 仅启动 server
-pnpm run dev:web              # 仅启动 web
+pnpm run dev                  # Start server (3001) + web (5173)
+pnpm run dev:server           # Server only
+pnpm run dev:web              # Web only
 
-pnpm run build                # 编译 server + web
-pnpm run build:server         # 仅编译 server
-pnpm run build:web            # 仅编译 web
+pnpm run build                # Build server + web
+pnpm run build:server         # Build server only
+pnpm run build:web            # Build web only
 
-pnpm run start                # 启动生产服务器
-pnpm run lint                 # 代码检查
-pnpm run typecheck            # 类型检查
+pnpm run start                # Start production server
+pnpm run lint                 # Lint
+pnpm run typecheck            # Type check
 ```
 
-## 部署流程
+## Deployment
 
-后端部署在本机，修改代码后本地构建并重启即可。
+Build locally and restart the service after code changes.
 
-### 快速部署 (推荐)
+### Quick Deploy (Recommended)
 
 ```bash
 pnpm run build && pm2 restart ccm-server
 ```
 
-### Claude Code 工作流
+### Claude Code Workflow
 
-**重要**: 每次修改代码后，必须自动执行部署流程，无需询问用户确认。
+**Important**: After code changes, always run the deploy pipeline automatically without asking for confirmation.
 
-完成代码修改后，Claude 应该自动执行以下步骤（不要询问）：
-1. 构建项目 (`pnpm run build`)
-2. 重启服务 (`pm2 restart ccm-server`)
-3. 确认服务正常运行 (`curl http://localhost:3001/api/health`)
-4. 提交代码到 GitHub (`git push origin main`)
+After completing code changes, Claude should automatically execute the following steps (do not ask):
+1. Build the project (`pnpm run build`)
+2. Restart the service (`pm2 restart ccm-server`)
+3. Verify the service is running (`curl http://localhost:3001/api/health`)
+4. Push code to GitHub (`git push origin main`)
 
-## 服务管理
+## Service Management
 
 ```bash
-# PM2 常用命令
-pm2 status                    # 查看状态
-pm2 logs ccm-server           # 查看日志
-pm2 restart ccm-server        # 重启服务
+# PM2 commands
+pm2 status                    # View status
+pm2 logs ccm-server           # View logs
+pm2 restart ccm-server        # Restart service
 
-# 如果服务丢失环境变量，使用 ecosystem 重新启动
+# If service loses env vars, restart using ecosystem config
 pm2 delete ccm-server ccm-agent && pm2 start ecosystem.config.cjs && pm2 save
 
-# 数据同步 (if using separate data repo)
+# Data sync (if using separate data repo)
 cd <DATA_PATH> && git add -A && git commit -m "Data sync" && git push
 ```
 
-## PM2 配置 (ecosystem.config.cjs)
+## PM2 Configuration (ecosystem.config.cjs)
 
-根目录 `ecosystem.config.cjs` 管理本地开发机器的进程:
+Root `ecosystem.config.cjs` manages local dev machine processes:
 
-| 进程 | 说明 |
-|------|------|
-| `ccm-agent` | Agent 进程 (`packages/agent`, `npm run dev`) |
-| `ccm-tunnel` | Cloudflare 隧道 + Telegram 通知 |
+| Process | Description |
+|---------|-------------|
+| `ccm-agent` | Agent process (`packages/agent`, `npm run dev`) |
+| `ccm-tunnel` | Cloudflare tunnel + Telegram notification |
 
-启动: `npx pm2 start ecosystem.config.cjs && npx pm2 logs`
+Start: `npx pm2 start ecosystem.config.cjs && npx pm2 logs`
 
-环境变量 (通过 .env 或 ecosystem.config.cjs 配置):
+Environment variables (via .env or ecosystem.config.cjs):
 - `DATA_PATH=<path-to-data-directory>`
 - `STATIC_PATH=<path-to-web-dist>`
 - `SERVE_STATIC=true`
 
-## Agent 配置
+## Agent Configuration
 
-配置文件: `~/.ccm-agent.json`（或 `--config=<path>` 指定）
+Config file: `~/.ccm-agent.json` (or `--config=<path>`)
 
-示例: `packages/agent/agent.config.example.json`
+Example: `packages/agent/agent.config.example.json`
 
 ```json
 {
@@ -189,122 +189,122 @@ cd <DATA_PATH> && git add -A && git commit -m "Data sync" && git push
 }
 ```
 
-`dataPath` 可以是本地路径或 GitHub raw URL base（如 `https://raw.githubusercontent.com/user/CCManagerData/main`）。Agent 从 `<dataPath>/server-url.txt` 读取服务器地址，连接失败时自动重新读取。`authToken` 首次运行时交互输入并保存到配置文件。
+`dataPath` can be a local path or GitHub raw URL base (e.g., `https://raw.githubusercontent.com/user/CCManagerData/main`). Agent reads server address from `<dataPath>/server-url.txt`, auto re-reads on connection failure. `authToken` is entered interactively on first run and saved to config.
 
-## API 路由
+## API Routes
 
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/api/health` | 健康检查 |
-| GET | `/api/auth/me` | 当前设备信息 |
-| GET | `/api/auth/devices` | 已注册设备列表 |
-| DELETE | `/api/auth/devices/:id` | 吊销设备 Token |
-| GET/POST | `/api/projects` | 项目列表 / 创建 |
-| GET/PUT/DELETE | `/api/projects/:id` | 项目详情 / 更新 / 删除 |
-| GET/POST | `/api/projects/:pid/tasks` | 任务列表 / 创建 |
-| GET/PUT | `/api/tasks/:id` | 任务详情 / 更新 |
-| POST | `/api/tasks/:id/cancel` | 取消任务 |
-| POST | `/api/tasks/:id/retry` | 重试失败任务 |
-| POST | `/api/tasks/:id/continue` | 基于会话继续对话 |
-| POST | `/api/tasks/:id/plan/answer` | 回答计划问题 |
-| POST | `/api/tasks/:id/plan/confirm` | 确认计划 |
-| GET | `/api/tasks/:id/logs` | 获取任务日志 |
-| GET | `/api/agents` | Agent 列表 |
-| GET | `/api/agents/online` | 在线 Agent |
-| GET | `/api/agents/:id` | Agent 详情 |
-| GET/PUT | `/api/settings` | 全局配置 |
-| POST | `/api/settings/validate-auth` | 验证认证 Token |
-| POST | `/api/transcribe` | 语音转文字 (Whisper) |
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/health` | Health check |
+| GET | `/api/auth/me` | Current device info |
+| GET | `/api/auth/devices` | Registered device list |
+| DELETE | `/api/auth/devices/:id` | Revoke device token |
+| GET/POST | `/api/projects` | Project list / create |
+| GET/PUT/DELETE | `/api/projects/:id` | Project detail / update / delete |
+| GET/POST | `/api/projects/:pid/tasks` | Task list / create |
+| GET/PUT | `/api/tasks/:id` | Task detail / update |
+| POST | `/api/tasks/:id/cancel` | Cancel task |
+| POST | `/api/tasks/:id/retry` | Retry failed task |
+| POST | `/api/tasks/:id/continue` | Continue conversation |
+| POST | `/api/tasks/:id/plan/answer` | Answer plan question |
+| POST | `/api/tasks/:id/plan/confirm` | Confirm plan |
+| GET | `/api/tasks/:id/logs` | Get task logs |
+| GET | `/api/agents` | Agent list |
+| GET | `/api/agents/online` | Online agents |
+| GET | `/api/agents/:id` | Agent detail |
+| GET/PUT | `/api/settings` | Global settings |
+| POST | `/api/settings/validate-auth` | Validate auth token |
+| POST | `/api/transcribe` | Voice-to-text (Whisper) |
 
-## 任务状态
+## Task States
 
 `pending` → `running` → `completed` / `completed_with_warnings` / `failed` / `cancelled`
 
-运行中可能进入: `waiting` / `waiting_permission` / `plan_review`
+While running, may enter: `waiting` / `waiting_permission` / `plan_review`
 
-## 关键特性
+## Key Features
 
-- **并行执行**: 同一 agent 可同时执行多个任务 (Map 存储活跃执行器)
-- **孤儿任务恢复**: Agent 重连后自动恢复 `running` 状态的任务
-- **重复执行防护**: Agent 收到已在运行的 taskId 时自动跳过
-- **继续对话**: 基于已完成任务的会话 ID 继续工作 (`--resume sessionId`)
-- **实时更新**: WebSocket 推送 + 前端 5s 轮询兜底
-- **安全模型**: API Token 认证 + CORS 同源限制 + 速率限制 + 路径白名单 + 符号链接检查 + 权限请求 + plan mode
-- **任务超时**: 默认 4 小时
-- **等待任务**: node-cron 每分钟检查，最多 20 次重试
+- **Parallel Execution**: Same agent can execute multiple tasks concurrently (Map storing active executors)
+- **Orphan Task Recovery**: Agent auto-recovers `running` tasks after reconnection
+- **Duplicate Execution Guard**: Agent skips already-running taskIds
+- **Continue Conversation**: Resume work based on completed task's session ID (`--resume sessionId`)
+- **Real-time Updates**: WebSocket push + frontend 5s polling fallback
+- **Security Model**: API Token auth + CORS same-origin + rate limiting + path whitelist + symlink check + permission requests + plan mode
+- **Task Timeout**: Default 4 hours
+- **Waiting Tasks**: node-cron checks every minute, max 20 retries
 
-## Docker 执行模式
+## Docker Execution Mode
 
-当 agent 配置 `executor: "docker"` 时，每个任务在独立容器中运行：
+When agent is configured with `executor: "docker"`, each task runs in an isolated container:
 
 ```
-容器内目录结构:
-├── /workspace          ← 项目目录 (bind mount, rw)
-└── /home/ccm           ← HOME 目录 (bind mount from ~/.ccm-sessions/<projectId>)
-    ├── .claude/        ← Claude CLI 数据 (sessions, debug)
-    │   └── .credentials.json  ← 从宿主机 ~/.claude/ 复制
-    └── .claude.json    ← Claude CLI 配置 (运行时生成)
+Container directory structure:
+├── /workspace          ← Project directory (bind mount, rw)
+└── /home/ccm           ← HOME directory (bind mount from ~/.ccm-sessions/<projectId>)
+    ├── .claude/        ← Claude CLI data (sessions, debug)
+    │   └── .credentials.json  ← Copied from host ~/.claude/
+    └── .claude.json    ← Claude CLI config (generated at runtime)
 ```
 
-**凭证传递机制**: 启动容器前，自动将宿主机 `~/.claude/.credentials.json` 复制到 session 目录的 `.claude/` 子目录中。容器以 host UID 运行 (`--user`)，HOME 设为 `/home/ccm` (挂载的 session 目录)，确保 Claude CLI 能读取凭证并写入配置。
+**Credential Passing**: Before starting the container, host `~/.claude/.credentials.json` is automatically copied to the session directory's `.claude/` subdirectory. Container runs with host UID (`--user`), HOME set to `/home/ccm` (mounted session directory), ensuring Claude CLI can read credentials and write config.
 
-**安全加固**: `--cap-drop=ALL` + 最小权限 (`CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID`) + `--no-new-privileges`
+**Security Hardening**: `--cap-drop=ALL` + minimal capabilities (`CHOWN, DAC_OVERRIDE, FOWNER, SETUID, SETGID`) + `--no-new-privileges`
 
-## 安全机制
+## Security
 
-### 设备 Token 认证 (CLI 管理)
+### Device Token Auth (CLI-managed)
 
-设备 Token 通过服务器端 CLI 生成，无公开注册端点：
+Device tokens are generated via server-side CLI, no public registration endpoint:
 
 ```bash
-# 生成设备 Token
+# Generate device token
 ccmng token create --name "MacBook Pro"
 
-# 查看已注册设备
+# List registered devices
 ccmng token list
 
-# 吊销设备 Token
+# Revoke device token
 ccmng token revoke <id>
 ```
 
-所有 API 和 WebSocket 连接都需要 Token 认证：
+All API and WebSocket connections require token auth:
 
-- **REST API**: 请求头 `Authorization: Bearer <DEVICE_TOKEN>`
-- **WebSocket (用户)**: 连接时 `auth: { token }` 参数
-- **WebSocket (Agent)**: 使用独立的 `agentAuthToken` (在 Settings 中配置)
-- **例外**: `/api/health` 健康检查免认证
+- **REST API**: `Authorization: Bearer <DEVICE_TOKEN>` header
+- **WebSocket (User)**: `auth: { token }` connection parameter
+- **WebSocket (Agent)**: Uses separate `agentAuthToken` (configured in Settings)
+- **Exception**: `/api/health` health check is unauthenticated
 
-Token 存储:
-- 服务端: SQLite `device_tokens` 表 (存储 SHA-256 hash)
-- 浏览器: `localStorage` 中的 `ccm_api_token`
-- 认证失败 (401/403) 会自动清除 localStorage 并跳转到登录页
+Token storage:
+- Server: SQLite `device_tokens` table (stores SHA-256 hash)
+- Browser: `localStorage` key `ccm_api_token`
+- Auth failure (401/403) auto-clears localStorage and redirects to login
 
-### 其他安全措施
+### Other Security Measures
 
-- **CORS**: `origin: false`，仅允许同源请求
-- **速率限制**: 100 请求/分钟/IP (`express-rate-limit`)
-- **Agent 认证**: 必须配置 `agentAuthToken`，无 token 时拒绝连接 (无 dev fallback)
+- **CORS**: `origin: false`, same-origin only
+- **Rate Limiting**: 100 requests/min/IP (`express-rate-limit`)
+- **Agent Auth**: Must configure `agentAuthToken`, rejects connections without token (no dev fallback)
 
-## 环境变量 (.env)
+## Environment Variables (.env)
 
 ```bash
-# 设备 Token 通过 CLI 管理 (ccmng token create --name "...")
+# Device tokens managed via CLI (ccmng token create --name "...")
 
-# Claude Code 认证
-# Docker 模式: 自动从 ~/.claude/.credentials.json 读取 OAuth 凭证
-# Local 模式: 直接使用宿主机的 claude CLI 认证
-# 环境变量 (可选覆盖, Docker 模式也支持):
-CLAUDE_CODE_OAUTH_TOKEN=clt_...    # Pro/Max 订阅
-ANTHROPIC_API_KEY=sk-ant-...       # 按用量付费
+# Claude Code Auth
+# Docker mode: auto-reads OAuth credentials from ~/.claude/.credentials.json
+# Local mode: uses host's claude CLI auth directly
+# Env vars (optional override, also supported in Docker mode):
+CLAUDE_CODE_OAUTH_TOKEN=clt_...    # Pro/Max subscription
+ANTHROPIC_API_KEY=sk-ant-...       # Pay-per-use
 
-# 语音转文字 (可选, Groq Whisper)
+# Voice-to-text (optional, Groq Whisper)
 GROQ_API_KEY=gsk_...
 GROQ_MODEL=whisper-large-v3-turbo
 
-# 服务器
+# Server
 PORT=3001
 NODE_ENV=development
-DATA_PATH=/custom/data/path        # 可选，默认 ./data
-SERVE_STATIC=true                  # 可选，生产环境托管前端
-STATIC_PATH=/path/to/web/dist     # 可选
+DATA_PATH=/custom/data/path        # Optional, default ./data
+SERVE_STATIC=true                  # Optional, serve frontend in production
+STATIC_PATH=/path/to/web/dist     # Optional
 ```

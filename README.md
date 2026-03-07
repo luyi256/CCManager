@@ -1,5 +1,7 @@
 # CCManager
 
+**English** | [中文](./README.zh-CN.md)
+
 A multi-device task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Manage and execute Claude Code tasks across multiple machines through a centralized Web UI.
 
 ## Features
