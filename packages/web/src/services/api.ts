@@ -237,6 +237,13 @@ export async function getDeviceTokens(): Promise<DeviceInfo[]> {
   return request('/auth/devices');
 }
 
+export async function createDeviceToken(name: string): Promise<{ id: number; name: string; token: string }> {
+  return request('/auth/devices', {
+    method: 'POST',
+    body: JSON.stringify({ name }),
+  });
+}
+
 export async function revokeDeviceToken(id: number): Promise<void> {
   return request(`/auth/devices/${id}`, { method: 'DELETE' });
 }

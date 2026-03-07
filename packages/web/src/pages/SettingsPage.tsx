@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { getDeviceTokens, revokeDeviceToken, getCurrentDevice, getAgents, registerAgent, generateAgentToken, getAgentTokenInfo, revokeAgentToken } from '../services/api';
+import { getDeviceTokens, createDeviceToken, revokeDeviceToken, getCurrentDevice, getAgents, registerAgent, generateAgentToken, getAgentTokenInfo, revokeAgentToken } from '../services/api';
 import type { DeviceInfo, AgentTokenInfo } from '../services/api';
 import type { Agent } from '../types';
 import { clearApiToken } from '../services/auth';
@@ -10,6 +10,12 @@ export default function SettingsPage() {
   const [loading, setLoading] = useState(true);
   const [revoking, setRevoking] = useState<number | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<number | null>(null);
+
+  // Device creation state
+  const [newDeviceName, setNewDeviceName] = useState('');
+  const [creatingDevice, setCreatingDevice] = useState(false);
+  const [shownDeviceToken, setShownDeviceToken] = useState<{ name: string; token: string } | null>(null);
+  const [deviceTokenCopied, setDeviceTokenCopied] = useState(false);
 
   // Agent management state
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -67,6 +73,30 @@ export default function SettingsPage() {
     fetchCurrentDevice();
     fetchAgents();
   }, []);
+
+  const handleCreateDevice = async () => {
+    if (!newDeviceName.trim()) return;
+    setCreatingDevice(true);
+    try {
+      const result = await createDeviceToken(newDeviceName.trim());
+      setShownDeviceToken({ name: result.name, token: result.token });
+      setNewDeviceName('');
+      await fetchDevices();
+    } catch (err) {
+      console.error('Failed to create device token:', err);
+      alert('创建失败: ' + (err instanceof Error ? err.message : String(err)));
+    } finally {
+      setCreatingDevice(false);
+    }
+  };
+
+  const handleCopyDeviceToken = async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(token);
+      setDeviceTokenCopied(true);
+      setTimeout(() => setDeviceTokenCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
 
   const handleRevoke = async (id: number) => {
     if (id === currentDeviceId) {
@@ -164,6 +194,54 @@ export default function SettingsPage() {
       {/* Device Management */}
       <section>
         <h1 className="text-2xl font-semibold text-dark-100 mb-6">设备管理</h1>
+
+        {/* Create new device token */}
+        <div className="mb-6 p-4 rounded-lg border border-dark-700 bg-dark-800">
+          <h3 className="text-sm font-medium text-dark-300 mb-3">创建新设备 Token</h3>
+          <div className="flex gap-3">
+            <input
+              type="text"
+              value={newDeviceName}
+              onChange={(e) => setNewDeviceName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && handleCreateDevice()}
+              placeholder="设备名称 (如 MacBook Pro)"
+              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
+              maxLength={64}
+            />
+            <button
+              onClick={handleCreateDevice}
+              disabled={creatingDevice || !newDeviceName.trim()}
+              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-sm transition-colors"
+            >
+              <Plus size={16} />
+              创建
+            </button>
+          </div>
+        </div>
+
+        {/* Show generated device token */}
+        {shownDeviceToken && (
+          <div className="mb-6 p-4 rounded-lg border border-yellow-500/40 bg-yellow-500/5">
+            <p className="text-yellow-400 text-sm font-medium mb-2">
+              设备「{shownDeviceToken.name}」的 Token（仅显示一次，请立即复制）：
+            </p>
+            <div className="flex items-center gap-2">
+              <code className="flex-1 px-3 py-2 bg-dark-900 rounded text-green-400 text-sm font-mono break-all">
+                {shownDeviceToken.token}
+              </code>
+              <button
+                onClick={() => handleCopyDeviceToken(shownDeviceToken.token)}
+                className="p-2 text-dark-400 hover:text-dark-100 transition-colors"
+                title="复制"
+              >
+                {deviceTokenCopied ? <Check size={18} className="text-green-400" /> : <Copy size={18} />}
+              </button>
+            </div>
+            <p className="text-dark-500 text-xs mt-2">
+              使用此 Token 在新设备的浏览器中登录
+            </p>
+          </div>
+        )}
 
         {loading ? (
           <p className="text-dark-400">加载中...</p>

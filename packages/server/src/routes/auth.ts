@@ -1,6 +1,6 @@
 import { Router } from 'express';
-import { hashToken } from '../services/auth.js';
-import { findDeviceByHash, listDevices, deleteDevice } from '../services/storage.js';
+import { generateToken, hashToken } from '../services/auth.js';
+import { findDeviceByHash, listDevices, deleteDevice, createDevice } from '../services/storage.js';
 
 const router = Router();
 
@@ -38,6 +38,27 @@ router.get('/devices', (_req, res) => {
       lastUsedAt: d.lastUsedAt,
     }))
   );
+});
+
+// POST /api/auth/devices — create a new device token (authenticated)
+router.post('/devices', (req, res) => {
+  const { name } = req.body || {};
+  if (!name || typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'Device name is required' });
+  }
+  if (name.trim().length > 64) {
+    return res.status(400).json({ error: 'Device name must be 64 characters or less' });
+  }
+
+  const token = generateToken();
+  const tokenHash = hashToken(token);
+  const device = createDevice(name.trim(), tokenHash);
+
+  res.json({
+    id: device.id,
+    name: device.name,
+    token,
+  });
 });
 
 // DELETE /api/auth/devices/:id — revoke a device token (authenticated)
