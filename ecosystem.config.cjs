@@ -25,6 +25,16 @@ module.exports = {
       max_restarts: 10,
       restart_delay: 5000,
       kill_timeout: 3000
+    },
+    {
+      name: 'ccm-watchdog',
+      script: './tunnel-watchdog.sh',
+      out_file: '/tmp/ccm-watchdog.log',
+      error_file: '/tmp/ccm-watchdog.log',
+      merge_logs: true,
+      autorestart: true,
+      max_restarts: 5,
+      restart_delay: 10000
     }
   ]
 };
