@@ -13,6 +13,15 @@ if (existsSync(envPath)) {
 } else {
   dotenv.config(); // fallback: cwd
 }
+
+// Load secrets from DATA_PATH/secrets.env (credentials centralized there)
+const dataPath = process.env.DATA_PATH;
+if (dataPath) {
+  const secretsPath = resolve(dataPath, 'secrets.env');
+  if (existsSync(secretsPath)) {
+    dotenv.config({ path: secretsPath, override: false });
+  }
+}
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
