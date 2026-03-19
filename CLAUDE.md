@@ -297,9 +297,10 @@ Token storage:
 CLAUDE_CODE_OAUTH_TOKEN=clt_...    # Pro/Max subscription
 ANTHROPIC_API_KEY=sk-ant-...       # Pay-per-use
 
-# Voice-to-text (optional, Groq Whisper)
-GROQ_API_KEY=gsk_...
-GROQ_MODEL=whisper-large-v3-turbo
+# Voice-to-text (optional, OpenAI-compatible Whisper API)
+WHISPER_API_URL=https://api.groq.com/openai/v1  # Default: Groq
+WHISPER_API_KEY=gsk_...
+WHISPER_MODEL=whisper-large-v3-turbo
 
 # Server
 PORT=3001

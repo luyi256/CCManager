@@ -128,9 +128,10 @@ DATA_PATH=/path/to/data            # 数据目录（默认 ./data）
 SERVE_STATIC=true                  # 托管前端静态文件
 STATIC_PATH=/path/to/web/dist     # 前端构建产物路径
 
-# 语音转文字（可选）
-GROQ_API_KEY=gsk_xxx               # 从 https://console.groq.com/keys 获取
-GROQ_MODEL=whisper-large-v3-turbo  # 或 whisper-large-v3
+# 语音转文字（可选，OpenAI 兼容 Whisper API）
+WHISPER_API_URL=https://api.groq.com/openai/v1   # 默认：Groq
+WHISPER_API_KEY=gsk_xxx            # 从 https://console.groq.com/keys 获取
+WHISPER_MODEL=whisper-large-v3-turbo
 ```
 
 ### Agent 配置
