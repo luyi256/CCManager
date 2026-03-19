@@ -29,6 +29,7 @@ module.exports = {
     {
       name: 'ccm-watchdog',
       script: './tunnel-watchdog.sh',
+      env: { DATA_PATH },
       out_file: '/tmp/ccm-watchdog.log',
       error_file: '/tmp/ccm-watchdog.log',
       merge_logs: true,
