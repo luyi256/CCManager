@@ -29,29 +29,35 @@ send_telegram() {
         return
     fi
 
-    # Build per-device links from device-tokens.txt
+    # Build per-device HTML links from device-tokens.txt
     local links=""
     if [ -f "$TOKENS_FILE" ]; then
         while IFS='=' read -r name token; do
             [[ "$name" =~ ^#.*$ || -z "$name" ]] && continue
-            links="${links}
-${name}: ${url}?token=${token}"
+            links="${links}<a href=\"${url}?token=${token}\">${name}</a>"$'\n'
         done < "$TOKENS_FILE"
     fi
 
     if [ -z "$links" ]; then
-        links="
-${url}"
+        links="${url}"
     fi
 
-    curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-        -d "chat_id=${TELEGRAM_CHAT_ID}" \
-        -d "text=🌐 *CCManager Public URL*
-${links}
+    local text
+    text="🌐 CCManager Public URL"$'\n\n'"${links}"$'\n'"⏰ $(date '+%Y-%m-%d %H:%M:%S')"
 
-⏰ $(date '+%Y-%m-%d %H:%M:%S')" \
-        -d "parse_mode=Markdown" > /dev/null 2>&1
-    echo "[$(date)] Telegram sent: $url (${TOKENS_FILE})"
+    TG_TEXT="$text" python3 -c "
+import json, urllib.request, os
+data = json.dumps({
+    'chat_id': os.environ['TELEGRAM_CHAT_ID'],
+    'text': os.environ['TG_TEXT'].strip(),
+    'parse_mode': 'HTML'
+}).encode()
+req = urllib.request.Request(
+    'https://api.telegram.org/bot' + os.environ['TELEGRAM_BOT_TOKEN'] + '/sendMessage',
+    data=data, headers={'Content-Type': 'application/json'})
+urllib.request.urlopen(req)
+" 2>/dev/null
+    echo "[$(date)] Telegram sent: $url"
 }
 
 # Start cloudflared, process stderr for URL detection
