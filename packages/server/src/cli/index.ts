@@ -13,6 +13,15 @@ if (existsSync(envPath)) {
   dotenv.config();
 }
 
+// Load secrets from DATA_PATH/secrets.env
+const dataPath = process.env.DATA_PATH;
+if (dataPath) {
+  const secretsPath = resolve(dataPath, 'secrets.env');
+  if (existsSync(secretsPath)) {
+    dotenv.config({ path: secretsPath, override: false });
+  }
+}
+
 import { runTokenCommand } from './token.js';
 import { runAgentCommand } from './agent.js';
 import { runBackupCommand } from './backup.js';
