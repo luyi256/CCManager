@@ -20,21 +20,38 @@ fi
 
 LAST_URL_FILE="/tmp/ccm-tunnel-last-url"
 
+TOKENS_FILE="${DATA_PATH}/device-tokens.txt"
+
 send_telegram() {
     local url="$1"
     if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
         echo "[WARN] Telegram not configured, skipping notification"
         return
     fi
+
+    # Build per-device links from device-tokens.txt
+    local links=""
+    if [ -f "$TOKENS_FILE" ]; then
+        while IFS='=' read -r name token; do
+            [[ "$name" =~ ^#.*$ || -z "$name" ]] && continue
+            links="${links}
+${name}: ${url}?token=${token}"
+        done < "$TOKENS_FILE"
+    fi
+
+    if [ -z "$links" ]; then
+        links="
+${url}"
+    fi
+
     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -d "chat_id=${TELEGRAM_CHAT_ID}" \
         -d "text=🌐 *CCManager Public URL*
-
-${url}
+${links}
 
 ⏰ $(date '+%Y-%m-%d %H:%M:%S')" \
         -d "parse_mode=Markdown" > /dev/null 2>&1
-    echo "[$(date)] Telegram sent: $url"
+    echo "[$(date)] Telegram sent: $url (${TOKENS_FILE})"
 }
 
 # Start cloudflared, process stderr for URL detection

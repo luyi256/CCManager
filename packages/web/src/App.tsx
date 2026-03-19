@@ -6,7 +6,23 @@ import HomePage from './pages/HomePage';
 import ProjectPage from './pages/ProjectPage';
 import SettingsPage from './pages/SettingsPage';
 import LoginPage from './pages/LoginPage';
-import { isAuthenticated } from './services/auth';
+import { isAuthenticated, setApiToken } from './services/auth';
+
+function checkUrlToken(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (token && /^[0-9a-f]{64}$/i.test(token)) {
+    setApiToken(token);
+    params.delete('token');
+    const clean = params.toString();
+    const url = window.location.pathname + (clean ? `?${clean}` : '') + window.location.hash;
+    window.history.replaceState({}, '', url);
+    return true;
+  }
+  return false;
+}
+
+checkUrlToken();
 
 function App() {
   const [authed, setAuthed] = useState(isAuthenticated());
