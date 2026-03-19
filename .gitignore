@@ -34,6 +34,14 @@ yarn-error.log*
 # Test coverage
 coverage/
 
+# Personal scripts (kept locally, not in repo)
+deploy.sh
+start.sh
+tunnel-monitor.sh
+
+# Old build artifacts
+dist.old/
+
 # Internal docs
 PLAN.md
 plan.md

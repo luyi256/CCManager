@@ -128,9 +128,10 @@ DATA_PATH=/path/to/data            # Data directory (default: ./data)
 SERVE_STATIC=true                  # Serve frontend static files
 STATIC_PATH=/path/to/web/dist     # Path to built frontend
 
-# Voice transcription (optional)
-GROQ_API_KEY=gsk_xxx               # Get from https://console.groq.com/keys
-GROQ_MODEL=whisper-large-v3-turbo  # or whisper-large-v3
+# Voice transcription (optional, OpenAI-compatible Whisper API)
+WHISPER_API_URL=https://api.groq.com/openai/v1   # Default: Groq
+WHISPER_API_KEY=gsk_xxx            # Get from https://console.groq.com/keys
+WHISPER_MODEL=whisper-large-v3-turbo
 ```
 
 ### Agent Configuration
