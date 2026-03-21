@@ -42,6 +42,7 @@ export interface TaskRequest {
     target: string;
     readonly?: boolean;
   }>;
+  allowedPaths?: string[]; // Per-project allowed paths override
   images?: string[]; // base64 data URLs for screenshots
 }
 

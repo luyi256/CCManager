@@ -25,6 +25,7 @@ export interface Project {
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;
+  allowedPaths?: string[];
   createdAt: string;
   lastActivity?: string;
   taskCount: number;
@@ -129,6 +130,7 @@ export interface ServerToAgentEvents {
     worktreeBranch?: string;
     postTaskHook?: string;
     extraMounts?: ExtraMount[];
+    allowedPaths?: string[];
     images?: string[];
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;

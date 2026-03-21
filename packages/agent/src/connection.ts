@@ -171,9 +171,12 @@ export class AgentConnection {
     let executionPath = task.projectPath;
 
     try {
-      // Validate path
+      // Validate path (use project-level allowedPaths if provided)
       console.log(`Task ${task.taskId}: Validating path...`);
-      validatePath(task.projectPath, this.config);
+      const effectiveConfig = task.allowedPaths?.length
+        ? { ...this.config, allowedPaths: [...this.config.allowedPaths, ...task.allowedPaths] }
+        : this.config;
+      validatePath(task.projectPath, effectiveConfig);
       console.log(`Task ${task.taskId}: Path validated, creating executor...`);
 
       // Create worktree if branch is specified

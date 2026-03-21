@@ -5,6 +5,7 @@ import { Settings, RefreshCw } from 'lucide-react';
 import TaskBoard from '../components/Task/TaskBoard';
 import TaskInput from '../components/Task/TaskInput';
 import TaskDetail from '../components/Task/TaskDetail';
+import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
 import { useProject } from '../hooks/useProjects';
 import { useTasks, useCreateTask } from '../hooks/useTasks';
 import type { Task } from '../types';
@@ -12,6 +13,7 @@ import type { Task } from '../types';
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId!);
   const { data: tasks = [], isLoading: tasksLoading, refetch } = useTasks(projectId!);
@@ -73,7 +75,7 @@ export default function ProjectPage() {
           >
             <RefreshCw size={18} />
           </button>
-          <button className="btn btn-ghost p-2" title="Settings">
+          <button onClick={() => setSettingsOpen(true)} className="btn btn-ghost p-2" title="Settings">
             <Settings size={18} />
           </button>
         </div>
@@ -123,6 +125,13 @@ export default function ProjectPage() {
           />
         )}
       </AnimatePresence>
+
+      {/* Project Settings Modal */}
+      <ProjectSettingsModal
+        isOpen={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        project={project}
+      />
     </div>
   );
 }

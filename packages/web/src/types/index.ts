@@ -25,6 +25,7 @@ export interface Project {
   postTaskHook?: string;
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;
+  allowedPaths?: string[];
   createdAt: string;
   lastActivity?: string;
   taskCount: number;

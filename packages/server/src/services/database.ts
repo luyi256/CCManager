@@ -159,4 +159,12 @@ try {
   // Column already exists, ignore
 }
 
+// Add allowed_paths column to projects table (per-project path whitelist override)
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN allowed_paths TEXT`);
+  console.log('Migration: Added allowed_paths column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

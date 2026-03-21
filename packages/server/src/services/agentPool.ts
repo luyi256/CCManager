@@ -171,6 +171,7 @@ class AgentPool {
     sessionId?: string;
     postTaskHook?: string;
     extraMounts?: Array<{ source: string; target: string; readonly?: boolean }>;
+    allowedPaths?: string[];
     images?: string[];
   }): boolean {
     const agent = this.agents.get(agentId);

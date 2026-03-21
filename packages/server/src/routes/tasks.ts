@@ -102,6 +102,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         worktreeBranch: task.worktreeBranch,
         postTaskHook: project.postTaskHook,
         extraMounts: project.extraMounts,
+        allowedPaths: project.allowedPaths,
         images: images as string[] | undefined,
       });
 
@@ -225,6 +226,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       worktreeBranch: task.worktreeBranch,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
+      allowedPaths: project.allowedPaths,
     });
 
     if (!dispatched) {
@@ -322,6 +324,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       sessionId: sessionId,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
+      allowedPaths: project.allowedPaths,
       images: images as string[] | undefined,
     });
 
