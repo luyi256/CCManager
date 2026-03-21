@@ -57,7 +57,10 @@ function validatePathInternal(normalizedPath: string, config: AgentConfig): void
       }
     } else {
       const normalizedAllowed = path.resolve(allowedPath);
-      if (normalizedPath === normalizedAllowed) {
+      if (
+        normalizedPath === normalizedAllowed ||
+        normalizedPath.startsWith(normalizedAllowed + path.sep)
+      ) {
         allowed = true;
         break;
       }
