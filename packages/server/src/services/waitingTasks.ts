@@ -116,6 +116,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     dockerImage: project.dockerImage,
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
+    allowedPaths: project.allowedPaths,
   });
 
   if (dispatched) {
@@ -176,6 +177,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             worktreeBranch: currentTask.worktreeBranch,
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
+            allowedPaths: project.allowedPaths,
           });
 
           if (dispatched) {

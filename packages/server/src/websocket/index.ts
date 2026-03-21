@@ -105,6 +105,7 @@ export function setupWebSocket(server: HttpServer): Server {
               sessionId,
               postTaskHook: project.postTaskHook,
               extraMounts: project.extraMounts,
+              allowedPaths: project.allowedPaths,
             });
             if (dispatched) {
               console.log(`  - Task ${task.id} re-dispatched`);

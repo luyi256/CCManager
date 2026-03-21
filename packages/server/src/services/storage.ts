@@ -114,6 +114,7 @@ export async function getProjects(): Promise<Project[]> {
     post_task_hook: string | null;
     extra_mounts: string | null;
     enable_worktree: number;
+    allowed_paths: string | null;
     created_at: string;
     last_activity: string | null;
     task_count: number;
@@ -132,6 +133,7 @@ export async function getProjects(): Promise<Project[]> {
     postTaskHook: row.post_task_hook || undefined,
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
+    allowedPaths: safeJsonParse(row.allowed_paths),
     createdAt: row.created_at,
     lastActivity: row.last_activity || undefined,
     taskCount: row.task_count,
@@ -159,6 +161,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     post_task_hook: string | null;
     extra_mounts: string | null;
     enable_worktree: number;
+    allowed_paths: string | null;
     created_at: string;
     last_activity: string | null;
     task_count: number;
@@ -179,6 +182,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     postTaskHook: row.post_task_hook || undefined,
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
+    allowedPaths: safeJsonParse(row.allowed_paths),
     createdAt: row.created_at,
     lastActivity: row.last_activity || undefined,
     taskCount: row.task_count,
@@ -188,8 +192,8 @@ export async function getProject(projectId: string): Promise<Project | null> {
 
 export async function saveProject(project: Omit<Project, 'taskCount' | 'runningCount'>): Promise<void> {
   const stmt = db.prepare(`
-    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, docker_image, post_task_hook, extra_mounts, enable_worktree, created_at, last_activity)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, docker_image, post_task_hook, extra_mounts, enable_worktree, allowed_paths, created_at, last_activity)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       agent_id = excluded.agent_id,
@@ -201,6 +205,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
       post_task_hook = excluded.post_task_hook,
       extra_mounts = excluded.extra_mounts,
       enable_worktree = excluded.enable_worktree,
+      allowed_paths = excluded.allowed_paths,
       last_activity = excluded.last_activity
   `);
   stmt.run(
@@ -215,6 +220,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
     project.postTaskHook || null,
     project.extraMounts ? JSON.stringify(project.extraMounts) : null,
     project.enableWorktree ? 1 : 0,
+    project.allowedPaths?.length ? JSON.stringify(project.allowedPaths) : null,
     project.createdAt,
     project.lastActivity || null
   );
@@ -274,7 +280,7 @@ export async function getTaskById(taskId: number): Promise<Task | null> {
 // Get all running tasks for a specific agent (for recovery after restart)
 export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ task: Task; project: Project }>> {
   const stmt = db.prepare(`
-    SELECT t.*, p.id as p_id, p.name as p_name, p.agent_id, p.project_path, p.security_mode, p.auth_type, p.post_task_hook, p.extra_mounts
+    SELECT t.*, p.id as p_id, p.name as p_name, p.agent_id, p.project_path, p.security_mode, p.auth_type, p.post_task_hook, p.extra_mounts, p.allowed_paths
     FROM tasks t
     JOIN projects p ON t.project_id = p.id
     WHERE p.agent_id = ? AND t.status = 'running'
@@ -308,6 +314,7 @@ export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ 
     auth_type: string;
     post_task_hook: string | null;
     extra_mounts: string | null;
+    allowed_paths: string | null;
   }>;
 
   return rows.map(row => ({
@@ -322,6 +329,7 @@ export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ 
       postTaskHook: row.post_task_hook || undefined,
       extraMounts: safeJsonParse(row.extra_mounts),
       enableWorktree: (row as unknown as { enable_worktree: number }).enable_worktree === 1,
+      allowedPaths: safeJsonParse(row.allowed_paths),
       createdAt: '',
       taskCount: 0,
       runningCount: 0,
