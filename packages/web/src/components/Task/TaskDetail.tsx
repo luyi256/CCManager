@@ -360,9 +360,17 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     // Add saved logs first
     if (savedLogs && savedLogs.length > 0) {
       savedLogs.forEach((log, index) => {
-        const timestamp = typeof log.timestamp === 'number'
-          ? log.timestamp
-          : new Date(log.timestamp || 0).getTime();
+        // Parse timestamp: SQLite datetime('now') gives 'YYYY-MM-DD HH:MM:SS' (UTC but no Z),
+        // while ISO strings have 'T' and 'Z'. Append 'Z' to timezone-less strings to parse as UTC.
+        let timestamp: number;
+        if (typeof log.timestamp === 'number') {
+          timestamp = log.timestamp;
+        } else if (log.timestamp) {
+          const ts = log.timestamp;
+          timestamp = new Date(ts.includes('T') ? ts : ts.replace(' ', 'T') + 'Z').getTime();
+        } else {
+          timestamp = 0;
+        }
 
         if (log.type === 'output') {
           items.push({

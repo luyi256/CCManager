@@ -474,10 +474,10 @@ export async function appendTaskLog(
   entry: { type: string; content: unknown }
 ): Promise<void> {
   const stmt = db.prepare(`
-    INSERT INTO task_logs (task_id, type, content)
-    VALUES (?, ?, ?)
+    INSERT INTO task_logs (task_id, timestamp, type, content)
+    VALUES (?, ?, ?, ?)
   `);
-  stmt.run(taskId, entry.type, JSON.stringify(entry.content));
+  stmt.run(taskId, new Date().toISOString(), entry.type, JSON.stringify(entry.content));
 }
 
 export async function getTaskLogs(
