@@ -60,14 +60,14 @@ export default function ProjectPage() {
   return (
     <div className="max-w-7xl mx-auto px-4 py-6">
       {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
+      <div className="flex items-start justify-between gap-4 mb-6">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-dark-100">{project.name}</h1>
-          <p className="text-dark-400 mt-1">
+          <p className="text-dark-400 mt-1 break-all">
             Agent: {project.agentId} • {project.projectPath}
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => refetch()}
             className="btn btn-ghost p-2"
