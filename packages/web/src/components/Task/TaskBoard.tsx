@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import TaskColumn from './TaskColumn';
 import type { Task, TaskStatus } from '../../types';
 
@@ -21,7 +21,24 @@ const columns: ColumnConfig[] = [
   { id: 'failed', title: 'Failed', statuses: ['failed', 'cancelled'] },
 ];
 
+const DEFAULT_COLUMN = 'completed';
+
 export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoardProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
+
+  useEffect(() => {
+    const container = scrollRef.current;
+    const target = columnRefs.current[DEFAULT_COLUMN];
+    if (!container || !target) return;
+
+    // Center the default column in the viewport
+    const containerRect = container.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const scrollLeft = target.offsetLeft - (containerRect.width / 2) + (targetRect.width / 2);
+    container.scrollLeft = Math.max(0, scrollLeft);
+  }, []);
+
   const tasksByColumn = useMemo(() => {
     const result: Record<string, Task[]> = {};
 
@@ -48,16 +65,17 @@ export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoar
   }, [tasks]);
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4">
+    <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-4 -mx-4 px-4">
       {columns.map((column) => (
-        <TaskColumn
-          key={column.id}
-          title={column.title}
-          status={column.statuses}
-          tasks={tasksByColumn[column.id]}
-          onTaskClick={onTaskClick}
-          activeTaskId={activeTaskId}
-        />
+        <div key={column.id} ref={(el) => { columnRefs.current[column.id] = el; }} className="flex flex-1 min-w-[280px]">
+          <TaskColumn
+            title={column.title}
+            status={column.statuses}
+            tasks={tasksByColumn[column.id]}
+            onTaskClick={onTaskClick}
+            activeTaskId={activeTaskId}
+          />
+        </div>
       ))}
     </div>
   );
