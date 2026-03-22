@@ -17,7 +17,7 @@ export default function TaskColumn({
   activeTaskId,
 }: TaskColumnProps) {
   return (
-    <div className="flex flex-col flex-1 min-w-[280px] bg-dark-850 rounded-xl">
+    <div className="flex flex-col flex-1 bg-dark-850 rounded-xl">
       <div className="px-3 py-2 border-b border-dark-700">
         <div className="flex items-center justify-between">
           <h3 className="font-medium text-dark-200">{title}</h3>
