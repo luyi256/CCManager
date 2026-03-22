@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
 import { getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
+import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import type {
   ServerToAgentEvents,
@@ -105,7 +106,7 @@ export function setupWebSocket(server: HttpServer): Server {
               sessionId,
               postTaskHook: project.postTaskHook,
               extraMounts: project.extraMounts,
-              allowedPaths: project.allowedPaths,
+              allowedPaths: buildTaskAllowedPaths(project),
             });
             if (dispatched) {
               console.log(`  - Task ${task.id} re-dispatched`);
