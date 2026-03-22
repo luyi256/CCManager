@@ -3,6 +3,7 @@ import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { cancelDependentTasks } from '../services/waitingTasks.js';
+import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import type { Task } from '../types/index.js';
 
 const router = Router();
@@ -102,7 +103,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         worktreeBranch: task.worktreeBranch,
         postTaskHook: project.postTaskHook,
         extraMounts: project.extraMounts,
-        allowedPaths: project.allowedPaths,
+        allowedPaths: buildTaskAllowedPaths(project),
         images: images as string[] | undefined,
       });
 

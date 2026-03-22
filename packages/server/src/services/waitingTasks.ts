@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import * as storage from './storage.js';
 import { agentPool } from './agentPool.js';
 import { broadcast } from '../websocket/index.js';
+import { buildTaskAllowedPaths } from './pathValidation.js';
 import type { Task } from '../types/index.js';
 
 // Maximum number of retries for waiting tasks before marking as failed
@@ -116,7 +117,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     dockerImage: project.dockerImage,
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
-    allowedPaths: project.allowedPaths,
+    allowedPaths: buildTaskAllowedPaths(project),
   });
 
   if (dispatched) {
@@ -177,7 +178,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             worktreeBranch: currentTask.worktreeBranch,
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
-            allowedPaths: project.allowedPaths,
+            allowedPaths: buildTaskAllowedPaths(project),
           });
 
           if (dispatched) {
