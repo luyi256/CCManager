@@ -279,6 +279,40 @@ export async function revokeAgentToken(agentId: string): Promise<void> {
   });
 }
 
+// Sessions (CLI conversation history)
+export interface SessionListItem {
+  sessionId: string;
+  firstPrompt: string;
+  lastModified: string;
+  fileSize: number;
+  gitBranch?: string;
+  linkedTaskId?: number;
+}
+
+export interface SessionTimelineEntry {
+  id: string;
+  type: 'output' | 'tool_use' | 'tool_result' | 'user_message';
+  timestamp: number;
+  content: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolResult?: unknown;
+}
+
+export interface SessionDetail {
+  sessionId: string;
+  entries: SessionTimelineEntry[];
+  linkedTaskId?: number;
+}
+
+export async function getSessions(projectId: string): Promise<SessionListItem[]> {
+  return request(`/projects/${projectId}/sessions`);
+}
+
+export async function getSessionDetail(projectId: string, sessionId: string): Promise<SessionDetail> {
+  return request(`/projects/${projectId}/sessions/${sessionId}`);
+}
+
 // Voice transcription
 export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<{ text: string }> {
   const formData = new FormData();

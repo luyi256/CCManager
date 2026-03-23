@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Settings, RefreshCw } from 'lucide-react';
+import { Settings, RefreshCw, History } from 'lucide-react';
 import TaskBoard from '../components/Task/TaskBoard';
 import TaskInput from '../components/Task/TaskInput';
 import TaskDetail from '../components/Task/TaskDetail';
+import SessionBrowser from '../components/Session/SessionBrowser';
 import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
 import { useProject } from '../hooks/useProjects';
 import { useTasks, useCreateTask } from '../hooks/useTasks';
@@ -14,6 +15,7 @@ export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId!);
   const { data: tasks = [], isLoading: tasksLoading, refetch } = useTasks(projectId!);
@@ -69,6 +71,13 @@ export default function ProjectPage() {
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <button
+            onClick={() => setSessionBrowserOpen(true)}
+            className="btn btn-ghost p-2"
+            title="CLI Sessions"
+          >
+            <History size={18} />
+          </button>
+          <button
             onClick={() => refetch()}
             className="btn btn-ghost p-2"
             title="Refresh"
@@ -122,6 +131,21 @@ export default function ProjectPage() {
           <TaskDetail
             task={selectedTask}
             onClose={() => setSelectedTask(null)}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* Session Browser Drawer */}
+      <AnimatePresence>
+        {sessionBrowserOpen && (
+          <SessionBrowser
+            projectId={projectId!}
+            onClose={() => setSessionBrowserOpen(false)}
+            onNavigateToTask={(taskId) => {
+              setSessionBrowserOpen(false);
+              const task = tasks.find(t => t.id === taskId);
+              if (task) setSelectedTask(task);
+            }}
           />
         )}
       </AnimatePresence>
