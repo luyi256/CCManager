@@ -34,6 +34,7 @@ import tasksRouter from './routes/tasks.js';
 import settingsRouter from './routes/settings.js';
 import agentsRouter from './routes/agents.js';
 import transcribeRouter from './routes/transcribe.js';
+import sessionsRouter from './routes/sessions.js';
 import authRouter from './routes/auth.js';
 import { setupWebSocket } from './websocket/index.js';
 import { startWaitingTaskChecker } from './services/waitingTasks.js';
@@ -125,6 +126,7 @@ app.use('/api/agents', agentsRouter);
 app.use('/api', tasksRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/transcribe', transcribeRouter);
+app.use('/api', sessionsRouter);
 
 // Health check
 app.get('/api/health', (req, res) => {
