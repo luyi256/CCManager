@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import {
   X,
@@ -8,10 +8,13 @@ import {
   Clock,
   ArrowDown,
   ExternalLink,
+  Send,
 } from 'lucide-react';
 import { useSessions, useSessionDetail } from '../../hooks/useSessions';
+import { continueSession } from '../../services/api';
 import { groupTimeline, TimelineView } from '../Task/TimelineRenderer';
 import type { TimelineItem } from '../Task/TimelineRenderer';
+import type { Task } from '../../types';
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -37,9 +40,10 @@ interface SessionBrowserProps {
   projectId: string;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
+  onTaskCreated?: (task: Task) => void;
 }
 
-export default function SessionBrowser({ projectId, onClose, onNavigateToTask }: SessionBrowserProps) {
+export default function SessionBrowser({ projectId, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -68,6 +72,7 @@ export default function SessionBrowser({ projectId, onClose, onNavigateToTask }:
             onBack={() => setSelectedSessionId(null)}
             onClose={onClose}
             onNavigateToTask={onNavigateToTask}
+            onTaskCreated={onTaskCreated}
           />
         ) : (
           <SessionListView
@@ -201,16 +206,21 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
 
 // --- Session Detail View ---
 
-function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateToTask }: {
+function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateToTask, onTaskCreated }: {
   projectId: string;
   sessionId: string;
   onBack: () => void;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
+  onTaskCreated?: (task: Task) => void;
 }) {
   const { data: detail, isLoading } = useSessionDetail(projectId, sessionId);
   const containerRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [autoScroll, setAutoScroll] = useState(false);
+  const [followUpPrompt, setFollowUpPrompt] = useState('');
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const timeline: TimelineItem[] = useMemo(() => {
     if (!detail) return [];
@@ -229,6 +239,34 @@ function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateTo
     const isAtBottom = scrollHeight - scrollTop - clientHeight <= 80;
     setAutoScroll(!isAtBottom && scrollTop > 0);
   }, []);
+
+  // Auto-resize textarea
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (el) {
+      el.style.height = 'auto';
+      el.style.height = `${el.scrollHeight}px`;
+    }
+  }, [followUpPrompt]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const prompt = followUpPrompt.trim();
+    if (!prompt || sending) return;
+
+    setSending(true);
+    setError(null);
+    try {
+      const task = await continueSession(projectId, sessionId, prompt);
+      // Close session browser and open the new task
+      onClose();
+      onTaskCreated?.(task);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to continue session');
+    } finally {
+      setSending(false);
+    }
+  };
 
   return (
     <>
@@ -312,6 +350,44 @@ function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateTo
           </>
         )}
       </div>
+
+      {/* Follow-up input */}
+      {!isLoading && timeline.length > 0 && (
+        <div className="p-4 border-t border-dark-700 flex-shrink-0">
+          {error && (
+            <div className="text-red-400 text-xs mb-2">{error}</div>
+          )}
+          <form onSubmit={handleSubmit}>
+            <div className="flex gap-2">
+              <textarea
+                ref={textareaRef}
+                value={followUpPrompt}
+                onChange={(e) => setFollowUpPrompt(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSubmit(e);
+                  }
+                }}
+                placeholder="Continue this session..."
+                rows={1}
+                className="flex-1 px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-200 text-sm placeholder-dark-500 focus:outline-none focus:border-primary-500 resize-none max-h-32 overflow-y-auto"
+              />
+              <button
+                type="submit"
+                disabled={!followUpPrompt.trim() || sending}
+                className="btn btn-primary p-2 shrink-0 disabled:opacity-50"
+                title="Send follow-up (creates a new task)"
+              >
+                <Send size={18} />
+              </button>
+            </div>
+            <p className="text-xs text-dark-600 mt-1">
+              Creates a new task that resumes this session
+            </p>
+          </form>
+        </div>
+      )}
     </>
   );
 }

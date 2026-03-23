@@ -146,6 +146,10 @@ export default function ProjectPage() {
               const task = tasks.find(t => t.id === taskId);
               if (task) setSelectedTask(task);
             }}
+            onTaskCreated={(task) => {
+              refetch();
+              setSelectedTask(task);
+            }}
           />
         )}
       </AnimatePresence>

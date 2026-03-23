@@ -313,6 +313,13 @@ export async function getSessionDetail(projectId: string, sessionId: string): Pr
   return request(`/projects/${projectId}/sessions/${sessionId}`);
 }
 
+export async function continueSession(projectId: string, sessionId: string, prompt: string): Promise<Task> {
+  return request(`/projects/${projectId}/sessions/${sessionId}/continue`, {
+    method: 'POST',
+    body: JSON.stringify({ prompt }),
+  });
+}
+
 // Voice transcription
 export async function transcribeAudio(audioBlob: Blob, filename = 'recording.webm'): Promise<{ text: string }> {
   const formData = new FormData();
