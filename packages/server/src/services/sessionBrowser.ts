@@ -12,7 +12,10 @@ export interface SessionListItem {
   fileSize: number;
   gitBranch?: string;
   linkedTaskId?: number;
+  isActive?: boolean;
 }
+
+const ACTIVE_THRESHOLD_MS = 120_000; // 120 seconds
 
 export interface SessionTimelineEntry {
   id: string;
@@ -77,7 +80,7 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; g
 /**
  * Batch lookup: find CCManager tasks linked to session IDs.
  */
-function getLinkedTaskIds(projectId: string): Map<string, number> {
+export function getLinkedTaskIds(projectId: string): Map<string, number> {
   const map = new Map<string, number>();
   try {
     const stmt = db.prepare(
@@ -113,6 +116,7 @@ export async function listSessions(projectPath: string, projectId: string): Prom
 
   // Batch lookup for linked tasks
   const linkedTasks = getLinkedTaskIds(projectId);
+  const now = Date.now();
 
   const results: SessionListItem[] = [];
 
@@ -141,6 +145,7 @@ export async function listSessions(projectPath: string, projectId: string): Prom
             fileSize: fileStat.size,
             gitBranch: meta.gitBranch,
             linkedTaskId: linkedTasks.get(sessionId),
+            isActive: now - fileStat.mtime.getTime() <= ACTIVE_THRESHOLD_MS,
           };
         } catch {
           return null;
@@ -154,6 +159,71 @@ export async function listSessions(projectPath: string, projectId: string): Prom
   }
 
   // Sort by lastModified descending (newest first)
+  results.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
+  return results;
+}
+
+/**
+ * List only active (recently modified) CLI sessions — fast path.
+ * Stats all files first, then reads content only for active ones.
+ */
+export async function listActiveSessions(projectPath: string, projectId: string): Promise<SessionListItem[]> {
+  const dir = getSessionDir(projectPath);
+  if (!existsSync(dir)) return [];
+
+  let files: string[];
+  try {
+    const entries = await readdir(dir);
+    files = entries.filter((f) => f.endsWith('.jsonl'));
+  } catch {
+    return [];
+  }
+
+  const now = Date.now();
+  const linkedTasks = getLinkedTaskIds(projectId);
+  const results: SessionListItem[] = [];
+
+  // Phase 1: stat all files to find active ones (cheap)
+  const CONCURRENCY = 50;
+  const activeFiles: Array<{ file: string; sessionId: string; mtime: Date; size: number }> = [];
+
+  for (let i = 0; i < files.length; i += CONCURRENCY) {
+    const batch = files.slice(i, i + CONCURRENCY);
+    const items = await Promise.all(
+      batch.map(async (file) => {
+        const sessionId = file.replace('.jsonl', '');
+        if (!UUID_REGEX.test(sessionId)) return null;
+        try {
+          const fileStat = await stat(join(dir, file));
+          if (now - fileStat.mtime.getTime() <= ACTIVE_THRESHOLD_MS) {
+            return { file, sessionId, mtime: fileStat.mtime, size: fileStat.size };
+          }
+        } catch { /* skip */ }
+        return null;
+      })
+    );
+    for (const item of items) {
+      if (item) activeFiles.push(item);
+    }
+  }
+
+  // Phase 2: read first prompt only for active files
+  for (const { file, sessionId, mtime, size } of activeFiles) {
+    try {
+      const meta = await getFirstUserPrompt(join(dir, file));
+      if (!meta) continue;
+      results.push({
+        sessionId,
+        firstPrompt: meta.prompt,
+        lastModified: mtime.toISOString(),
+        fileSize: size,
+        gitBranch: meta.gitBranch,
+        linkedTaskId: linkedTasks.get(sessionId),
+        isActive: true,
+      });
+    } catch { /* skip */ }
+  }
+
   results.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
   return results;
 }

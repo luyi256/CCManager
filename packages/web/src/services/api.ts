@@ -287,6 +287,7 @@ export interface SessionListItem {
   fileSize: number;
   gitBranch?: string;
   linkedTaskId?: number;
+  isActive?: boolean;
 }
 
 export interface SessionTimelineEntry {
@@ -307,6 +308,10 @@ export interface SessionDetail {
 
 export async function getSessions(projectId: string): Promise<SessionListItem[]> {
   return request(`/projects/${projectId}/sessions`);
+}
+
+export async function getActiveSessions(projectId: string): Promise<SessionListItem[]> {
+  return request(`/projects/${projectId}/sessions/active`);
 }
 
 export async function getSessionDetail(projectId: string, sessionId: string): Promise<SessionDetail> {

@@ -2,9 +2,108 @@ import { Router } from 'express';
 import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
-import { listSessions, getSessionDetail } from '../services/sessionBrowser.js';
+import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds } from '../services/sessionBrowser.js';
+import type { SessionListItem, SessionDetail } from '../services/sessionBrowser.js';
 
 const router = Router();
+
+/**
+ * Try local filesystem first, then ask the agent via WebSocket.
+ * Local is fast (no network hop); agent is fallback for remote projects.
+ */
+async function fetchSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
+  // 1. Try local
+  const local = await listSessions(project.projectPath, project.id);
+  if (local.length > 0) return local;
+
+  // 2. Fall back to agent
+  const agent = agentPool.getAgent(project.agentId);
+  if (!agent) return [];
+
+  const result = await agentPool.requestSessions(project.agentId, project.projectPath) as {
+    ok: boolean;
+    sessions?: SessionListItem[];
+    error?: string;
+  };
+  if (!result.ok || !result.sessions) return [];
+
+  // Merge linkedTaskIds from server DB
+  const linked = getLinkedTaskIds(project.id);
+  for (const s of result.sessions) {
+    s.linkedTaskId = linked.get(s.sessionId);
+  }
+  return result.sessions;
+}
+
+async function fetchSessionDetail(
+  project: { id: string; projectPath: string; agentId: string },
+  sessionId: string,
+): Promise<SessionDetail | null> {
+  // 1. Try local
+  const local = await getSessionDetail(project.projectPath, sessionId, project.id);
+  if (local) return local;
+
+  // 2. Fall back to agent
+  const agent = agentPool.getAgent(project.agentId);
+  if (!agent) return null;
+
+  const result = await agentPool.requestSessionDetail(project.agentId, project.projectPath, sessionId) as {
+    ok: boolean;
+    entries?: SessionDetail['entries'];
+    error?: string;
+  };
+  if (!result.ok || !result.entries) return null;
+
+  const linked = getLinkedTaskIds(project.id);
+  return {
+    sessionId,
+    entries: result.entries,
+    linkedTaskId: linked.get(sessionId),
+  };
+}
+
+async function fetchActiveSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
+  // 1. Try local
+  const local = await listActiveSessions(project.projectPath, project.id);
+  if (local.length > 0) return local;
+
+  // 2. Fall back to agent (remote project)
+  const agent = agentPool.getAgent(project.agentId);
+  if (!agent) return [];
+
+  try {
+    const result = await agentPool.requestActiveSessions(project.agentId, project.projectPath) as {
+      ok: boolean;
+      sessions?: SessionListItem[];
+      error?: string;
+    };
+    if (!result.ok || !result.sessions) return [];
+
+    const linked = getLinkedTaskIds(project.id);
+    for (const s of result.sessions) {
+      s.linkedTaskId = linked.get(s.sessionId);
+    }
+    return result.sessions;
+  } catch {
+    return [];
+  }
+}
+
+// List active (running) CLI sessions for a project — must be before /:sessionId
+router.get('/projects/:projectId/sessions/active', async (req, res) => {
+  try {
+    const project = await storage.getProject(req.params.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const sessions = await fetchActiveSessionList(project);
+    res.json(sessions);
+  } catch (error) {
+    console.error('Failed to list active sessions:', error);
+    res.status(500).json({ message: 'Failed to list active sessions' });
+  }
+});
 
 // List all CLI sessions for a project
 router.get('/projects/:projectId/sessions', async (req, res) => {
@@ -14,7 +113,7 @@ router.get('/projects/:projectId/sessions', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const sessions = await listSessions(project.projectPath, project.id);
+    const sessions = await fetchSessionList(project);
     res.json(sessions);
   } catch (error) {
     console.error('Failed to list sessions:', error);
@@ -30,7 +129,7 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const detail = await getSessionDetail(project.projectPath, req.params.sessionId, project.id);
+    const detail = await fetchSessionDetail(project, req.params.sessionId);
     if (!detail) {
       return res.status(404).json({ message: 'Session not found' });
     }
