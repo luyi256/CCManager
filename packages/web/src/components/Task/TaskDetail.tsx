@@ -258,9 +258,10 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       });
     }
 
-    // Fallback: if task has continuePrompt but no user_message in saved logs,
-    // show continuePrompt as a follow-up (for tasks created before user_message logging)
-    if (task.continuePrompt && savedUserMessages.size === 0) {
+    // Fallback: if task has continuePrompt but no user_message in saved logs
+    // AND no optimistic messages pending, show continuePrompt as a follow-up
+    // (for tasks created before user_message logging)
+    if (task.continuePrompt && savedUserMessages.size === 0 && sentMessages.length === 0) {
       const fallbackTs = task.startedAt
         ? new Date(task.startedAt).getTime()
         : Date.now();
