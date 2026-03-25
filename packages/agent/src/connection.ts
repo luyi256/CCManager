@@ -6,6 +6,7 @@ import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
+import { listSessions, listActiveSessions, getSessionDetail } from './sessions.js';
 
 const execAsync = promisify(exec);
 
@@ -112,6 +113,34 @@ export class AgentConnection {
         });
       } catch (error) {
         console.error(`Failed to cleanup worktree for task ${data.taskId}:`, error);
+      }
+    });
+
+    // Session browsing — server requests session data via callback
+    this.socket.on('sessions:list', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+      try {
+        const sessions = await listSessions(data.projectPath);
+        callback({ ok: true, sessions });
+      } catch (error) {
+        callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    this.socket.on('sessions:active', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+      try {
+        const sessions = await listActiveSessions(data.projectPath);
+        callback({ ok: true, sessions });
+      } catch (error) {
+        callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    this.socket.on('sessions:detail', async (data: { projectPath: string; sessionId: string }, callback: (result: unknown) => void) => {
+      try {
+        const entries = await getSessionDetail(data.projectPath, data.sessionId);
+        callback({ ok: true, entries });
+      } catch (error) {
+        callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });
   }
