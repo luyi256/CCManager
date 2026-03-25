@@ -4,6 +4,10 @@
 
 多设备 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 任务管理系统 — 通过集中式 Web UI 管理和执行多台设备上的 Claude Code 任务。
 
+<p align="center">
+  <img src="docs/screenshots/demo.gif" alt="CCManager 演示" width="960">
+</p>
+
 ## 功能特性
 
 - **多 Agent 架构** — 将 Claude Code 任务分发到多台机器（Linux、macOS 等）
@@ -14,6 +18,42 @@
 - **语音输入** — 通过 Groq Whisper 集成实现语音转文字（可选）
 - **安全机制** — 设备 Token 认证（CLI 管理，SHA-256 哈希存储）、CORS、速率限制、路径白名单、符号链接保护
 - **Cloudflare 隧道** — 可选的公网访问，自动通过 Telegram 通知隧道 URL
+
+## 界面截图
+
+<table>
+  <tr>
+    <td align="center"><b>项目列表</b></td>
+    <td align="center"><b>任务看板</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/home.png" alt="项目列表" width="500"></td>
+    <td><img src="docs/screenshots/task-board.png" alt="任务看板" width="500"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>任务详情 & 输出</b></td>
+    <td align="center"><b>设置 & Agent 管理</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/task-detail.png" alt="任务详情" width="500"></td>
+    <td><img src="docs/screenshots/settings.png" alt="设置" width="500"></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>移动端视图</b></summary>
+<br>
+<table>
+  <tr>
+    <td align="center"><b>首页</b></td>
+    <td align="center"><b>任务看板</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/mobile-home.png" alt="移动端首页" width="280"></td>
+    <td><img src="docs/screenshots/mobile-task-board.png" alt="移动端任务看板" width="280"></td>
+  </tr>
+</table>
+</details>
 
 ## 架构
 

@@ -4,6 +4,10 @@
 
 A multi-device task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Manage and execute Claude Code tasks across multiple machines through a centralized Web UI.
 
+<p align="center">
+  <img src="docs/screenshots/demo.gif" alt="CCManager Demo" width="960">
+</p>
+
 ## Features
 
 - **Multi-Agent Architecture** — Distribute Claude Code tasks across multiple machines (Linux, macOS, etc.)
@@ -14,6 +18,42 @@ A multi-device task management system for [Claude Code](https://docs.anthropic.c
 - **Voice Input** — Dictate task prompts via Groq Whisper integration (optional)
 - **Security** — Device token auth (CLI-managed, SHA-256 hashed), CORS, rate limiting, path whitelisting, symlink protection
 - **Cloudflare Tunnel** — Optional public access with automatic URL notification via Telegram
+
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Project List</b></td>
+    <td align="center"><b>Task Board</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/home.png" alt="Project List" width="500"></td>
+    <td><img src="docs/screenshots/task-board.png" alt="Task Board" width="500"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Task Detail & Output</b></td>
+    <td align="center"><b>Settings & Agent Management</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/task-detail.png" alt="Task Detail" width="500"></td>
+    <td><img src="docs/screenshots/settings.png" alt="Settings" width="500"></td>
+  </tr>
+</table>
+
+<details>
+<summary><b>Mobile Views</b></summary>
+<br>
+<table>
+  <tr>
+    <td align="center"><b>Home</b></td>
+    <td align="center"><b>Task Board</b></td>
+  </tr>
+  <tr>
+    <td><img src="docs/screenshots/mobile-home.png" alt="Mobile Home" width="280"></td>
+    <td><img src="docs/screenshots/mobile-task-board.png" alt="Mobile Task Board" width="280"></td>
+  </tr>
+</table>
+</details>
 
 ## Architecture
 
