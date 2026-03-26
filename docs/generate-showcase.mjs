@@ -462,39 +462,43 @@ async function takeScreenshots(browser) {
   await mobileCtx.close();
 }
 
-async function recordGif(browser) {
-  console.log('\n=== Recording GIF ===');
+async function recordDemo(browser) {
+  console.log('\n=== Recording demo video ===');
   const recordDir = '/tmp/ccm-showcase-recording/';
   if (existsSync(recordDir)) rmSync(recordDir, { recursive: true });
   mkdirSync(recordDir, { recursive: true });
 
+  // Use large viewport with 2x DPI for crisp text.
+  // recordVideo.size must match viewport (Playwright captures at CSS px).
   const ctx = await browser.newContext({
-    viewport: { width: 1280, height: 800 },
-    deviceScaleFactor: 1,
-    recordVideo: { dir: recordDir, size: { width: 1280, height: 800 } },
+    viewport: { width: 1440, height: 900 },
+    deviceScaleFactor: 2,
+    recordVideo: { dir: recordDir, size: { width: 1440, height: 900 } },
   });
   const page = await ctx.newPage();
   await login(page);
 
-  // Scene 1: Home page overview (2.5s)
+  // Scene 1: Home page — brief pause then hover over first project (1.2s)
   console.log('Scene 1: Home page');
+  const firstCard = await page.$('a[href*="/project/"]');
+  await page.waitForTimeout(800);
+  if (firstCard) await firstCard.hover();
+  await page.waitForTimeout(600);
+
+  // Scene 2: Click into acme-api project (2.5s)
+  console.log('Scene 2: Navigate to project');
+  if (firstCard) await firstCard.click();
   await page.waitForTimeout(2500);
 
-  // Scene 2: Click into acme-api project
-  console.log('Scene 2: Navigate to project');
-  const link = await page.$('a[href*="/project/"]');
-  if (link) await link.click();
-  await page.waitForTimeout(3000);
-
-  // Scene 3: Show all columns
+  // Scene 3: Show task board columns (1.5s)
   console.log('Scene 3: Task board');
   const board = await page.$('.overflow-x-auto');
   if (board) {
     await board.evaluate(el => { el.scrollLeft = 0; });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(1500);
   }
 
-  // Scene 4: Click completed task to show detail panel
+  // Scene 4: Click completed task to show detail panel (3.5s)
   console.log('Scene 4: Task detail');
   const cards = await page.$$('.cursor-pointer');
   for (const card of cards) {
@@ -504,9 +508,9 @@ async function recordGif(browser) {
       break;
     }
   }
-  await page.waitForTimeout(4000);
+  await page.waitForTimeout(3500);
 
-  // Scene 5: Close detail panel by clicking the backdrop overlay
+  // Scene 5: Close detail panel
   console.log('Scene 5: Close detail');
   const backdrop = await page.$('.backdrop-blur-sm');
   if (backdrop) {
@@ -514,44 +518,64 @@ async function recordGif(browser) {
   } else {
     await page.keyboard.press('Escape');
   }
-  await page.waitForTimeout(1500);
-
+  await page.waitForTimeout(1000);
   // Ensure overlay is fully gone
   await page.evaluate(() => {
     document.querySelectorAll('.backdrop-blur-sm').forEach(el => el.remove());
   });
   await page.waitForTimeout(500);
 
+  // Scene 6: Type a new task (shows input interaction)
   console.log('Scene 6: Type new task');
   const textarea = await page.$('textarea');
   if (textarea) {
     await textarea.click({ force: true });
-    await page.waitForTimeout(500);
-    await page.keyboard.type('Add dark mode with system preference detection', { delay: 45 });
-    await page.waitForTimeout(2000);
+    await page.waitForTimeout(400);
+    await page.keyboard.type('Add dark mode with system preference detection', { delay: 40 });
+    await page.waitForTimeout(1500);
   }
 
-  // End pause
-  await page.waitForTimeout(1500);
+  // Brief end pause
+  await page.waitForTimeout(800);
 
   const videoPath = await page.video().path();
   await ctx.close();
-  console.log('Video saved:', videoPath);
+  console.log('Raw video:', videoPath);
 
-  // Convert to GIF
-  console.log('Converting to GIF...');
   const ffmpeg = process.env.FFMPEG_PATH || `${process.env.HOME}/bin/ffmpeg`;
+
+  // Convert to MP4 (high quality, sharp, small file)
+  console.log('Converting to MP4...');
   try {
     execSync(
-      `${ffmpeg} -y -ss 2 -i "${videoPath}" -vf "fps=10,scale=960:-1:flags=lanczos,palettegen=stats_mode=diff" /tmp/ccm-palette.png`,
+      `${ffmpeg} -y -ss 1.5 -i "${videoPath}" ` +
+      `-vf "scale=1280:-2:flags=lanczos" ` +
+      `-c:v libx264 -preset slow -crf 23 -pix_fmt yuv420p ` +
+      `-movflags +faststart ` +
+      `"${SCREENSHOTS_DIR}/demo.mp4"`,
+      { stdio: 'pipe' }
+    );
+    const mp4Stats = statSync(`${SCREENSHOTS_DIR}/demo.mp4`);
+    console.log('MP4 size:', (mp4Stats.size / 1024 / 1024).toFixed(1), 'MB');
+  } catch (e) {
+    console.error('MP4 conversion failed:', e.stderr?.toString().slice(-300));
+  }
+
+  // Also generate GIF (fallback, lower quality but widely supported)
+  console.log('Converting to GIF...');
+  try {
+    execSync(
+      `${ffmpeg} -y -ss 1.5 -i "${videoPath}" -vf "fps=12,scale=1280:-1:flags=lanczos,palettegen=max_colors=256:stats_mode=diff" /tmp/ccm-palette.png`,
       { stdio: 'pipe' }
     );
     execSync(
-      `${ffmpeg} -y -ss 2 -i "${videoPath}" -i /tmp/ccm-palette.png -lavfi "fps=10,scale=960:-1:flags=lanczos [x]; [x][1:v] paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle" "${SCREENSHOTS_DIR}/demo.gif"`,
+      `${ffmpeg} -y -ss 1.5 -i "${videoPath}" -i /tmp/ccm-palette.png ` +
+      `-lavfi "fps=12,scale=1280:-1:flags=lanczos [x]; [x][1:v] paletteuse=dither=floyd_steinberg:diff_mode=rectangle" ` +
+      `"${SCREENSHOTS_DIR}/demo.gif"`,
       { stdio: 'pipe' }
     );
-    const stats = statSync(`${SCREENSHOTS_DIR}/demo.gif`);
-    console.log('GIF size:', (stats.size / 1024 / 1024).toFixed(1), 'MB');
+    const gifStats = statSync(`${SCREENSHOTS_DIR}/demo.gif`);
+    console.log('GIF size:', (gifStats.size / 1024 / 1024).toFixed(1), 'MB');
   } catch (e) {
     console.error('GIF conversion failed:', e.stderr?.toString().slice(-300));
   }
@@ -570,7 +594,7 @@ async function main() {
 
     const browser = await chromium.launch({ headless: true });
     await takeScreenshots(browser);
-    await recordGif(browser);
+    await recordDemo(browser);
     await browser.close();
   } finally {
     server.kill();
