@@ -1,24 +1,14 @@
-import { Router, Response } from 'express';
+import { Router } from 'express';
 import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { cancelDependentTasks } from '../services/waitingTasks.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
+import { errorResponse } from '../utils/errorResponse.js';
+import { enqueue, hasQueued, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import type { Task } from '../types/index.js';
 
 const router = Router();
-
-// Helper for consistent error responses with context (Bug #17 fix)
-function errorResponse(res: Response, status: number, message: string, details?: Record<string, unknown>) {
-  const response: { message: string; details?: Record<string, unknown>; timestamp: string } = {
-    message,
-    timestamp: new Date().toISOString(),
-  };
-  if (details) {
-    response.details = details;
-  }
-  return res.status(status).json(response);
-}
 
 // Get tasks for project
 router.get('/projects/:projectId/tasks', async (req, res) => {
@@ -47,7 +37,7 @@ router.get('/tasks/:id', async (req, res) => {
     res.json(task);
   } catch (error) {
     console.error('Failed to get task:', error);
-    res.status(500).json({ message: 'Failed to get task' });
+    errorResponse(res, 500, 'Failed to get task');
   }
 });
 
@@ -92,6 +82,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
     // Start execution if no dependencies
     if (!dependsOn) {
       // Try to dispatch first, only update status if successful
+      const startedAt = new Date().toISOString();
       const dispatched = agentPool.dispatchTask(project.agentId, {
         taskId: task.id,
         projectId: project.id,
@@ -105,11 +96,12 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         extraMounts: project.extraMounts,
         allowedPaths: buildTaskAllowedPaths(project),
         images: images as string[] | undefined,
+        startedAt,
       });
 
       if (dispatched) {
         task.status = 'running';
-        task.startedAt = new Date().toISOString();
+        task.startedAt = startedAt;
       } else {
         task.status = 'failed';
         task.error = 'Failed to dispatch task to agent';
@@ -127,7 +119,12 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
   }
 });
 
-// Update task
+// Update task (whitelist allowed fields)
+const TASK_UPDATABLE_FIELDS = new Set([
+  'status', 'error', 'summary', 'waitingUntil', 'waitReason',
+  'checkCommand', 'continuePrompt', 'isPlanMode',
+]);
+
 router.put('/tasks/:id', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id, 10);
@@ -137,12 +134,16 @@ router.put('/tasks/:id', async (req, res) => {
       return res.status(404).json({ message: 'Task not found' });
     }
 
-    Object.assign(task, req.body);
+    for (const [key, value] of Object.entries(req.body)) {
+      if (TASK_UPDATABLE_FIELDS.has(key)) {
+        (task as unknown as Record<string, unknown>)[key] = value;
+      }
+    }
     await storage.saveTask(task.projectId, task);
     res.json(task);
   } catch (error) {
     console.error('Failed to update task:', error);
-    res.status(500).json({ message: 'Failed to update task' });
+    errorResponse(res, 500, 'Failed to update task');
   }
 });
 
@@ -163,7 +164,13 @@ router.post('/tasks/:id/cancel', async (req, res) => {
 
     task.status = 'cancelled';
     task.completedAt = new Date().toISOString();
+    // Keep continuePrompt so retry can re-send the follow-up message.
+    // Previously we cleared it, but that caused retry to fall back to the
+    // original prompt (whose work is already done), making it appear to "not run".
     await storage.saveTask(task.projectId, task);
+
+    // Clear any queued follow-ups
+    clearFollowUpQueue(taskId);
 
     broadcast(taskId, { type: 'task:cancelled', taskId });
 
@@ -173,7 +180,7 @@ router.post('/tasks/:id/cancel', async (req, res) => {
     res.json(task);
   } catch (error) {
     console.error('Failed to cancel task:', error);
-    res.status(500).json({ message: 'Failed to cancel task' });
+    errorResponse(res, 500, 'Failed to cancel task');
   }
 });
 
@@ -215,19 +222,45 @@ router.post('/tasks/:id/retry', async (req, res) => {
       });
     }
 
+    // Determine whether to resume session or start fresh
+    let prompt = task.prompt;
+    let continueSession = false;
+    let sessionId: string | undefined;
+
+    // Resume session if we have a continuePrompt (follow-up) and sessionId,
+    // regardless of whether the task was cancelled or failed.
+    // For cancelled tasks, the session might already contain the follow-up prompt
+    // (slight risk of duplicate), but losing the user's follow-up message entirely
+    // is a much worse experience than a potential duplicate.
+    if (task.continuePrompt && task.gitInfo) {
+      try {
+        const gitInfo = JSON.parse(task.gitInfo);
+        if (gitInfo.sessionId) {
+          prompt = task.continuePrompt;
+          continueSession = true;
+          sessionId = gitInfo.sessionId;
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
     // Try to dispatch first, only update status if successful
+    const startedAt = new Date().toISOString();
     const dispatched = agentPool.dispatchTask(project.agentId, {
       taskId: task.id,
       projectId: project.id,
       projectPath: project.projectPath,
-      prompt: task.prompt,
+      prompt,
       isPlanMode: task.isPlanMode,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,
+      continueSession,
+      sessionId,
+      isRetry: true,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: project.allowedPaths,
+      startedAt,
     });
 
     if (!dispatched) {
@@ -239,14 +272,18 @@ router.post('/tasks/:id/retry', async (req, res) => {
     // Reset task only after successful dispatch
     task.status = 'running';
     task.error = undefined;
-    task.startedAt = new Date().toISOString();
+    task.startedAt = startedAt;
     task.completedAt = undefined;
+    // Clear stale continuePrompt so future retries don't try to resume old follow-ups
+    if (!continueSession) {
+      task.continuePrompt = undefined;
+    }
     await storage.saveTask(task.projectId, task);
 
     res.json(task);
   } catch (error) {
     console.error('Failed to retry task:', error);
-    res.status(500).json({ message: 'Failed to retry task' });
+    errorResponse(res, 500, 'Failed to retry task');
   }
 });
 
@@ -299,14 +336,27 @@ router.post('/tasks/:id/continue', async (req, res) => {
       content: prompt,
     });
 
+    // If task is currently active (running/waiting/etc.), queue instead of dispatching
+    const activeStatuses = ['running', 'waiting', 'waiting_permission', 'plan_review'];
+    if (activeStatuses.includes(task.status)) {
+      enqueue(taskId, prompt, images as string[] | undefined);
+      const queued = queueSize(taskId);
+      console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
+      // Broadcast queue info to frontend
+      broadcast(taskId, { type: 'task:followup_queued', taskId, queueSize: queued, prompt });
+      return res.json({ ...task, followUpQueued: true, queueSize: queued });
+    }
+
+    // Task is completed/failed — dispatch immediately as a continue session
     // Update task status BEFORE dispatching to avoid race condition
     // where task:completed handler could overwrite with stale data
     const previousStatus = task.status;
     const previousStartedAt = task.startedAt;
     const previousCompletedAt = task.completedAt;
+    const startedAt = new Date().toISOString();
     task.status = 'running';
     task.continuePrompt = prompt;
-    task.startedAt = new Date().toISOString();
+    task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
     await storage.saveTask(task.projectId, task);
@@ -327,6 +377,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       extraMounts: project.extraMounts,
       allowedPaths: project.allowedPaths,
       images: images as string[] | undefined,
+      startedAt,
     });
 
     if (!dispatched) {
@@ -343,7 +394,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
     res.json(task);
   } catch (error) {
     console.error('Failed to continue task:', error);
-    res.status(500).json({ message: 'Failed to continue task' });
+    errorResponse(res, 500, 'Failed to continue task');
   }
 });
 
@@ -367,7 +418,7 @@ router.post('/tasks/:id/plan/answer', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Failed to answer:', error);
-    res.status(500).json({ message: 'Failed to send answer' });
+    errorResponse(res, 500, 'Failed to send answer');
   }
 });
 
@@ -390,7 +441,7 @@ router.post('/tasks/:id/plan/confirm', async (req, res) => {
     res.json({ success: true });
   } catch (error) {
     console.error('Failed to confirm:', error);
-    res.status(500).json({ message: 'Failed to confirm plan' });
+    errorResponse(res, 500, 'Failed to confirm plan');
   }
 });
 
@@ -428,7 +479,7 @@ router.post('/tasks/:id/merge', async (req, res) => {
     res.json({ message: 'Merge request sent to agent' });
   } catch (error) {
     console.error('Failed to merge worktree:', error);
-    res.status(500).json({ message: 'Failed to merge worktree' });
+    errorResponse(res, 500, 'Failed to merge worktree');
   }
 });
 
@@ -464,7 +515,7 @@ router.post('/tasks/:id/cleanup-worktree', async (req, res) => {
     res.json({ message: 'Cleanup request sent to agent' });
   } catch (error) {
     console.error('Failed to cleanup worktree:', error);
-    res.status(500).json({ message: 'Failed to cleanup worktree' });
+    errorResponse(res, 500, 'Failed to cleanup worktree');
   }
 });
 
@@ -482,7 +533,7 @@ router.get('/tasks/:id/logs', async (req, res) => {
     res.json(logs);
   } catch (error) {
     console.error('Failed to get logs:', error);
-    res.status(500).json({ message: 'Failed to get logs' });
+    errorResponse(res, 500, 'Failed to get logs');
   }
 });
 
