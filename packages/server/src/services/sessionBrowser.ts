@@ -13,6 +13,8 @@ export interface SessionListItem {
   gitBranch?: string;
   linkedTaskId?: number;
   isActive?: boolean;
+  /** All session IDs in this conversation chain (oldest → newest), present when merged. */
+  relatedSessionIds?: string[];
 }
 
 const ACTIVE_THRESHOLD_MS = 120_000; // 120 seconds
@@ -97,6 +99,52 @@ export function getLinkedTaskIds(projectId: string): Map<string, number> {
     }
   } catch { /* skip */ }
   return map;
+}
+
+/**
+ * Merge sessions with the same firstPrompt into a single entry.
+ * Uses the latest (by lastModified) session as representative.
+ */
+export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
+  if (sessions.length <= 1) return sessions;
+
+  const groups = new Map<string, SessionListItem[]>();
+  for (const s of sessions) {
+    const key = s.firstPrompt;
+    const group = groups.get(key);
+    if (group) {
+      group.push(s);
+    } else {
+      groups.set(key, [s]);
+    }
+  }
+
+  const merged: SessionListItem[] = [];
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      merged.push(group[0]);
+      continue;
+    }
+
+    // Sort by lastModified ascending (oldest first) so latest is last
+    group.sort((a, b) => new Date(a.lastModified).getTime() - new Date(b.lastModified).getTime());
+    const latest = group[group.length - 1];
+
+    merged.push({
+      sessionId: latest.sessionId,
+      firstPrompt: latest.firstPrompt,
+      lastModified: latest.lastModified,
+      fileSize: group.reduce((sum, s) => sum + s.fileSize, 0),
+      gitBranch: latest.gitBranch,
+      linkedTaskId: latest.linkedTaskId ?? group.find(s => s.linkedTaskId)?.linkedTaskId,
+      isActive: group.some(s => s.isActive),
+      relatedSessionIds: group.map(s => s.sessionId),
+    });
+  }
+
+  // Sort by lastModified descending (newest first)
+  merged.sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
+  return merged;
 }
 
 /**
@@ -229,27 +277,13 @@ export async function listActiveSessions(projectPath: string, projectId: string)
 }
 
 /**
- * Get full session detail with timeline entries.
+ * Parse a single session JSONL file into timeline entries.
  */
-export async function getSessionDetail(projectPath: string, sessionId: string, projectId: string): Promise<SessionDetail | null> {
-  if (!UUID_REGEX.test(sessionId)) return null;
-
-  const filePath = join(getSessionDir(projectPath), `${sessionId}.jsonl`);
-  if (!existsSync(filePath)) return null;
-
-  let content: string;
-  try {
-    content = await readFile(filePath, 'utf-8');
-  } catch {
-    return null;
-  }
-
+function parseSessionFile(content: string, idPrefix: string): { entries: SessionTimelineEntry[]; toolUseMap: Map<string, SessionTimelineEntry> } {
   const lines = content.split('\n').filter((l) => l.trim());
   const entries: SessionTimelineEntry[] = [];
+  const toolUseMap = new Map<string, SessionTimelineEntry>();
   let counter = 0;
-
-  // First pass: collect all entries
-  const toolUseMap = new Map<string, SessionTimelineEntry>(); // tool_use_id -> entry
 
   for (const line of lines) {
     let obj: Record<string, unknown>;
@@ -272,13 +306,12 @@ export async function getSessionDetail(projectPath: string, sessionId: string, p
       const msgContent = message.content;
       if (typeof msgContent === 'string') {
         entries.push({
-          id: `user-${counter++}`,
+          id: `${idPrefix}user-${counter++}`,
           type: 'user_message',
           timestamp,
           content: msgContent,
         });
       } else if (Array.isArray(msgContent)) {
-        // Tool results come as user messages with tool_result blocks
         for (const block of msgContent) {
           if ((block as Record<string, unknown>).type === 'tool_result') {
             const toolUseId = (block as Record<string, unknown>).tool_use_id as string;
@@ -296,14 +329,12 @@ export async function getSessionDetail(projectPath: string, sessionId: string, p
               resultText = JSON.stringify(blockContent);
             }
 
-            // Pair with matching tool_use
             const matchingTool = toolUseMap.get(toolUseId);
             if (matchingTool) {
               matchingTool.toolResult = resultText;
             } else {
-              // Standalone tool_result (shouldn't happen often)
               entries.push({
-                id: `result-${counter++}`,
+                id: `${idPrefix}result-${counter++}`,
                 type: 'tool_result',
                 timestamp,
                 content: '',
@@ -321,7 +352,7 @@ export async function getSessionDetail(projectPath: string, sessionId: string, p
             const text = block.text as string;
             if (text.trim()) {
               entries.push({
-                id: `text-${counter++}`,
+                id: `${idPrefix}text-${counter++}`,
                 type: 'output',
                 timestamp,
                 content: text,
@@ -329,7 +360,7 @@ export async function getSessionDetail(projectPath: string, sessionId: string, p
             }
           } else if (block.type === 'tool_use') {
             const entry: SessionTimelineEntry = {
-              id: `tool-${block.id || counter++}`,
+              id: `${idPrefix}tool-${block.id || counter++}`,
               type: 'tool_use',
               timestamp,
               content: '',
@@ -341,18 +372,78 @@ export async function getSessionDetail(projectPath: string, sessionId: string, p
               toolUseMap.set(block.id as string, entry);
             }
           }
-          // Skip 'thinking' and 'server_tool_use' blocks
         }
       }
     }
   }
 
-  // Lookup linked task
+  return { entries, toolUseMap };
+}
+
+/**
+ * Get full session detail with timeline entries.
+ * If relatedSessionIds is provided, merges all sessions into a single timeline.
+ */
+export async function getSessionDetail(
+  projectPath: string,
+  sessionId: string,
+  projectId: string,
+  relatedSessionIds?: string[],
+): Promise<SessionDetail | null> {
+  const dir = getSessionDir(projectPath);
+  const idsToLoad = relatedSessionIds && relatedSessionIds.length > 1
+    ? relatedSessionIds
+    : [sessionId];
+
+  // Validate all IDs
+  for (const id of idsToLoad) {
+    if (!UUID_REGEX.test(id)) return null;
+  }
+
+  // Load and parse all session files
+  const allEntries: SessionTimelineEntry[] = [];
+
+  for (const id of idsToLoad) {
+    const filePath = join(dir, `${id}.jsonl`);
+    if (!existsSync(filePath)) continue;
+
+    let content: string;
+    try {
+      content = await readFile(filePath, 'utf-8');
+    } catch {
+      continue;
+    }
+
+    const { entries } = parseSessionFile(content, idsToLoad.length > 1 ? `${id.slice(0, 8)}-` : '');
+    allEntries.push(...entries);
+  }
+
+  if (allEntries.length === 0) return null;
+
+  // Sort by timestamp and deduplicate (same type + content within 1s)
+  allEntries.sort((a, b) => a.timestamp - b.timestamp);
+
+  if (idsToLoad.length > 1) {
+    const deduped: SessionTimelineEntry[] = [];
+    const seen = new Set<string>();
+    for (const entry of allEntries) {
+      // Key: type + content + rounded timestamp (1s window)
+      const tsKey = Math.floor(entry.timestamp / 1000);
+      const key = `${entry.type}|${entry.content}|${entry.toolName || ''}|${tsKey}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        deduped.push(entry);
+      }
+    }
+    allEntries.length = 0;
+    allEntries.push(...deduped);
+  }
+
   const linkedTasks = getLinkedTaskIds(projectId);
 
   return {
     sessionId,
-    entries,
+    entries: allEntries,
     linkedTaskId: linkedTasks.get(sessionId),
   };
 }

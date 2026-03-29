@@ -288,6 +288,7 @@ export interface SessionListItem {
   gitBranch?: string;
   linkedTaskId?: number;
   isActive?: boolean;
+  relatedSessionIds?: string[];
 }
 
 export interface SessionTimelineEntry {
@@ -314,8 +315,11 @@ export async function getActiveSessions(projectId: string): Promise<SessionListI
   return request(`/projects/${projectId}/sessions/active`);
 }
 
-export async function getSessionDetail(projectId: string, sessionId: string): Promise<SessionDetail> {
-  return request(`/projects/${projectId}/sessions/${sessionId}`);
+export async function getSessionDetail(projectId: string, sessionId: string, relatedSessionIds?: string[]): Promise<SessionDetail> {
+  const params = relatedSessionIds && relatedSessionIds.length > 1
+    ? `?related=${relatedSessionIds.join(',')}`
+    : '';
+  return request(`/projects/${projectId}/sessions/${sessionId}${params}`);
 }
 
 export async function continueSession(projectId: string, sessionId: string, prompt: string): Promise<Task> {
