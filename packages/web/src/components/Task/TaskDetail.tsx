@@ -55,7 +55,6 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const [autoScroll, setAutoScroll] = useState(true);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
-  const [followUpQueue, setFollowUpQueue] = useState<Array<{ prompt: string; images?: string[] }>>([]);
   const [sentMessages, setSentMessages] = useState<Array<{ content: string; timestamp: number }>>([]);
 
   // Use live task data with refetch, falling back to initial prop
@@ -154,8 +153,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     const prevStatus = prevStatusRef.current;
     prevStatusRef.current = task.status;
 
-    // If transitioning from completed to running (continuation), reset stream
-    if (prevStatus === 'completed' && task.status === 'running') {
+    // If transitioning from completed/cancelled/failed to running (retry/continuation), reset stream
+    if ((prevStatus === 'completed' || prevStatus === 'cancelled' || prevStatus === 'failed') && task.status === 'running') {
       stream.reset();
       // Refetch logs to get any newly saved content
       refetchLogs();
@@ -169,16 +168,6 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       setTimeout(() => refetchLogs(), 300);
     }
   }, [task.status, stream, refetchLogs]);
-
-  // Auto-send queued follow-ups when task completes
-  useEffect(() => {
-    if (task.status === 'completed' && followUpQueue.length > 0 && !continueTask.isPending) {
-      const nextItem = followUpQueue[0];
-      setFollowUpQueue(prev => prev.slice(1));
-      setSentMessages(prev => [...prev, { content: nextItem.prompt, timestamp: Date.now() }]);
-      continueTask.mutate({ taskId: task.id, prompt: nextItem.prompt, images: nextItem.images });
-    }
-  }, [task.status, followUpQueue, continueTask, task.id]);
 
   // Clean up optimistic sentMessages once they appear in savedLogs
   useEffect(() => {
@@ -635,49 +624,28 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
 
           {/* Actions */}
           <div className="p-4 border-t border-dark-700 space-y-2 flex-shrink-0">
-            {/* Follow-up input: show for completed (send immediately) or running (queue) */}
+            {/* Follow-up input: show for completed or active tasks */}
             {(task.status === 'completed' || isActive) && (
               <>
-                {/* Show queued messages */}
-                {followUpQueue.length > 0 && (
-                  <div className="mb-2 p-2 bg-dark-800 rounded-lg">
-                    <div className="text-xs text-dark-400 mb-1">Queued follow-ups (will send when task completes):</div>
-                    {followUpQueue.map((msg, idx) => (
-                      <div key={idx} className="flex items-center justify-between text-sm text-dark-300 py-1">
-                        <span className="truncate flex-1">
-                          {msg.prompt}
-                          {msg.images && msg.images.length > 0 && (
-                            <span className="ml-1 text-dark-500">({msg.images.length} image{msg.images.length > 1 ? 's' : ''})</span>
-                          )}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => setFollowUpQueue(prev => prev.filter((_, i) => i !== idx))}
-                          className="ml-2 text-dark-500 hover:text-red-400"
-                        >
-                          <X size={14} />
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                )}
                 <form
                   onSubmit={(e) => {
                     e.preventDefault();
                     const prompt = continuePrompt.trim();
                     if (!prompt && followUpImages.length === 0) return;
                     const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
-                    if (task.status === 'completed') {
-                      setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
-                      continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s });
-                    } else {
-                      setFollowUpQueue(prev => [...prev, { prompt, images: imageBase64s }]);
-                    }
+                    // Always send immediately - server/agent handles interrupting running tasks
+                    setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
+                    continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s });
                     setContinuePrompt('');
                     setFollowUpImages([]);
                     if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
                   }}
                 >
+                  {stream.followUpQueueSize > 0 && (
+                    <div className="text-xs text-amber-400/80 mb-1 px-1">
+                      {stream.followUpQueueSize} message{stream.followUpQueueSize > 1 ? 's' : ''} queued — will send when current execution finishes
+                    </div>
+                  )}
                   <div className="relative bg-dark-800 border border-dark-600 rounded-lg focus-within:border-primary-500">
                     <textarea
                       ref={followUpTextareaRef}
@@ -685,12 +653,12 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       onChange={(e) => setContinuePrompt(e.target.value)}
                       onPaste={handleFollowUpPaste}
                       onKeyDown={(e) => {
-                        if (e.key === 'Enter' && !e.shiftKey) {
+                        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                           e.preventDefault();
                           e.currentTarget.form?.requestSubmit();
                         }
                       }}
-                      placeholder={isActive ? "Queue follow-up message..." : "Follow-up message..."}
+                      placeholder={stream.followUpQueueSize > 0 ? "Add another message (will be merged)..." : "Follow-up message..."}
                       disabled={continueTask.isPending}
                       rows={1}
                       className="w-full bg-transparent px-3 py-1 pr-20 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"

@@ -144,7 +144,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
             onChange={(e) => setPrompt(e.target.value)}
             onPaste={handlePaste}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 if ((prompt.trim() || images.length > 0) && !isSubmitting) {
                   handleSubmit(e);
