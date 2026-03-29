@@ -20,10 +20,10 @@ export function useActiveSessions(projectId: string) {
   });
 }
 
-export function useSessionDetail(projectId: string, sessionId: string | null) {
+export function useSessionDetail(projectId: string, sessionId: string | null, relatedSessionIds?: string[]) {
   return useQuery({
-    queryKey: ['sessionDetail', projectId, sessionId],
-    queryFn: () => api.getSessionDetail(projectId, sessionId!),
+    queryKey: ['sessionDetail', projectId, sessionId, relatedSessionIds],
+    queryFn: () => api.getSessionDetail(projectId, sessionId!, relatedSessionIds),
     enabled: !!projectId && !!sessionId,
     staleTime: Infinity, // Session content is immutable
   });

@@ -45,7 +45,7 @@ interface SessionBrowserProps {
 }
 
 export default function SessionBrowser({ projectId, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
+  const [selectedSession, setSelectedSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   return (
@@ -66,11 +66,12 @@ export default function SessionBrowser({ projectId, onClose, onNavigateToTask, o
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         className="fixed right-0 top-14 bottom-0 w-full max-w-xl bg-dark-900 border-l border-dark-700 overflow-hidden flex flex-col z-40 shadow-2xl"
       >
-        {selectedSessionId ? (
+        {selectedSession ? (
           <SessionDetailView
             projectId={projectId}
-            sessionId={selectedSessionId}
-            onBack={() => setSelectedSessionId(null)}
+            sessionId={selectedSession.id}
+            relatedSessionIds={selectedSession.relatedIds}
+            onBack={() => setSelectedSession(null)}
             onClose={onClose}
             onNavigateToTask={onNavigateToTask}
             onTaskCreated={onTaskCreated}
@@ -80,7 +81,7 @@ export default function SessionBrowser({ projectId, onClose, onNavigateToTask, o
             projectId={projectId}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onSelectSession={setSelectedSessionId}
+            onSelectSession={(id, relatedIds) => setSelectedSession({ id, relatedIds })}
             onClose={onClose}
             onNavigateToTask={onNavigateToTask}
           />
@@ -96,7 +97,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
   projectId: string;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  onSelectSession: (id: string) => void;
+  onSelectSession: (id: string, relatedIds?: string[]) => void;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
 }) {
@@ -189,7 +190,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
             {filtered.map(session => (
               <button
                 key={session.sessionId}
-                onClick={() => onSelectSession(session.sessionId)}
+                onClick={() => onSelectSession(session.sessionId, session.relatedSessionIds)}
                 className="w-full text-left p-3 rounded-lg hover:bg-dark-800 transition-colors group"
               >
                 <div className="flex items-start gap-2">
@@ -215,6 +216,11 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                         </span>
                       )}
                       <span>{formatFileSize(session.fileSize)}</span>
+                      {session.relatedSessionIds && session.relatedSessionIds.length > 1 && (
+                        <span className="text-dark-400">
+                          {session.relatedSessionIds.length} sessions
+                        </span>
+                      )}
                       {session.linkedTaskId && (
                         <span
                           className="flex items-center gap-1 text-primary-400 hover:text-primary-300"
@@ -270,15 +276,16 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
 
 // --- Session Detail View ---
 
-function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateToTask, onTaskCreated }: {
+function SessionDetailView({ projectId, sessionId, relatedSessionIds, onBack, onClose, onNavigateToTask, onTaskCreated }: {
   projectId: string;
   sessionId: string;
+  relatedSessionIds?: string[];
   onBack: () => void;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
   onTaskCreated?: (task: Task) => void;
 }) {
-  const { data: detail, isLoading } = useSessionDetail(projectId, sessionId);
+  const { data: detail, isLoading } = useSessionDetail(projectId, sessionId, relatedSessionIds);
   const containerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [autoScroll, setAutoScroll] = useState(false);

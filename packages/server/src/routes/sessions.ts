@@ -2,7 +2,7 @@ import { Router } from 'express';
 import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
-import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds } from '../services/sessionBrowser.js';
+import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions } from '../services/sessionBrowser.js';
 import type { SessionListItem, SessionDetail } from '../services/sessionBrowser.js';
 
 const router = Router();
@@ -14,7 +14,7 @@ const router = Router();
 async function fetchSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
   // 1. Try local
   const local = await listSessions(project.projectPath, project.id);
-  if (local.length > 0) return local;
+  if (local.length > 0) return mergeSessions(local);
 
   // 2. Fall back to agent
   const agent = agentPool.getAgent(project.agentId);
@@ -32,15 +32,16 @@ async function fetchSessionList(project: { id: string; projectPath: string; agen
   for (const s of result.sessions) {
     s.linkedTaskId = linked.get(s.sessionId);
   }
-  return result.sessions;
+  return mergeSessions(result.sessions);
 }
 
 async function fetchSessionDetail(
   project: { id: string; projectPath: string; agentId: string },
   sessionId: string,
+  relatedSessionIds?: string[],
 ): Promise<SessionDetail | null> {
-  // 1. Try local
-  const local = await getSessionDetail(project.projectPath, sessionId, project.id);
+  // 1. Try local (supports merging related sessions)
+  const local = await getSessionDetail(project.projectPath, sessionId, project.id, relatedSessionIds);
   if (local) return local;
 
   // 2. Fall back to agent
@@ -65,7 +66,7 @@ async function fetchSessionDetail(
 async function fetchActiveSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
   // 1. Try local
   const local = await listActiveSessions(project.projectPath, project.id);
-  if (local.length > 0) return local;
+  if (local.length > 0) return mergeSessions(local);
 
   // 2. Fall back to agent (remote project)
   const agent = agentPool.getAgent(project.agentId);
@@ -83,7 +84,7 @@ async function fetchActiveSessionList(project: { id: string; projectPath: string
     for (const s of result.sessions) {
       s.linkedTaskId = linked.get(s.sessionId);
     }
-    return result.sessions;
+    return mergeSessions(result.sessions);
   } catch {
     return [];
   }
@@ -121,7 +122,7 @@ router.get('/projects/:projectId/sessions', async (req, res) => {
   }
 });
 
-// Get session detail
+// Get session detail (supports ?related=id1,id2,id3 for merged timeline)
 router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
   try {
     const project = await storage.getProject(req.params.projectId);
@@ -129,7 +130,10 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    const detail = await fetchSessionDetail(project, req.params.sessionId);
+    const relatedParam = req.query.related as string | undefined;
+    const relatedSessionIds = relatedParam ? relatedParam.split(',').filter(Boolean) : undefined;
+
+    const detail = await fetchSessionDetail(project, req.params.sessionId, relatedSessionIds);
     if (!detail) {
       return res.status(404).json({ message: 'Session not found' });
     }
