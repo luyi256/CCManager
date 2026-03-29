@@ -428,7 +428,7 @@ function SessionDetailView({ projectId, sessionId, onBack, onClose, onNavigateTo
                 value={followUpPrompt}
                 onChange={(e) => setFollowUpPrompt(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
+                  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                     e.preventDefault();
                     handleSubmit(e);
                   }
