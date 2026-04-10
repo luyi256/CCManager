@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
-# CCManager Agent (Client) - One-click setup & run script
-# Usage: bash setup-client.sh [--reconfigure]
+# CCManager Agent (Client) - Setup & run script
+# Usage: bash setup-client.sh [--reconfigure] [--skip-pull]
 set -euo pipefail
 
 RECONFIGURE=false
+SKIP_PULL=false
 for arg in "$@"; do
   case "$arg" in
     --reconfigure) RECONFIGURE=true ;;
+    --skip-pull)   SKIP_PULL=true ;;
   esac
 done
 
@@ -28,7 +30,6 @@ echo
 # ── 1. Check prerequisites ─────────────────────────────
 info "Checking prerequisites..."
 
-# Node.js
 if ! command -v node &>/dev/null; then
   err "Node.js not found. Please install Node.js >= 18."
   err "  → https://nodejs.org/ or: curl -fsSL https://fnm.vercel.app/install | bash"
@@ -41,21 +42,18 @@ if [ "$NODE_VER" -lt 18 ]; then
 fi
 ok "Node.js $(node -v)"
 
-# pnpm
 if ! command -v pnpm &>/dev/null; then
   warn "pnpm not found, installing..."
   npm install -g pnpm@9
 fi
 ok "pnpm $(pnpm -v)"
 
-# PM2
 if ! command -v pm2 &>/dev/null; then
   warn "PM2 not found, installing..."
   npm install -g pm2
 fi
 ok "PM2 $(pm2 -v)"
 
-# Claude CLI
 if ! command -v claude &>/dev/null; then
   warn "Claude Code CLI not found, installing..."
   npm install -g @anthropic-ai/claude-code
@@ -64,13 +62,30 @@ ok "Claude CLI $(claude --version 2>/dev/null || echo 'installed')"
 
 echo
 
-# ── 2. Install dependencies ────────────────────────────
+# ── 2. Git pull ────────────────────────────────────────
+if [ "$SKIP_PULL" = true ]; then
+  info "Skipping git pull (--skip-pull)"
+else
+  info "Pulling latest code..."
+  if ! command -v git &>/dev/null; then
+    warn "git not found, skipping pull"
+  elif [ ! -d "$SCRIPT_DIR/.git" ]; then
+    warn "Not a git repository, skipping pull"
+  else
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+    git pull origin "$CURRENT_BRANCH"
+    ok "Code updated (branch: $CURRENT_BRANCH)"
+  fi
+fi
+echo
+
+# ── 3. Install dependencies ────────────────────────────
 info "Installing dependencies..."
 pnpm install
 ok "Dependencies installed"
 echo
 
-# ── 3. Agent config ────────────────────────────────────
+# ── 4. Agent config ────────────────────────────────────
 CONFIG_FILE=""
 CONFIG_PATHS=(
   "./packages/agent/agent.config.json"
@@ -99,7 +114,6 @@ else
 fi
 
 if [ "$NEED_CONFIG" = true ]; then
-  # Read existing values as defaults (if reconfiguring)
   if [ -f "$CONFIG_FILE" ]; then
     EXISTING_ID=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('agentId',''))" 2>/dev/null || echo "")
     EXISTING_NAME=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('agentName',''))" 2>/dev/null || echo "")
@@ -107,12 +121,10 @@ if [ "$NEED_CONFIG" = true ]; then
     EXISTING_PATHS=$(python3 -c "import json; print(','.join(json.load(open('$CONFIG_FILE')).get('allowedPaths',[])))" 2>/dev/null || echo "")
   fi
 
-  # Detect defaults (use existing values if available)
   DEFAULT_ID="${EXISTING_ID:-$(hostname | tr '[:upper:]' '[:lower:]' | tr ' .' '-')}"
   DEFAULT_NAME="${EXISTING_NAME:-$(hostname)}"
   DEFAULT_PATH="${EXISTING_PATHS:-$HOME/projects/*}"
   DEFAULT_DATA_PATH="${EXISTING_DATA:-$HOME/CCManagerData}"
-  # Check common data paths
   if [ -z "$EXISTING_DATA" ] && [ -d "$HOME/CCManagerData" ]; then
     DEFAULT_DATA_PATH="$HOME/CCManagerData"
   fi
@@ -133,7 +145,6 @@ if [ "$NEED_CONFIG" = true ]; then
   read -rp "  Allowed Paths [$DEFAULT_PATH]: " ALLOWED_PATHS
   ALLOWED_PATHS="${ALLOWED_PATHS:-$DEFAULT_PATH}"
 
-  # Auth token — read existing or prompt for new one
   EXISTING_TOKEN=""
   if [ -f "$CONFIG_FILE" ]; then
     EXISTING_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('authToken',''))" 2>/dev/null || echo "")
@@ -173,22 +184,19 @@ fi
 
 echo
 
-# ── 4. Docker setup (auto-detect) ─────────────────────
-# Executor is now per-project (not per-agent). If Docker is available,
-# pre-build the runner image so Docker-mode projects are ready to go.
+# ── 5. Docker setup (auto-detect) ─────────────────────
 if command -v docker &>/dev/null && docker info &>/dev/null 2>&1; then
   ok "Docker $(docker --version | awk '{print $3}' | tr -d ',')"
 
-  # Get image name from config (if dockerConfig exists) or use default
   IMAGE=$(python3 -c "import json; c=json.load(open('$CONFIG_FILE')); print(c.get('dockerConfig',{}).get('image','ccmanager-runner:latest'))" 2>/dev/null || echo "ccmanager-runner:latest")
 
   if ! docker image inspect "$IMAGE" &>/dev/null 2>&1; then
     if [ -f "$SCRIPT_DIR/packages/agent/docker/Dockerfile" ]; then
-      info "Building Docker image '$IMAGE' for Docker-mode projects..."
+      info "Building Docker image '$IMAGE'..."
       docker build -t "$IMAGE" "$SCRIPT_DIR/packages/agent/docker/"
       ok "Docker image built: $IMAGE"
     else
-      info "Docker available but no Dockerfile found — Docker-mode projects will need manual image setup"
+      info "Docker available but no Dockerfile found — Docker-mode projects need manual image setup"
     fi
   else
     ok "Docker image ready: $IMAGE"
@@ -199,17 +207,17 @@ else
   echo
 fi
 
-# ── 5. Build agent ──────────────────────────────────────
+# ── 6. Build agent ──────────────────────────────────────
 info "Building agent..."
-pnpm --filter @ccmanager/agent build 2>/dev/null || pnpm run build:server
+pnpm --filter @ccmanager/agent build
 ok "Agent built"
 echo
 
-# ── 6. Start with PM2 ──────────────────────────────────
+# ── 7. Start with PM2 ──────────────────────────────────
 info "Starting agent with PM2..."
 
 if pm2 describe ccm-agent &>/dev/null 2>&1; then
-  info "ccm-agent already exists in PM2, restarting..."
+  info "Restarting existing ccm-agent..."
   pm2 delete ccm-agent 2>/dev/null || true
 fi
 
@@ -219,13 +227,12 @@ pm2 start npm --name ccm-agent \
 
 pm2 save
 
-# ── 7. Connection check ────────────────────────────────
+# ── 8. Connection check ────────────────────────────────
 DATA_PATH=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE'))['dataPath'])" 2>/dev/null || echo "")
 
 info "Waiting for agent to connect..."
 sleep 5
 
-# Check PM2 status
 if pm2 describe ccm-agent 2>/dev/null | grep -q "status.*online"; then
   ok "Agent process is running"
 else
@@ -236,7 +243,6 @@ else
   fi
 fi
 
-# Try to read server URL and check health
 if [ -n "$DATA_PATH" ] && [ -f "$DATA_PATH/server-url.txt" ]; then
   SERVER_URL=$(cat "$DATA_PATH/server-url.txt" | tr -d '[:space:]')
   if curl -sf "${SERVER_URL}/api/health" &>/dev/null; then
