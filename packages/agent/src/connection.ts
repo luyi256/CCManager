@@ -216,7 +216,7 @@ export class AgentConnection {
       await new Promise<void>((resolve) => setTimeout(resolve, 3000));
     }
 
-    let executor: ClaudeExecutor | DockerExecutor;
+    let executor: ClaudeExecutor | DockerExecutor | undefined;
     let executionPath = task.projectPath;
 
     try {
@@ -343,7 +343,7 @@ export class AgentConnection {
       });
     } catch (error) {
       // Don't report failure if this execution was superseded
-      if (this.executors.get(task.taskId) !== executor) {
+      if (executor && this.executors.get(task.taskId) !== executor) {
         console.log(`Task ${task.taskId}: Superseded execution errored (ignored)`);
         return;
       }
@@ -356,7 +356,7 @@ export class AgentConnection {
       });
     } finally {
       // Only clean up if this is still the current executor for this task
-      if (this.executors.get(task.taskId) === executor) {
+      if (executor && this.executors.get(task.taskId) === executor) {
         this.executors.delete(task.taskId);
         this.socket?.emit('status', {
           status: 'online',
