@@ -173,6 +173,8 @@ class AgentPool {
     extraMounts?: Array<{ source: string; target: string; readonly?: boolean }>;
     allowedPaths?: string[];
     images?: string[];
+    startedAt?: string;
+    isRetry?: boolean;
   }): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'online') {

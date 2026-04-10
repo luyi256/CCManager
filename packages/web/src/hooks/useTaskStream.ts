@@ -21,6 +21,7 @@ interface TaskStreamState {
   permissionRequest?: PermissionRequest;
   status: 'idle' | 'running' | 'completed' | 'failed';
   error?: string;
+  followUpQueueSize: number;
 }
 
 // Batch interval for output messages (ms)
@@ -35,6 +36,7 @@ export function useTaskStream(taskId: number | null) {
     messages: [],
     toolCalls: [],
     status: 'idle',
+    followUpQueueSize: 0,
   });
 
   // Buffer for batching rapid output messages
@@ -148,6 +150,7 @@ export function useTaskStream(taskId: number | null) {
               status: 'completed',
               planQuestion: undefined,
               permissionRequest: undefined,
+              followUpQueueSize: 0,
             };
           });
           break;
@@ -161,6 +164,13 @@ export function useTaskStream(taskId: number | null) {
             ...prev,
             status: 'failed',
             error: msg.error as string,
+          }));
+          break;
+
+        case 'task:followup_queued':
+          setState((prev) => ({
+            ...prev,
+            followUpQueueSize: (msg.queueSize as number) || 0,
           }));
           break;
 
@@ -210,6 +220,7 @@ export function useTaskStream(taskId: number | null) {
       messages: [],
       toolCalls: [],
       status: 'idle',
+      followUpQueueSize: 0,
     });
   }, []);
 
