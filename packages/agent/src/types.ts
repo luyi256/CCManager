@@ -36,6 +36,7 @@ export interface TaskRequest {
   worktreeBranch?: string;
   continueSession?: boolean;
   sessionId?: string;
+  isRetry?: boolean;
   postTaskHook?: string;
   extraMounts?: Array<{
     source: string;
@@ -44,6 +45,7 @@ export interface TaskRequest {
   }>;
   allowedPaths?: string[]; // Per-project allowed paths override
   images?: string[]; // base64 data URLs for screenshots
+  startedAt?: string; // Dispatch timestamp for stale event detection
 }
 
 export interface TaskOutput {
