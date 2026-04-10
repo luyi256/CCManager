@@ -20,6 +20,8 @@ export class AgentConnection {
   private maxReconnectAttempts = Infinity;
   private heartbeatInterval: NodeJS.Timeout | null = null;
   private worktreeManager = new WorktreeManager();
+  // Monotonic sequence per task to detect superseded follow-ups
+  private followUpSeq: Map<number, number> = new Map();
 
   constructor(config: AgentConfig) {
     this.config = config;
@@ -190,10 +192,28 @@ export class AgentConnection {
     console.log(`Received task ${task.taskId}: ${task.prompt.substring(0, 50)}...`);
     console.log(`Task ${task.taskId} projectPath: ${task.projectPath}`);
 
-    // Skip if this task is already running (prevents duplicate execution on reconnect)
+    // If this task is already running, handle based on context
     if (this.executors.has(task.taskId)) {
-      console.log(`Task ${task.taskId}: Already running, skipping duplicate dispatch`);
-      return;
+      if (task.continueSession || task.isRetry) {
+        // Follow-up or retry: kill current executor and start fresh
+        console.log(`Task ${task.taskId}: ${task.isRetry ? 'Retry' : 'Follow-up'} received while running, replacing current executor`);
+        const oldExecutor = this.executors.get(task.taskId)!;
+        oldExecutor.cancel();
+        this.executors.delete(task.taskId);
+        // Wait for process to die before starting new one
+        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      } else {
+        // Duplicate dispatch (e.g. reconnect recovery) — skip
+        console.log(`Task ${task.taskId}: Already running, skipping duplicate dispatch`);
+        return;
+      }
+    } else if (task.continueSession) {
+      // Continue/retry with session resume but no active executor in map.
+      // This means the previous executor was removed (by cancel handler or completion).
+      // The old process might still be dying (SIGTERM sent, not yet exited).
+      // Wait to avoid session file conflicts with --resume.
+      console.log(`Task ${task.taskId}: Session resume without active executor, waiting for old process cleanup`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 3000));
     }
 
     let executor: ClaudeExecutor | DockerExecutor;
@@ -273,6 +293,15 @@ export class AgentConnection {
       // Execute task (use worktree path if available)
       console.log(`Task ${task.taskId}: Starting execution in ${executionPath}...`);
       await executor.execute(task, executionPath);
+
+      // Check if this execution was superseded by a newer follow-up.
+      // If another handleTask call cancelled our executor and replaced it,
+      // we must NOT emit task:completed (the newer execution owns the lifecycle).
+      if (this.executors.get(task.taskId) !== executor) {
+        console.log(`Task ${task.taskId}: Execution superseded by follow-up, skipping completion`);
+        return;
+      }
+
       console.log(`Task ${task.taskId}: Execution completed`);
 
       // Run post-task hook if configured
@@ -310,21 +339,31 @@ export class AgentConnection {
         taskId: task.taskId,
         status: 'completed',
         sessionId,
+        startedAt: task.startedAt,
       });
     } catch (error) {
+      // Don't report failure if this execution was superseded
+      if (this.executors.get(task.taskId) !== executor) {
+        console.log(`Task ${task.taskId}: Superseded execution errored (ignored)`);
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       console.error(`Task ${task.taskId} failed:`, message);
       this.socket?.emit('task:failed', {
         taskId: task.taskId,
         error: message,
+        startedAt: task.startedAt,
       });
     } finally {
-      this.executors.delete(task.taskId);
-      this.socket?.emit('status', {
-        status: 'online',
-        runningTasks: Array.from(this.executors.keys()),
-        taskCount: this.executors.size
-      });
+      // Only clean up if this is still the current executor for this task
+      if (this.executors.get(task.taskId) === executor) {
+        this.executors.delete(task.taskId);
+        this.socket?.emit('status', {
+          status: 'online',
+          runningTasks: Array.from(this.executors.keys()),
+          taskCount: this.executors.size
+        });
+      }
     }
   }
 
