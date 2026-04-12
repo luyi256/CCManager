@@ -33,7 +33,7 @@ const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 
 function getSessionDir(projectPath: string): string {
   const baseDir = join(homedir(), '.claude', 'projects');
-  const primary = join(baseDir, projectPath.replace(/\//g, '-'));
+  const primary = join(baseDir, projectPath.replace(/[^a-zA-Z0-9]/g, '-'));
 
   if (existsSync(primary)) return primary;
 
