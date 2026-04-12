@@ -38,7 +38,7 @@ export interface SessionDetail {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function projectPathToHash(projectPath: string): string {
-  return projectPath.replace(/\//g, '-');
+  return projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 function getSessionDir(projectPath: string): string {
