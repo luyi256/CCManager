@@ -121,18 +121,24 @@ export class AgentConnection {
     // Session browsing — server requests session data via callback
     this.socket.on('sessions:list', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
       try {
+        console.log(`[sessions] list requested for projectPath: ${data.projectPath}`);
         const sessions = await listSessions(data.projectPath);
+        console.log(`[sessions] list result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
+        console.error(`[sessions] list error:`, error);
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });
 
     this.socket.on('sessions:active', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
       try {
+        console.log(`[sessions] active requested for projectPath: ${data.projectPath}`);
         const sessions = await listActiveSessions(data.projectPath);
+        console.log(`[sessions] active result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
+        console.error(`[sessions] active error:`, error);
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });

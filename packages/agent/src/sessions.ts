@@ -3,7 +3,7 @@
  * Reads Claude CLI JSONL session files from ~/.claude/projects/<path-hash>/
  */
 import { readdir, readFile, stat } from 'fs/promises';
-import { createReadStream, existsSync } from 'fs';
+import { createReadStream, existsSync, readdirSync } from 'fs';
 import { createInterface } from 'readline';
 import { join } from 'path';
 import { homedir } from 'os';
@@ -32,7 +32,28 @@ export interface SessionTimelineEntry {
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 function getSessionDir(projectPath: string): string {
-  return join(homedir(), '.claude', 'projects', projectPath.replace(/\//g, '-'));
+  const baseDir = join(homedir(), '.claude', 'projects');
+  const primary = join(baseDir, projectPath.replace(/\//g, '-'));
+
+  if (existsSync(primary)) return primary;
+
+  // Fallback: scan ~/.claude/projects/ for a directory whose name ends with
+  // the last component(s) of the project path.  Handles cases where Claude CLI
+  // resolved symlinks or used a different absolute prefix.
+  try {
+    const tail = projectPath.split('/').filter(Boolean).slice(-2).join('-'); // e.g. "Trinity_local_collection-step_wise_reward"
+    const entries = readdirSync(baseDir, { withFileTypes: true });
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name.endsWith(tail) && entry.name !== primary.split('/').pop()) {
+        const candidate = join(baseDir, entry.name);
+        console.log(`[sessions] primary dir not found (${primary}), using fallback: ${candidate}`);
+        return candidate;
+      }
+    }
+  } catch { /* ignore */ }
+
+  console.log(`[sessions] session dir: ${primary} (exists: ${existsSync(primary)})`);
+  return primary;
 }
 
 async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; gitBranch?: string } | null> {
