@@ -14,17 +14,22 @@ const router = Router();
 async function fetchSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
   // 1. Try local
   const local = await listSessions(project.projectPath, project.id);
+  console.log(`[sessions] local list for ${project.id}: ${local.length} sessions`);
   if (local.length > 0) return mergeSessions(local);
 
   // 2. Fall back to agent
   const agent = agentPool.getAgent(project.agentId);
-  if (!agent) return [];
+  if (!agent) { console.log(`[sessions] agent ${project.agentId} not connected`); return []; }
 
-  const result = await agentPool.requestSessions(project.agentId, project.projectPath) as {
-    ok: boolean;
-    sessions?: SessionListItem[];
-    error?: string;
-  };
+  console.log(`[sessions] requesting sessions from agent ${project.agentId} for path ${project.projectPath}`);
+  let result: { ok: boolean; sessions?: SessionListItem[]; error?: string };
+  try {
+    result = await agentPool.requestSessions(project.agentId, project.projectPath) as typeof result;
+  } catch (err) {
+    console.error(`[sessions] agent request failed:`, err);
+    return [];
+  }
+  console.log(`[sessions] agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
   if (!result.ok || !result.sessions) return [];
 
   // Merge linkedTaskIds from server DB
@@ -66,18 +71,21 @@ async function fetchSessionDetail(
 async function fetchActiveSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
   // 1. Try local
   const local = await listActiveSessions(project.projectPath, project.id);
+  console.log(`[sessions] local active for ${project.id}: ${local.length} sessions`);
   if (local.length > 0) return mergeSessions(local);
 
   // 2. Fall back to agent (remote project)
   const agent = agentPool.getAgent(project.agentId);
-  if (!agent) return [];
+  if (!agent) { console.log(`[sessions] agent ${project.agentId} not connected for active`); return []; }
 
   try {
+    console.log(`[sessions] requesting active sessions from agent ${project.agentId}`);
     const result = await agentPool.requestActiveSessions(project.agentId, project.projectPath) as {
       ok: boolean;
       sessions?: SessionListItem[];
       error?: string;
     };
+    console.log(`[sessions] active agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
     if (!result.ok || !result.sessions) return [];
 
     const linked = getLinkedTaskIds(project.id);
