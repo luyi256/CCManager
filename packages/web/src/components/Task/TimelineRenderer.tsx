@@ -186,14 +186,14 @@ export function TimelineView({ grouped, userMessageLabel }: {
             {item.type === 'output' ? (
               <div className="flex gap-2">
                 <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />
-                <div className="flex-1 prose prose-invert prose-sm max-w-none overflow-hidden break-words">
+                <div className="flex-1 min-w-0 prose prose-invert prose-sm max-w-none break-words">
                   <SafeMarkdown>{item.content}</SafeMarkdown>
                 </div>
               </div>
             ) : item.type === 'user_message' ? (
               <div className="flex gap-2 bg-primary-500/10 rounded-lg -mx-1 px-1 py-1">
                 <Send size={14} className="text-primary-400 flex-shrink-0 mt-1" />
-                <div className="flex-1">
+                <div className="flex-1 min-w-0">
                   <div className="text-xs font-medium text-primary-400 uppercase mb-1">
                     {getLabel(item)}
                   </div>
