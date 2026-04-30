@@ -238,27 +238,7 @@ export async function deleteProject(projectId: string): Promise<void> {
 // Tasks
 export async function getTasks(projectId: string): Promise<Task[]> {
   const stmt = db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY id DESC');
-  const rows = stmt.all(projectId) as Array<{
-    id: number;
-    project_id: string;
-    prompt: string;
-    status: string;
-    is_plan_mode: number;
-    depends_on: number | null;
-    worktree_branch: string | null;
-    created_at: string;
-    started_at: string | null;
-    completed_at: string | null;
-    error: string | null;
-    waiting_until: string | null;
-    wait_reason: string | null;
-    check_command: string | null;
-    continue_prompt: string | null;
-    git_info: string | null;
-    summary: string | null;
-    security_warnings: string | null;
-    pending_permission: string | null;
-  }>;
+  const rows = stmt.all(projectId) as Array<Parameters<typeof rowToTask>[0]>;
 
   return rows.map(rowToTask);
 }
@@ -286,26 +266,7 @@ export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ 
     WHERE p.agent_id = ? AND t.status = 'running'
     ORDER BY t.id ASC
   `);
-  const rows = stmt.all(agentId) as Array<{
-    id: number;
-    project_id: string;
-    prompt: string;
-    status: string;
-    is_plan_mode: number;
-    depends_on: number | null;
-    worktree_branch: string | null;
-    created_at: string;
-    started_at: string | null;
-    completed_at: string | null;
-    error: string | null;
-    waiting_until: string | null;
-    wait_reason: string | null;
-    check_command: string | null;
-    continue_prompt: string | null;
-    git_info: string | null;
-    summary: string | null;
-    security_warnings: string | null;
-    pending_permission: string | null;
+  const rows = stmt.all(agentId) as Array<Parameters<typeof rowToTask>[0] & {
     p_id: string;
     p_name: string;
     agent_id: string;
@@ -354,6 +315,7 @@ function rowToTask(row: {
   prompt: string;
   status: string;
   is_plan_mode: number;
+  runner: string | null;
   depends_on: number | null;
   worktree_branch: string | null;
   created_at: string;
@@ -375,6 +337,7 @@ function rowToTask(row: {
     prompt: row.prompt,
     status: row.status as Task['status'],
     isPlanMode: row.is_plan_mode === 1,
+    runner: (row.runner as Task['runner']) || 'claude',
     dependsOn: row.depends_on || undefined,
     worktreeBranch: row.worktree_branch || undefined,
     createdAt: row.created_at,
@@ -396,12 +359,13 @@ function rowToTask(row: {
 export async function saveTask(projectId: string, task: Task): Promise<void> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      id, project_id, prompt, status, is_plan_mode, depends_on, worktree_branch,
+      id, project_id, prompt, status, is_plan_mode, runner, depends_on, worktree_branch,
       created_at, started_at, completed_at, error, waiting_until, wait_reason,
       check_command, continue_prompt, git_info, summary, security_warnings, pending_permission
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
+      runner = excluded.runner,
       started_at = excluded.started_at,
       completed_at = excluded.completed_at,
       error = excluded.error,
@@ -420,6 +384,7 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     task.prompt,
     task.status,
     task.isPlanMode ? 1 : 0,
+    task.runner || 'claude',
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,
@@ -443,15 +408,16 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
 export async function createTask(projectId: string, task: Omit<Task, 'id'>): Promise<Task> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      project_id, prompt, status, is_plan_mode, depends_on, worktree_branch,
+      project_id, prompt, status, is_plan_mode, runner, depends_on, worktree_branch,
       created_at, started_at, completed_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     projectId,
     task.prompt,
     task.status,
     task.isPlanMode ? 1 : 0,
+    task.runner || 'claude',
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,

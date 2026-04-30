@@ -167,4 +167,12 @@ try {
   // Column already exists, ignore
 }
 
+// Add runner column to tasks table (per-task CLI runner: claude or codex)
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN runner TEXT DEFAULT 'claude'`);
+  console.log('Migration: Added runner column to tasks table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

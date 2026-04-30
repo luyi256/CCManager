@@ -175,14 +175,14 @@ export function TimelineView({ grouped, userMessageLabel }: {
       {grouped.map((group, gi) => {
         if (group.type === 'tool_group') {
           return (
-            <div key={`group-${gi}`} className="p-3">
+            <div key={`group-${gi}`} className="p-3" data-entry-id={group.items[0]?.id}>
               <ToolCallGroup items={group.items} />
             </div>
           );
         }
         const item = group.item;
         return (
-          <div key={item.id} className="p-3">
+          <div key={item.id} className="p-3" data-entry-id={item.id}>
             {item.type === 'output' ? (
               <div className="flex gap-2">
                 <MessageSquare size={14} className="text-blue-400 flex-shrink-0 mt-1" />

@@ -2,17 +2,20 @@ import { io, Socket } from 'socket.io-client';
 import { exec, execSync } from 'child_process';
 import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
+import { CodexExecutor } from './codexExecutor.js';
 import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
-import { listSessions, listActiveSessions, getSessionDetail } from './sessions.js';
+import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
 
 const execAsync = promisify(exec);
 
+type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
+
 export class AgentConnection {
   private socket: Socket | null = null;
-  private executors: Map<number, ClaudeExecutor | DockerExecutor> = new Map();
+  private executors: Map<number, Executor> = new Map();
   private config: AgentConfig;
   private currentUrl: string;
   private reconnectAttempts = 0;
@@ -148,6 +151,18 @@ export class AgentConnection {
         const entries = await getSessionDetail(data.projectPath, data.sessionId);
         callback({ ok: true, entries });
       } catch (error) {
+        callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    });
+
+    this.socket.on('sessions:search', async (data: { projectPath: string; query: string }, callback: (result: unknown) => void) => {
+      try {
+        console.log(`[sessions] search requested for projectPath: ${data.projectPath}, query: "${data.query}"`);
+        const results = await searchSessions(data.projectPath, data.query);
+        console.log(`[sessions] search result: ${results.length} sessions matched`);
+        callback({ ok: true, results });
+      } catch (error) {
+        console.error(`[sessions] search error:`, error);
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });

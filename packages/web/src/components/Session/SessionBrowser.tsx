@@ -10,12 +10,26 @@ import {
   ExternalLink,
   Send,
   ChevronDown,
+  Loader2,
 } from 'lucide-react';
-import { useSessions, useActiveSessions, useSessionDetail } from '../../hooks/useSessions';
+import { useSessions, useActiveSessions, useSessionDetail, useSessionSearch } from '../../hooks/useSessions';
 import { continueSession } from '../../services/api';
+import type { SessionSearchMatch } from '../../services/api';
 import { groupTimeline, TimelineView } from '../Task/TimelineRenderer';
 import type { TimelineItem } from '../Task/TimelineRenderer';
 import type { Task } from '../../types';
+
+/** Flattened search result: one entry per matched message */
+interface FlatSearchResult {
+  sessionId: string;
+  firstPrompt: string;
+  lastModified: string;
+  fileSize: number;
+  gitBranch?: string;
+  linkedTaskId?: number;
+  relatedSessionIds?: string[];
+  match: SessionSearchMatch;
+}
 
 function formatRelativeTime(dateStr: string): string {
   const now = Date.now();
@@ -37,6 +51,23 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)}MB`;
 }
 
+/** Highlight matching portions of text */
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const q = query.trim().toLowerCase();
+  const lower = text.toLowerCase();
+  const idx = lower.indexOf(q);
+  if (idx === -1) return <>{text}</>;
+
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-yellow-500/30 text-yellow-200 rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
+      {text.slice(idx + q.length)}
+    </>
+  );
+}
+
 interface SessionBrowserProps {
   projectId: string;
   onClose: () => void;
@@ -45,7 +76,11 @@ interface SessionBrowserProps {
 }
 
 export default function SessionBrowser({ projectId, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
-  const [selectedSession, setSelectedSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
+  const [selectedSession, setSelectedSession] = useState<{
+    id: string;
+    relatedIds?: string[];
+    scrollToEntryId?: string;
+  } | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
 
   return (
@@ -71,6 +106,7 @@ export default function SessionBrowser({ projectId, onClose, onNavigateToTask, o
             projectId={projectId}
             sessionId={selectedSession.id}
             relatedSessionIds={selectedSession.relatedIds}
+            scrollToEntryId={selectedSession.scrollToEntryId}
             onBack={() => setSelectedSession(null)}
             onClose={onClose}
             onNavigateToTask={onNavigateToTask}
@@ -81,7 +117,9 @@ export default function SessionBrowser({ projectId, onClose, onNavigateToTask, o
             projectId={projectId}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onSelectSession={(id, relatedIds) => setSelectedSession({ id, relatedIds })}
+            onSelectSession={(id, relatedIds, scrollToEntryId) =>
+              setSelectedSession({ id, relatedIds, scrollToEntryId })
+            }
             onClose={onClose}
             onNavigateToTask={onNavigateToTask}
           />
@@ -97,17 +135,62 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
   projectId: string;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  onSelectSession: (id: string, relatedIds?: string[]) => void;
+  onSelectSession: (id: string, relatedIds?: string[], scrollToEntryId?: string) => void;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
+  const [debouncedQuery, setDebouncedQuery] = useState('');
   const { data: activeSessions, isLoading: activeLoading } = useActiveSessions(projectId);
   const { data: allSessions, isLoading: allLoading } = useSessions(projectId, showAll);
+  const { data: searchResults, isLoading: searchLoading } = useSessionSearch(projectId, debouncedQuery);
+
+  // Debounce search query
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
 
   const activeCount = activeSessions?.length ?? 0;
+  const isSearching = debouncedQuery.trim().length >= 2;
 
-  // Determine which sessions to display
+  // Flatten search results: one entry per matched message
+  const flatResults = useMemo<FlatSearchResult[]>(() => {
+    if (!searchResults) return [];
+    const flat: FlatSearchResult[] = [];
+    for (const r of searchResults) {
+      const matches = r.matches ?? [];
+      if (matches.length === 0 && r.matchedMessage) {
+        // Backward compat: use deprecated single-match fields
+        flat.push({
+          sessionId: r.sessionId,
+          firstPrompt: r.firstPrompt,
+          lastModified: r.lastModified,
+          fileSize: r.fileSize,
+          gitBranch: r.gitBranch,
+          linkedTaskId: r.linkedTaskId,
+          relatedSessionIds: r.relatedSessionIds,
+          match: { message: r.matchedMessage, entryId: r.matchedEntryId, context: [] },
+        });
+      } else {
+        for (const m of matches) {
+          flat.push({
+            sessionId: r.sessionId,
+            firstPrompt: r.firstPrompt,
+            lastModified: r.lastModified,
+            fileSize: r.fileSize,
+            gitBranch: r.gitBranch,
+            linkedTaskId: r.linkedTaskId,
+            relatedSessionIds: r.relatedSessionIds,
+            match: m,
+          });
+        }
+      }
+    }
+    return flat;
+  }, [searchResults]);
+
+  // Determine which sessions to display (non-search mode)
   const displaySessions = useMemo(() => {
     if (showAll && allSessions) {
       const activeIds = new Set(activeSessions?.map(s => s.sessionId) ?? []);
@@ -121,13 +204,9 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
 
   const filtered = useMemo(() => {
     if (!displaySessions.length) return [];
-    if (!searchQuery.trim()) return displaySessions;
-    const q = searchQuery.toLowerCase();
-    return displaySessions.filter(s =>
-      s.firstPrompt.toLowerCase().includes(q) ||
-      s.gitBranch?.toLowerCase().includes(q)
-    );
-  }, [displaySessions, searchQuery]);
+    if (isSearching) return displaySessions; // search mode uses server results
+    return displaySessions;
+  }, [displaySessions, isSearching]);
 
   const isLoading = showAll ? allLoading : activeLoading;
 
@@ -141,106 +220,73 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
         </button>
       </div>
 
-      {/* Search (only when showAll or has active sessions) */}
-      {(showAll || activeCount > 0) && (
-        <div className="px-4 py-2 border-b border-dark-700">
-          <div className="relative">
-            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => onSearchChange(e.target.value)}
-              placeholder="Search sessions..."
-              className="w-full pl-9 pr-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-200 text-sm placeholder-dark-500 focus:outline-none focus:border-primary-500"
-            />
-          </div>
+      {/* Search - always visible */}
+      <div className="px-4 py-2 border-b border-dark-700">
+        <div className="relative">
+          <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-dark-500" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => onSearchChange(e.target.value)}
+            placeholder="Search all messages..."
+            className="w-full pl-9 pr-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-200 text-sm placeholder-dark-500 focus:outline-none focus:border-primary-500"
+          />
+          {searchLoading && isSearching && (
+            <Loader2 size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-dark-500 animate-spin" />
+          )}
         </div>
-      )}
+      </div>
 
       {/* List */}
       <div className="flex-1 overflow-y-auto">
-        {isLoading ? (
-          <div className="p-4 space-y-3">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="animate-pulse bg-dark-800 rounded-lg p-4 space-y-2">
-                <div className="h-4 bg-dark-700 rounded w-3/4" />
-                <div className="h-3 bg-dark-700 rounded w-1/2" />
-              </div>
-            ))}
-          </div>
-        ) : !showAll && activeCount === 0 ? (
-          <div className="p-6">
-            <div className="text-center text-dark-500 py-4">
-              No active sessions
-            </div>
-            <button
-              onClick={() => setShowAll(true)}
-              className="w-full mt-2 py-2.5 px-4 rounded-lg border border-dark-700 text-dark-400 hover:text-dark-200 hover:border-dark-600 transition-colors text-sm flex items-center justify-center gap-2"
-            >
-              <ChevronDown size={16} />
-              Show all sessions
-            </button>
-          </div>
-        ) : filtered.length === 0 ? (
-          <div className="p-8 text-center text-dark-500">
-            No sessions match your search
-          </div>
-        ) : (
-          <div className="p-2 space-y-1">
-            {filtered.map(session => (
-              <button
-                key={session.sessionId}
-                onClick={() => onSelectSession(session.sessionId, session.relatedSessionIds)}
-                className="w-full text-left p-3 rounded-lg hover:bg-dark-800 transition-colors group"
-              >
-                <div className="flex items-start gap-2">
-                  {session.isActive && (
-                    <span className="mt-1.5 shrink-0 relative flex h-2.5 w-2.5">
-                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
-                      <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
-                    </span>
-                  )}
-                  <div className="min-w-0 flex-1">
-                    <p className="text-dark-200 text-sm line-clamp-2 mb-2">
-                      {session.firstPrompt}
-                    </p>
-                    <div className="flex items-center gap-3 text-xs text-dark-500">
-                      <span className="flex items-center gap-1">
-                        <Clock size={12} />
-                        {formatRelativeTime(session.lastModified)}
-                      </span>
-                      {session.gitBranch && (
-                        <span className="flex items-center gap-1">
-                          <GitBranch size={12} />
-                          {session.gitBranch}
-                        </span>
-                      )}
-                      <span>{formatFileSize(session.fileSize)}</span>
-                      {session.relatedSessionIds && session.relatedSessionIds.length > 1 && (
-                        <span className="text-dark-400">
-                          {session.relatedSessionIds.length} sessions
-                        </span>
-                      )}
-                      {session.linkedTaskId && (
-                        <span
-                          className="flex items-center gap-1 text-primary-400 hover:text-primary-300"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onNavigateToTask?.(session.linkedTaskId!);
-                          }}
-                        >
-                          <ExternalLink size={12} />
-                          Task #{session.linkedTaskId}
-                        </span>
-                      )}
-                    </div>
-                  </div>
+        {isSearching ? (
+          // Search results mode
+          searchLoading ? (
+            <div className="p-4 space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="animate-pulse bg-dark-800 rounded-lg p-4 space-y-2">
+                  <div className="h-4 bg-dark-700 rounded w-3/4" />
+                  <div className="h-3 bg-dark-700 rounded w-1/2" />
                 </div>
-              </button>
-            ))}
-
-            {/* Show All button when viewing active only */}
-            {!showAll && (
+              ))}
+            </div>
+          ) : flatResults.length === 0 ? (
+            <div className="p-8 text-center text-dark-500">
+              No messages match "{debouncedQuery}"
+            </div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {flatResults.map(result => (
+                <SearchResultItem
+                  key={`${result.sessionId}-${result.match.entryId}`}
+                  result={result}
+                  query={debouncedQuery}
+                  onSelect={() => onSelectSession(
+                    result.sessionId,
+                    result.relatedSessionIds,
+                    result.match.entryId
+                  )}
+                  onNavigateToTask={onNavigateToTask}
+                />
+              ))}
+            </div>
+          )
+        ) : (
+          // Normal browse mode
+          isLoading ? (
+            <div className="p-4 space-y-3">
+              {[1, 2, 3].map(i => (
+                <div key={i} className="animate-pulse bg-dark-800 rounded-lg p-4 space-y-2">
+                  <div className="h-4 bg-dark-700 rounded w-3/4" />
+                  <div className="h-3 bg-dark-700 rounded w-1/2" />
+                </div>
+              ))}
+            </div>
+          ) : !showAll && activeCount === 0 ? (
+            <div className="p-6">
+              <div className="text-center text-dark-500 py-4">
+                No active sessions
+              </div>
               <button
                 onClick={() => setShowAll(true)}
                 className="w-full mt-2 py-2.5 px-4 rounded-lg border border-dark-700 text-dark-400 hover:text-dark-200 hover:border-dark-600 transition-colors text-sm flex items-center justify-center gap-2"
@@ -248,20 +294,91 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                 <ChevronDown size={16} />
                 Show all sessions
               </button>
-            )}
-          </div>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="p-8 text-center text-dark-500">
+              No sessions found
+            </div>
+          ) : (
+            <div className="p-2 space-y-1">
+              {filtered.map(session => (
+                <button
+                  key={session.sessionId}
+                  onClick={() => onSelectSession(session.sessionId, session.relatedSessionIds)}
+                  className="w-full text-left p-3 rounded-lg hover:bg-dark-800 transition-colors group"
+                >
+                  <div className="flex items-start gap-2">
+                    {session.isActive && (
+                      <span className="mt-1.5 shrink-0 relative flex h-2.5 w-2.5">
+                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                        <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
+                      </span>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="text-dark-200 text-sm line-clamp-2 mb-2">
+                        {session.firstPrompt}
+                      </p>
+                      <div className="flex items-center gap-3 text-xs text-dark-500">
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} />
+                          {formatRelativeTime(session.lastModified)}
+                        </span>
+                        {session.gitBranch && (
+                          <span className="flex items-center gap-1">
+                            <GitBranch size={12} />
+                            {session.gitBranch}
+                          </span>
+                        )}
+                        <span>{formatFileSize(session.fileSize)}</span>
+                        {session.relatedSessionIds && session.relatedSessionIds.length > 1 && (
+                          <span className="text-dark-400">
+                            {session.relatedSessionIds.length} sessions
+                          </span>
+                        )}
+                        {session.linkedTaskId && (
+                          <span
+                            className="flex items-center gap-1 text-primary-400 hover:text-primary-300"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onNavigateToTask?.(session.linkedTaskId!);
+                            }}
+                          >
+                            <ExternalLink size={12} />
+                            Task #{session.linkedTaskId}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </button>
+              ))}
+
+              {/* Show All button when viewing active only */}
+              {!showAll && (
+                <button
+                  onClick={() => setShowAll(true)}
+                  className="w-full mt-2 py-2.5 px-4 rounded-lg border border-dark-700 text-dark-400 hover:text-dark-200 hover:border-dark-600 transition-colors text-sm flex items-center justify-center gap-2"
+                >
+                  <ChevronDown size={16} />
+                  Show all sessions
+                </button>
+              )}
+            </div>
+          )
         )}
       </div>
 
       {/* Footer */}
       <div className="px-4 py-2 border-t border-dark-700 text-xs text-dark-500 flex items-center justify-between">
         <span>
-          {showAll
-            ? `${filtered.length} / ${allSessions?.length ?? 0} sessions`
-            : `${activeCount} active`
+          {isSearching
+            ? `${flatResults.length} match${flatResults.length !== 1 ? 'es' : ''} in ${searchResults?.length ?? 0} session${(searchResults?.length ?? 0) !== 1 ? 's' : ''}`
+            : showAll
+              ? `${filtered.length} / ${allSessions?.length ?? 0} sessions`
+              : `${activeCount} active`
           }
         </span>
-        {showAll && (
+        {!isSearching && showAll && (
           <button
             onClick={() => setShowAll(false)}
             className="text-primary-400 hover:text-primary-300"
@@ -274,12 +391,90 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
   );
 }
 
+// --- Search Result Item ---
+
+function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
+  result: FlatSearchResult;
+  query: string;
+  onSelect: () => void;
+  onNavigateToTask?: (taskId: number) => void;
+}) {
+  const { match } = result;
+  const contextBefore = match.context?.filter(c => c.type === 'output').slice(0, 1);
+  const contextAfter = match.context?.filter(c => c.type === 'output').slice(-1);
+
+  return (
+    <button
+      onClick={onSelect}
+      className="w-full text-left p-3 rounded-lg hover:bg-dark-800 transition-colors group"
+    >
+      <div className="min-w-0">
+        {/* Session title (firstPrompt) */}
+        <p className="text-dark-400 text-xs line-clamp-1 mb-1.5">
+          {result.firstPrompt}
+        </p>
+
+        {/* Context block: before → matched message → after */}
+        <div className="space-y-0.5 mb-2">
+          {/* Context before (assistant response) */}
+          {contextBefore && contextBefore.length > 0 && (
+            <p className="text-dark-500 text-xs line-clamp-1 pl-2 border-l-2 border-dark-700">
+              {contextBefore[0].content}
+            </p>
+          )}
+
+          {/* Matched user message with highlight */}
+          <div className="bg-dark-800/50 rounded px-2 py-1.5 border-l-2 border-yellow-500/50">
+            <p className="text-dark-200 text-sm line-clamp-3 break-words">
+              <HighlightText text={match.message} query={query} />
+            </p>
+          </div>
+
+          {/* Context after (assistant response) */}
+          {contextAfter && contextAfter.length > 0 && contextAfter[0] !== contextBefore?.[0] && (
+            <p className="text-dark-500 text-xs line-clamp-1 pl-2 border-l-2 border-dark-700">
+              {contextAfter[0].content}
+            </p>
+          )}
+        </div>
+
+        <div className="flex items-center gap-3 text-xs text-dark-500">
+          <span className="flex items-center gap-1">
+            <Clock size={12} />
+            {formatRelativeTime(result.lastModified)}
+          </span>
+          {result.gitBranch && (
+            <span className="flex items-center gap-1">
+              <GitBranch size={12} />
+              {result.gitBranch}
+            </span>
+          )}
+          <span>{formatFileSize(result.fileSize)}</span>
+          {result.linkedTaskId && (
+            <span
+              className="flex items-center gap-1 text-primary-400 hover:text-primary-300"
+              onClick={(e) => {
+                e.stopPropagation();
+                onNavigateToTask?.(result.linkedTaskId!);
+              }}
+            >
+              <ExternalLink size={12} />
+              Task #{result.linkedTaskId}
+            </span>
+          )}
+        </div>
+      </div>
+    </button>
+  );
+}
+
 // --- Session Detail View ---
 
-function SessionDetailView({ projectId, sessionId, relatedSessionIds, onBack, onClose, onNavigateToTask, onTaskCreated }: {
+function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEntryId, onBack, onClose, onNavigateToTask, onTaskCreated }: {
   projectId: string;
   sessionId: string;
   relatedSessionIds?: string[];
+  scrollToEntryId?: string;
   onBack: () => void;
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
@@ -292,6 +487,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, onBack, on
   const [followUpPrompt, setFollowUpPrompt] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const hasScrolledToEntry = useRef(false);
 
   const timeline: TimelineItem[] = useMemo(() => {
     if (!detail) return [];
@@ -302,6 +498,42 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, onBack, on
   }, [detail]);
 
   const grouped = useMemo(() => groupTimeline(timeline), [timeline]);
+
+  // Scroll to matched entry after timeline loads
+  useEffect(() => {
+    if (!scrollToEntryId || !detail || hasScrolledToEntry.current) return;
+    hasScrolledToEntry.current = true;
+
+    // Small delay to let DOM render
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const container = containerRef.current;
+        if (!container) return;
+
+        // Try exact match first, then suffix match for merged sessions
+        // (search returns "user-0" but merged detail uses "abc12345-user-0")
+        let el = container.querySelector(`[data-entry-id="${scrollToEntryId}"]`);
+        if (!el) {
+          const all = container.querySelectorAll('[data-entry-id]');
+          for (const candidate of all) {
+            const id = candidate.getAttribute('data-entry-id') || '';
+            if (id.endsWith(`-${scrollToEntryId}`) || id === scrollToEntryId) {
+              el = candidate;
+              break;
+            }
+          }
+        }
+        if (el) {
+          el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          // Brief highlight flash
+          el.classList.add('ring-2', 'ring-yellow-500/50', 'rounded-lg');
+          setTimeout(() => {
+            el!.classList.remove('ring-2', 'ring-yellow-500/50', 'rounded-lg');
+          }, 3000);
+        }
+      }, 100);
+    });
+  }, [scrollToEntryId, detail]);
 
   const handleScroll = useCallback(() => {
     const container = containerRef.current;

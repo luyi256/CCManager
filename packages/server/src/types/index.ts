@@ -62,6 +62,7 @@ export interface Task {
   prompt: string;
   status: TaskStatus;
   isPlanMode: boolean;
+  runner?: 'claude' | 'codex';
   dependsOn?: number;
   worktreeBranch?: string;
   createdAt: string;

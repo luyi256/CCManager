@@ -163,6 +163,7 @@ class AgentPool {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
+    runner?: 'claude' | 'codex';
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;
@@ -247,6 +248,19 @@ class AgentPool {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 5000);
       agent.socket.emit('sessions:active', { projectPath }, (result: unknown) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+  }
+
+  /** Ask agent to search sessions (20s timeout for scanning all files). */
+  requestSessionSearch(agentId: string, projectPath: string, query: string): Promise<unknown> {
+    const agent = this.agents.get(agentId);
+    if (!agent) return Promise.reject(new Error('Agent not connected'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Agent timeout')), 20000);
+      agent.socket.emit('sessions:search', { projectPath, query }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });

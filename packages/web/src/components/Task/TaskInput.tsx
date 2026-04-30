@@ -10,7 +10,7 @@ interface PastedImage {
 }
 
 interface TaskInputProps {
-  onSubmit: (data: { prompt: string; isPlanMode: boolean; dependsOn?: number; images?: string[] }) => Promise<void>;
+  onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: 'claude' | 'codex'; dependsOn?: number; images?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   tasks: Task[];
 }
@@ -18,6 +18,7 @@ interface TaskInputProps {
 export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputProps) {
   const [prompt, setPrompt] = useState('');
   const [isPlanMode, setIsPlanMode] = useState(false);
+  const [runner, setRunner] = useState<'claude' | 'codex'>('claude');
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<PastedImage[]>([]);
@@ -107,7 +108,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
       const imageBase64s = images.length > 0
         ? images.map((img) => img.dataUrl)
         : undefined;
-      await onSubmit({ prompt: prompt.trim(), isPlanMode, dependsOn, images: imageBase64s });
+      await onSubmit({ prompt: prompt.trim(), isPlanMode, runner, dependsOn, images: imageBase64s });
       setPrompt('');
       setDependsOn(undefined);
       setImages([]);
@@ -218,6 +219,31 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks }: TaskInputPr
       </div>
 
       <div className="flex items-center gap-4 mt-3">
+        <div className="flex items-center gap-1 bg-dark-800 rounded-lg p-0.5">
+          <button
+            type="button"
+            onClick={() => setRunner('claude')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              runner === 'claude'
+                ? 'bg-primary-600 text-white'
+                : 'text-dark-400 hover:text-dark-200'
+            }`}
+          >
+            Claude
+          </button>
+          <button
+            type="button"
+            onClick={() => setRunner('codex')}
+            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
+              runner === 'codex'
+                ? 'bg-emerald-600 text-white'
+                : 'text-dark-400 hover:text-dark-200'
+            }`}
+          >
+            Codex
+          </button>
+        </div>
+
         <label className="flex items-center gap-2 cursor-pointer">
           <input
             type="checkbox"

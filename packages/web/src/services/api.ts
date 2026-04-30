@@ -123,6 +123,7 @@ export async function getTask(taskId: number): Promise<Task> {
 export async function createTask(projectId: string, data: {
   prompt: string;
   isPlanMode: boolean;
+  runner?: 'claude' | 'codex';
   dependsOn?: number;
   images?: string[];
 }): Promise<Task> {
@@ -307,8 +308,33 @@ export interface SessionDetail {
   linkedTaskId?: number;
 }
 
+export interface SessionSearchMatch {
+  message: string;
+  entryId: string;
+  context: Array<{ type: string; content: string }>;
+}
+
+export interface SessionSearchResult {
+  sessionId: string;
+  firstPrompt: string;
+  lastModified: string;
+  fileSize: number;
+  gitBranch?: string;
+  linkedTaskId?: number;
+  relatedSessionIds?: string[];
+  matches: SessionSearchMatch[];
+  /** @deprecated Use matches[0].message */
+  matchedMessage: string;
+  /** @deprecated Use matches[0].entryId */
+  matchedEntryId: string;
+}
+
 export async function getSessions(projectId: string): Promise<SessionListItem[]> {
   return request(`/projects/${projectId}/sessions`);
+}
+
+export async function searchSessions(projectId: string, query: string): Promise<SessionSearchResult[]> {
+  return request(`/projects/${projectId}/sessions/search?q=${encodeURIComponent(query)}`);
 }
 
 export async function getActiveSessions(projectId: string): Promise<SessionListItem[]> {

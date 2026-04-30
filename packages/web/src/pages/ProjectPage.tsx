@@ -24,6 +24,7 @@ export default function ProjectPage() {
   const handleCreateTask = async (data: {
     prompt: string;
     isPlanMode: boolean;
+    runner?: 'claude' | 'codex';
     dependsOn?: number;
     images?: string[];
   }) => {

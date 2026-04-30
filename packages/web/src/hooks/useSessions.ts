@@ -20,6 +20,15 @@ export function useActiveSessions(projectId: string) {
   });
 }
 
+export function useSessionSearch(projectId: string, query: string) {
+  return useQuery({
+    queryKey: ['sessionSearch', projectId, query],
+    queryFn: () => api.searchSessions(projectId, query),
+    enabled: !!projectId && query.trim().length >= 2,
+    staleTime: 30_000,
+  });
+}
+
 export function useSessionDetail(projectId: string, sessionId: string | null, relatedSessionIds?: string[]) {
   return useQuery({
     queryKey: ['sessionDetail', projectId, sessionId, relatedSessionIds],

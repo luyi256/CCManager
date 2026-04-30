@@ -2,10 +2,46 @@ import { Router } from 'express';
 import * as storage from '../services/storage.js';
 import { agentPool } from '../services/agentPool.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
-import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions } from '../services/sessionBrowser.js';
-import type { SessionListItem, SessionDetail } from '../services/sessionBrowser.js';
+import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions, searchSessions, cleanUserMessage, isCommandMessage, isContinuationMessage } from '../services/sessionBrowser.js';
+import type { SessionListItem, SessionDetail, SessionTimelineEntry } from '../services/sessionBrowser.js';
 
 const router = Router();
+
+/**
+ * Server-side safety net: re-clean agent-returned session data.
+ * Agents may be running older code that doesn't apply cleanUserMessage properly.
+ */
+function cleanSessionList(sessions: SessionListItem[]): SessionListItem[] {
+  for (const s of sessions) {
+    if (s.firstPrompt) {
+      const raw = s.firstPrompt;
+      const cleaned = cleanUserMessage(raw);
+      if (!cleaned) {
+        // System-only message → try to find any meaningful text
+        s.firstPrompt = '(system message)';
+      } else {
+        s.firstPrompt = cleaned.slice(0, 200);
+      }
+    }
+  }
+  return sessions;
+}
+
+function cleanSessionEntries(entries: SessionTimelineEntry[]): SessionTimelineEntry[] {
+  const cleaned: SessionTimelineEntry[] = [];
+  for (const entry of entries) {
+    if (entry.type !== 'user_message') {
+      cleaned.push(entry);
+      continue;
+    }
+    const result = cleanUserMessage(entry.content);
+    if (result) {
+      cleaned.push({ ...entry, content: result });
+    }
+    // null → system message, drop it
+  }
+  return cleaned;
+}
 
 /**
  * Try local filesystem first, then ask the agent via WebSocket.
@@ -31,6 +67,9 @@ async function fetchSessionList(project: { id: string; projectPath: string; agen
   }
   console.log(`[sessions] agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
   if (!result.ok || !result.sessions) return [];
+
+  // Clean agent-returned data (safety net for older agent versions)
+  cleanSessionList(result.sessions);
 
   // Merge linkedTaskIds from server DB
   const linked = getLinkedTaskIds(project.id);
@@ -63,7 +102,7 @@ async function fetchSessionDetail(
   const linked = getLinkedTaskIds(project.id);
   return {
     sessionId,
-    entries: result.entries,
+    entries: cleanSessionEntries(result.entries),
     linkedTaskId: linked.get(sessionId),
   };
 }
@@ -88,6 +127,9 @@ async function fetchActiveSessionList(project: { id: string; projectPath: string
     console.log(`[sessions] active agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
     if (!result.ok || !result.sessions) return [];
 
+    // Clean agent-returned data (safety net)
+    cleanSessionList(result.sessions);
+
     const linked = getLinkedTaskIds(project.id);
     for (const s of result.sessions) {
       s.linkedTaskId = linked.get(s.sessionId);
@@ -97,6 +139,57 @@ async function fetchActiveSessionList(project: { id: string; projectPath: string
     return [];
   }
 }
+
+// Search sessions by user message content
+router.get('/projects/:projectId/sessions/search', async (req, res) => {
+  try {
+    const project = await storage.getProject(req.params.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const query = (req.query.q as string || '').trim();
+    if (!query) {
+      return res.json([]);
+    }
+
+    // Try local first
+    const localResults = await searchSessions(project.projectPath, project.id, query);
+    if (localResults.length > 0) {
+      return res.json(localResults);
+    }
+
+    // Fall back to agent for remote projects
+    const agent = agentPool.getAgent(project.agentId);
+    if (agent) {
+      try {
+        const result = await agentPool.requestSessionSearch(project.agentId, project.projectPath, query) as {
+          ok: boolean;
+          results?: Array<Record<string, unknown>>;
+          error?: string;
+        };
+        if (result.ok && result.results) {
+          // Merge linkedTaskIds from server DB
+          const linked = getLinkedTaskIds(project.id);
+          for (const r of result.results) {
+            const sid = r.sessionId as string;
+            if (sid && linked.has(sid)) {
+              r.linkedTaskId = linked.get(sid);
+            }
+          }
+          return res.json(result.results);
+        }
+      } catch (err) {
+        console.error('[sessions] agent search failed:', err);
+      }
+    }
+
+    res.json([]);
+  } catch (error) {
+    console.error('Failed to search sessions:', error);
+    res.status(500).json({ message: 'Failed to search sessions' });
+  }
+});
 
 // List active (running) CLI sessions for a project — must be before /:sessionId
 router.get('/projects/:projectId/sessions/active', async (req, res) => {
