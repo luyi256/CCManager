@@ -25,6 +25,7 @@ const ALLOWED_CONFIG_KEYS = new Set([
   'oauthToken',
   'anthropicApiKey',
   'updatedAt',
+  'customModels',
 ]);
 
 export async function updateConfig(data: Partial<GlobalConfig>): Promise<GlobalConfig> {
@@ -115,6 +116,7 @@ export async function getProjects(): Promise<Project[]> {
     extra_mounts: string | null;
     enable_worktree: number;
     allowed_paths: string | null;
+    last_model: string | null;
     created_at: string;
     last_activity: string | null;
     task_count: number;
@@ -134,6 +136,7 @@ export async function getProjects(): Promise<Project[]> {
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
     allowedPaths: safeJsonParse(row.allowed_paths),
+    lastModel: row.last_model || undefined,
     createdAt: row.created_at,
     lastActivity: row.last_activity || undefined,
     taskCount: row.task_count,
@@ -162,6 +165,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     extra_mounts: string | null;
     enable_worktree: number;
     allowed_paths: string | null;
+    last_model: string | null;
     created_at: string;
     last_activity: string | null;
     task_count: number;
@@ -183,6 +187,7 @@ export async function getProject(projectId: string): Promise<Project | null> {
     extraMounts: safeJsonParse(row.extra_mounts),
     enableWorktree: row.enable_worktree === 1,
     allowedPaths: safeJsonParse(row.allowed_paths),
+    lastModel: row.last_model || undefined,
     createdAt: row.created_at,
     lastActivity: row.last_activity || undefined,
     taskCount: row.task_count,
@@ -192,8 +197,8 @@ export async function getProject(projectId: string): Promise<Project | null> {
 
 export async function saveProject(project: Omit<Project, 'taskCount' | 'runningCount'>): Promise<void> {
   const stmt = db.prepare(`
-    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, docker_image, post_task_hook, extra_mounts, enable_worktree, allowed_paths, created_at, last_activity)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO projects (id, name, agent_id, project_path, security_mode, auth_type, executor, docker_image, post_task_hook, extra_mounts, enable_worktree, allowed_paths, last_model, created_at, last_activity)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       name = excluded.name,
       agent_id = excluded.agent_id,
@@ -206,6 +211,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
       extra_mounts = excluded.extra_mounts,
       enable_worktree = excluded.enable_worktree,
       allowed_paths = excluded.allowed_paths,
+      last_model = excluded.last_model,
       last_activity = excluded.last_activity
   `);
   stmt.run(
@@ -221,6 +227,7 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
     project.extraMounts ? JSON.stringify(project.extraMounts) : null,
     project.enableWorktree ? 1 : 0,
     project.allowedPaths?.length ? JSON.stringify(project.allowedPaths) : null,
+    project.lastModel || null,
     project.createdAt,
     project.lastActivity || null
   );
@@ -316,6 +323,7 @@ function rowToTask(row: {
   status: string;
   is_plan_mode: number;
   runner: string | null;
+  model: string | null;
   depends_on: number | null;
   worktree_branch: string | null;
   created_at: string;
@@ -338,6 +346,7 @@ function rowToTask(row: {
     status: row.status as Task['status'],
     isPlanMode: row.is_plan_mode === 1,
     runner: (row.runner as Task['runner']) || 'claude',
+    model: row.model || undefined,
     dependsOn: row.depends_on || undefined,
     worktreeBranch: row.worktree_branch || undefined,
     createdAt: row.created_at,
@@ -359,13 +368,14 @@ function rowToTask(row: {
 export async function saveTask(projectId: string, task: Task): Promise<void> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      id, project_id, prompt, status, is_plan_mode, runner, depends_on, worktree_branch,
+      id, project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
       created_at, started_at, completed_at, error, waiting_until, wait_reason,
       check_command, continue_prompt, git_info, summary, security_warnings, pending_permission
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       runner = excluded.runner,
+      model = excluded.model,
       started_at = excluded.started_at,
       completed_at = excluded.completed_at,
       error = excluded.error,
@@ -385,6 +395,7 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     task.status,
     task.isPlanMode ? 1 : 0,
     task.runner || 'claude',
+    task.model || null,
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,
@@ -408,9 +419,9 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
 export async function createTask(projectId: string, task: Omit<Task, 'id'>): Promise<Task> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      project_id, prompt, status, is_plan_mode, runner, depends_on, worktree_branch,
+      project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
       created_at, started_at, completed_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     projectId,
@@ -418,6 +429,7 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
     task.status,
     task.isPlanMode ? 1 : 0,
     task.runner || 'claude',
+    task.model || null,
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,

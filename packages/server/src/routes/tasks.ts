@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import * as storage from '../services/storage.js';
+import { db } from '../services/database.js';
 import { agentPool } from '../services/agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { cancelDependentTasks } from '../services/waitingTasks.js';
@@ -44,7 +45,7 @@ router.get('/tasks/:id', async (req, res) => {
 // Create task
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
-    const { prompt, isPlanMode, runner, dependsOn, images } = req.body;
+    const { prompt, isPlanMode, runner, model, dependsOn, images } = req.body;
     const projectId = req.params.projectId;
 
     if (!prompt && (!images || images.length === 0)) {
@@ -70,6 +71,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       status: 'pending',
       isPlanMode: isPlanMode || false,
       runner: runner || 'claude',
+      model: model || undefined,
       dependsOn,
       createdAt: new Date().toISOString(),
     });
@@ -91,6 +93,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         prompt: task.prompt,
         isPlanMode: task.isPlanMode,
         runner: task.runner,
+        model: task.model,
         executor: project.executor,
         dockerImage: project.dockerImage,
         worktreeBranch: task.worktreeBranch,
@@ -109,6 +112,11 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         task.error = 'Failed to dispatch task to agent';
       }
       await storage.saveTask(projectId, task);
+    }
+
+    // Update project's last used model
+    if (model) {
+      db.prepare(`UPDATE projects SET last_model = ? WHERE id = ?`).run(model, projectId);
     }
 
     res.status(201).json(task);
@@ -254,6 +262,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       prompt,
       isPlanMode: task.isPlanMode,
       runner: task.runner,
+      model: task.model,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,
@@ -371,6 +380,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       projectPath: project.projectPath,
       prompt: prompt,
       isPlanMode: task.isPlanMode,
+      model: task.model,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,

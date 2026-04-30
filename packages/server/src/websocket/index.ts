@@ -99,6 +99,7 @@ export function setupWebSocket(server: HttpServer): Server {
               projectPath: project.projectPath,
               prompt,
               isPlanMode: task.isPlanMode,
+              model: task.model,
               executor: project.executor,
               dockerImage: project.dockerImage,
               worktreeBranch: task.worktreeBranch,

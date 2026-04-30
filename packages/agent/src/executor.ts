@@ -63,6 +63,10 @@ export class ClaudeExecutor extends EventEmitter {
 
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
 
+    if (task.model) {
+      args.push('-m', task.model);
+    }
+
     if (task.isPlanMode) {
       args.push('--permission-mode', 'plan');
     }

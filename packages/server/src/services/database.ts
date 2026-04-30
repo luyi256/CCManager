@@ -175,4 +175,20 @@ try {
   // Column already exists, ignore
 }
 
+// Add model column to tasks table (per-task model selection)
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN model TEXT`);
+  console.log('Migration: Added model column to tasks table');
+} catch {
+  // Column already exists, ignore
+}
+
+// Add last_model column to projects table (per-project last-used model)
+try {
+  db.exec(`ALTER TABLE projects ADD COLUMN last_model TEXT`);
+  console.log('Migration: Added last_model column to projects table');
+} catch {
+  // Column already exists, ignore
+}
+
 console.log('Database initialized at:', DB_PATH);

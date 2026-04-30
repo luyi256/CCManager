@@ -25,6 +25,7 @@ export default function ProjectPage() {
     prompt: string;
     isPlanMode: boolean;
     runner?: 'claude' | 'codex';
+    model?: string;
     dependsOn?: number;
     images?: string[];
   }) => {
@@ -97,6 +98,7 @@ export default function ProjectPage() {
           onSubmit={handleCreateTask}
           isSubmitting={createTask.isPending}
           tasks={tasks}
+          lastModel={project.lastModel}
         />
       </div>
 

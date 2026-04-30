@@ -124,6 +124,7 @@ export async function createTask(projectId: string, data: {
   prompt: string;
   isPlanMode: boolean;
   runner?: 'claude' | 'codex';
+  model?: string;
   dependsOn?: number;
   images?: string[];
 }): Promise<Task> {
@@ -213,6 +214,18 @@ export async function updateSettings(data: Partial<GlobalConfig>): Promise<Globa
     method: 'PUT',
     body: JSON.stringify(data),
   });
+}
+
+export async function getCustomModels(): Promise<string[]> {
+  const settings = await getSettings() as GlobalConfig & { customModels?: string };
+  if (settings.customModels) {
+    try { return JSON.parse(settings.customModels); } catch { return []; }
+  }
+  return [];
+}
+
+export async function saveCustomModels(models: string[]): Promise<void> {
+  await updateSettings({ customModels: JSON.stringify(models) } as Partial<GlobalConfig>);
 }
 
 export async function validateAuth(type: 'oauth' | 'apikey', token: string): Promise<{ valid: boolean; error?: string }> {

@@ -26,6 +26,7 @@ export interface Project {
   extraMounts?: ExtraMount[];
   enableWorktree?: boolean;
   allowedPaths?: string[];
+  lastModel?: string;
   createdAt: string;
   lastActivity?: string;
   taskCount: number;
@@ -63,6 +64,7 @@ export interface Task {
   status: TaskStatus;
   isPlanMode: boolean;
   runner?: 'claude' | 'codex';
+  model?: string;
   dependsOn?: number;
   worktreeBranch?: string;
   createdAt: string;
@@ -126,6 +128,7 @@ export interface ServerToAgentEvents {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
+    model?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;
