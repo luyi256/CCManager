@@ -44,7 +44,7 @@ router.get('/tasks/:id', async (req, res) => {
 // Create task
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
-    const { prompt, isPlanMode, dependsOn, images } = req.body;
+    const { prompt, isPlanMode, runner, dependsOn, images } = req.body;
     const projectId = req.params.projectId;
 
     if (!prompt && (!images || images.length === 0)) {
@@ -69,6 +69,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       prompt,
       status: 'pending',
       isPlanMode: isPlanMode || false,
+      runner: runner || 'claude',
       dependsOn,
       createdAt: new Date().toISOString(),
     });
@@ -89,6 +90,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         projectPath: project.projectPath,
         prompt: task.prompt,
         isPlanMode: task.isPlanMode,
+        runner: task.runner,
         executor: project.executor,
         dockerImage: project.dockerImage,
         worktreeBranch: task.worktreeBranch,
@@ -251,6 +253,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       projectPath: project.projectPath,
       prompt,
       isPlanMode: task.isPlanMode,
+      runner: task.runner,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,
