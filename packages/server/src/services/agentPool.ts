@@ -164,6 +164,7 @@ class AgentPool {
     prompt: string;
     isPlanMode: boolean;
     runner?: 'claude' | 'codex';
+    model?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;

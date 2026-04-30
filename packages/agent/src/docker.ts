@@ -122,6 +122,10 @@ export class DockerExecutor extends EventEmitter {
     // Claude CLI arguments (after the image, these become the CMD)
     args.push('-p', task.prompt, '--output-format', 'stream-json', '--verbose');
 
+    if (task.model) {
+      args.push('-m', task.model);
+    }
+
     if (task.isPlanMode) {
       args.push('--permission-mode', 'plan');
     }

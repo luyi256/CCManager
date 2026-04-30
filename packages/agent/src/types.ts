@@ -32,6 +32,7 @@ export interface TaskRequest {
   prompt: string;
   isPlanMode: boolean;
   runner?: 'claude' | 'codex';
+  model?: string;
   executor?: 'local' | 'docker';
   dockerImage?: string;
   worktreeBranch?: string;
