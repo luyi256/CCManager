@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Settings, RefreshCw, History } from 'lucide-react';
@@ -9,17 +9,37 @@ import SessionBrowser from '../components/Session/SessionBrowser';
 import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
 import { useProject } from '../hooks/useProjects';
 import { useTasks, useCreateTask } from '../hooks/useTasks';
+import { useActiveSessions } from '../hooks/useSessions';
 import type { Task } from '../types';
+import type { SessionListItem } from '../services/api';
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
+  const [initialSession, setInitialSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
 
   const { data: project, isLoading: projectLoading } = useProject(projectId!);
   const { data: tasks = [], isLoading: tasksLoading, refetch } = useTasks(projectId!);
   const createTask = useCreateTask(projectId!);
+  const { data: activeSessions } = useActiveSessions(projectId!);
+
+  // Filter out active sessions that are already linked to running CCManager tasks
+  const runningStatuses = new Set(['running', 'waiting', 'waiting_permission', 'plan_review']);
+  const runningTaskIds = useMemo(() => {
+    return new Set(tasks.filter(t => runningStatuses.has(t.status)).map(t => t.id));
+  }, [tasks]);
+
+  const externalSessions = useMemo(() => {
+    if (!activeSessions) return [];
+    return activeSessions.filter(s => !s.linkedTaskId || !runningTaskIds.has(s.linkedTaskId));
+  }, [activeSessions, runningTaskIds]);
+
+  const handleSessionClick = (session: SessionListItem) => {
+    setInitialSession({ id: session.sessionId, relatedIds: session.relatedSessionIds });
+    setSessionBrowserOpen(true);
+  };
 
   const handleCreateTask = async (data: {
     prompt: string;
@@ -125,6 +145,8 @@ export default function ProjectPage() {
           tasks={tasks}
           onTaskClick={setSelectedTask}
           activeTaskId={selectedTask?.id}
+          activeSessions={externalSessions}
+          onSessionClick={handleSessionClick}
         />
       )}
 
@@ -143,9 +165,11 @@ export default function ProjectPage() {
         {sessionBrowserOpen && (
           <SessionBrowser
             projectId={projectId!}
-            onClose={() => setSessionBrowserOpen(false)}
+            initialSession={initialSession ?? undefined}
+            onClose={() => { setSessionBrowserOpen(false); setInitialSession(null); }}
             onNavigateToTask={(taskId) => {
               setSessionBrowserOpen(false);
+              setInitialSession(null);
               const task = tasks.find(t => t.id === taskId);
               if (task) setSelectedTask(task);
             }}
