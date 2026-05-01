@@ -70,17 +70,18 @@ function HighlightText({ text, query }: { text: string; query: string }) {
 
 interface SessionBrowserProps {
   projectId: string;
+  initialSession?: { id: string; relatedIds?: string[] };
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
   onTaskCreated?: (task: Task) => void;
 }
 
-export default function SessionBrowser({ projectId, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
+export default function SessionBrowser({ projectId, initialSession, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
   const [selectedSession, setSelectedSession] = useState<{
     id: string;
     relatedIds?: string[];
     scrollToEntryId?: string;
-  } | null>(null);
+  } | null>(initialSession ? { id: initialSession.id, relatedIds: initialSession.relatedIds } : null);
   const [searchQuery, setSearchQuery] = useState('');
 
   return (

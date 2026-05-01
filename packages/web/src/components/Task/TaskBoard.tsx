@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef } from 'react';
 import TaskColumn from './TaskColumn';
 import type { Task, TaskStatus } from '../../types';
+import type { SessionListItem } from '../../services/api';
 
 interface TaskBoardProps {
   tasks: Task[];
   onTaskClick: (task: Task) => void;
   activeTaskId?: number;
+  activeSessions?: SessionListItem[];
+  onSessionClick?: (session: SessionListItem) => void;
 }
 
 interface ColumnConfig {
@@ -23,7 +26,7 @@ const columns: ColumnConfig[] = [
 
 const DEFAULT_COLUMN = 'completed';
 
-export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoardProps) {
+export default function TaskBoard({ tasks, onTaskClick, activeTaskId, activeSessions, onSessionClick }: TaskBoardProps) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const columnRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
@@ -74,6 +77,8 @@ export default function TaskBoard({ tasks, onTaskClick, activeTaskId }: TaskBoar
             tasks={tasksByColumn[column.id]}
             onTaskClick={onTaskClick}
             activeTaskId={activeTaskId}
+            activeSessions={column.id === 'running' ? activeSessions : undefined}
+            onSessionClick={column.id === 'running' ? onSessionClick : undefined}
           />
         </div>
       ))}
