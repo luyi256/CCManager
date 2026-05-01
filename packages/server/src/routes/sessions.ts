@@ -160,27 +160,43 @@ router.get('/projects/:projectId/sessions/search', async (req, res) => {
     }
 
     // Fall back to agent for remote projects
-    const agent = agentPool.getAgent(project.agentId);
-    if (agent) {
+    const agentConn = agentPool.getAgent(project.agentId);
+    if (agentConn) {
+      const linked = getLinkedTaskIds(project.id);
+
+      // Fast path: list-based search (filter firstPrompt, works with any agent)
       try {
-        const result = await agentPool.requestSessionSearch(project.agentId, project.projectPath, query) as {
+        const listResult = await agentPool.requestSessions(project.agentId, project.projectPath) as {
           ok: boolean;
-          results?: Array<Record<string, unknown>>;
-          error?: string;
+          sessions?: SessionListItem[];
         };
-        if (result.ok && result.results) {
-          // Merge linkedTaskIds from server DB
-          const linked = getLinkedTaskIds(project.id);
-          for (const r of result.results) {
-            const sid = r.sessionId as string;
-            if (sid && linked.has(sid)) {
-              r.linkedTaskId = linked.get(sid);
-            }
+        if (listResult.ok && listResult.sessions) {
+          cleanSessionList(listResult.sessions);
+          const q = query.toLowerCase();
+          const matches = listResult.sessions
+            .filter(s => s.firstPrompt?.toLowerCase().includes(q))
+            .map(s => ({
+              sessionId: s.sessionId,
+              firstPrompt: s.firstPrompt,
+              lastModified: s.lastModified,
+              fileSize: s.fileSize,
+              gitBranch: s.gitBranch,
+              linkedTaskId: linked.get(s.sessionId) ?? s.linkedTaskId,
+              matches: [{
+                message: s.firstPrompt?.slice(0, 300) ?? '',
+                entryId: 'user-0',
+                context: [],
+              }],
+              matchedMessage: s.firstPrompt?.slice(0, 300) ?? '',
+              matchedEntryIndex: 0,
+              matchedEntryId: 'user-0',
+            }));
+          if (matches.length > 0) {
+            return res.json(matches);
           }
-          return res.json(result.results);
         }
       } catch (err) {
-        console.error('[sessions] agent search failed:', err);
+        console.error('[sessions] list-based search fallback failed:', err);
       }
     }
 
