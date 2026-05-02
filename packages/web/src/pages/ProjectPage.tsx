@@ -25,16 +25,15 @@ export default function ProjectPage() {
   const createTask = useCreateTask(projectId!);
   const { data: activeSessions } = useActiveSessions(projectId!);
 
-  // Filter out active sessions that are already linked to running CCManager tasks
-  const runningStatuses = new Set(['running', 'waiting', 'waiting_permission', 'plan_review']);
-  const runningTaskIds = useMemo(() => {
-    return new Set(tasks.filter(t => runningStatuses.has(t.status)).map(t => t.id));
+  // Filter out active sessions that are linked to any CCManager task
+  const allTaskIds = useMemo(() => {
+    return new Set(tasks.map(t => t.id));
   }, [tasks]);
 
   const externalSessions = useMemo(() => {
     if (!activeSessions) return [];
-    return activeSessions.filter(s => !s.linkedTaskId || !runningTaskIds.has(s.linkedTaskId));
-  }, [activeSessions, runningTaskIds]);
+    return activeSessions.filter(s => !s.linkedTaskId || !allTaskIds.has(s.linkedTaskId));
+  }, [activeSessions, allTaskIds]);
 
   const handleSessionClick = (session: SessionListItem) => {
     setInitialSession({ id: session.sessionId, relatedIds: session.relatedSessionIds });
