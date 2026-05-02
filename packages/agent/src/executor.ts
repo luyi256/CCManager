@@ -6,6 +6,34 @@ import path from 'path';
 import { sanitizeEnv } from './security.js';
 import type { TaskRequest } from './types.js';
 
+/**
+ * Parse a skill/slash command from a prompt.
+ * Detects /xxx [args] pattern at the start of the prompt.
+ * Returns null if the prompt is not a skill command.
+ */
+export function parseSkillCommand(prompt: string): { skill: string; args?: string } | null {
+  const trimmed = prompt.trim();
+  const match = trimmed.match(/^\/([a-zA-Z][\w-]*)(?:\s+([\s\S]*))?$/);
+  if (!match) return null;
+  return {
+    skill: match[1],
+    args: match[2]?.trim() || undefined,
+  };
+}
+
+/**
+ * If the prompt is a /skill command, convert it to an explicit Skill tool
+ * invocation prompt so Claude reliably triggers the Skill tool in non-interactive mode.
+ * Returns the original prompt unchanged if it's not a skill command.
+ */
+export function resolveSkillPrompt(prompt: string): string {
+  const skill = parseSkillCommand(prompt);
+  if (!skill) return prompt;
+  return skill.args
+    ? `Run the /${skill.skill} skill with args: ${skill.args}`
+    : `Run the /${skill.skill} skill`;
+}
+
 export interface ExecutorEvents {
   output: (text: string) => void;
   tool_use: (data: { id: string; name: string; input: unknown }) => void;
@@ -60,6 +88,9 @@ export class ClaudeExecutor extends EventEmitter {
         prompt = `${prompt}\n\nI've attached ${imagePaths.length} screenshot(s). Please read and analyze them:\n${pathsList}`;
       }
     }
+
+    // Convert /skill commands to explicit skill invocation prompts
+    prompt = resolveSkillPrompt(prompt);
 
     const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose'];
 
