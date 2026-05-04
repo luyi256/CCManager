@@ -95,9 +95,7 @@ export class ClaudeExecutor extends EventEmitter {
     const isContinue = !!(task.continueSession && task.sessionId);
 
     const args: string[] = [];
-    if (!isContinue) {
-      args.push('-p', prompt);
-    }
+    args.push('-p', prompt);
     args.push('--output-format', 'stream-json', '--verbose');
 
     if (task.model) {
@@ -115,7 +113,7 @@ export class ClaudeExecutor extends EventEmitter {
     args.push('--dangerously-skip-permissions');
 
     try {
-      await this.runClaudeCode(args, workingDir, isContinue ? prompt : undefined);
+      await this.runClaudeCode(args, workingDir);
     } finally {
       this.cleanupTempImages();
     }
@@ -134,7 +132,7 @@ export class ClaudeExecutor extends EventEmitter {
     this.tempImageFiles = [];
   }
 
-  private async runClaudeCode(args: string[], cwd: string, stdinPrompt?: string): Promise<void> {
+  private async runClaudeCode(args: string[], cwd: string): Promise<void> {
     return new Promise((resolve, reject) => {
       // Use full environment to ensure Claude Code can access credentials
       const env = { ...process.env };
@@ -169,14 +167,8 @@ export class ClaudeExecutor extends EventEmitter {
         }
       }, this.taskTimeout);
 
-      if (stdinPrompt) {
-        // Resume session: write follow-up prompt to stdin, then close to trigger processing
-        this.process.stdin?.write(stdinPrompt);
-        this.process.stdin?.end();
-      } else {
-        // Non-interactive print mode: close stdin immediately
-        this.process.stdin?.end();
-      }
+      // Non-interactive print mode: close stdin immediately
+      this.process.stdin?.end();
 
       let buffer = '';
 
