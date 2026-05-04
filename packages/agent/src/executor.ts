@@ -101,7 +101,7 @@ export class ClaudeExecutor extends EventEmitter {
     args.push('--output-format', 'stream-json', '--verbose');
 
     if (task.model) {
-      args.push('-m', task.model);
+      args.push('--model', task.model);
     }
 
     if (task.isPlanMode) {
