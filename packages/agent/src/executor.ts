@@ -136,11 +136,23 @@ export class ClaudeExecutor extends EventEmitter {
       // Remove CLAUDECODE to prevent "nested session" detection
       delete env.CLAUDECODE;
 
-      this.process = spawn('claude', args, {
+      // If running as root via sudo, drop privileges to the original user
+      // so claude doesn't reject --dangerously-skip-permissions
+      const spawnOpts: Parameters<typeof spawn>[2] = {
         cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
-      });
+      };
+
+      if (process.getuid?.() === 0 && process.env.SUDO_UID) {
+        const uid = parseInt(process.env.SUDO_UID, 10);
+        const gid = parseInt(process.env.SUDO_GID || process.env.SUDO_UID, 10);
+        spawnOpts.uid = uid;
+        spawnOpts.gid = gid;
+        console.log(`Dropping privileges to uid=${uid} gid=${gid} for claude subprocess`);
+      }
+
+      this.process = spawn('claude', args, spawnOpts);
 
       // Set execution timeout (Bug #25 fix)
       this.timeoutHandle = setTimeout(() => {

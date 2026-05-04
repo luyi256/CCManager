@@ -11,6 +11,8 @@ import {
   Send,
   ChevronDown,
   Loader2,
+  Copy,
+  Check,
 } from 'lucide-react';
 import { useSessions, useActiveSessions, useSessionDetail, useSessionSearch } from '../../hooks/useSessions';
 import { continueSession } from '../../services/api';
@@ -65,6 +67,26 @@ function HighlightText({ text, query }: { text: string; query: string }) {
       <mark className="bg-yellow-500/30 text-yellow-200 rounded px-0.5">{text.slice(idx, idx + q.length)}</mark>
       {text.slice(idx + q.length)}
     </>
+  );
+}
+
+function CopySessionId({ sessionId, short }: { sessionId: string; short?: boolean }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    navigator.clipboard.writeText(sessionId);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1500);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 font-mono text-xs text-dark-500 hover:text-dark-300 transition-colors shrink-0"
+      title={`Copy session ID: ${sessionId}`}
+    >
+      <span className="truncate">{short ? `${sessionId.slice(0, 8)}...` : sessionId}</span>
+      {copied ? <Check size={12} className="text-green-400 shrink-0" /> : <Copy size={12} className="shrink-0" />}
+    </button>
   );
 }
 
@@ -320,6 +342,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                         {session.firstPrompt}
                       </p>
                       <div className="flex items-center gap-3 text-xs text-dark-500">
+                        <CopySessionId sessionId={session.sessionId} short />
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
                           {formatRelativeTime(session.lastModified)}
@@ -411,9 +434,12 @@ function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
     >
       <div className="min-w-0">
         {/* Session title (firstPrompt) */}
-        <p className="text-dark-400 text-xs line-clamp-1 mb-1.5">
-          {result.firstPrompt}
-        </p>
+        <div className="flex items-center gap-2 mb-1.5">
+          <p className="text-dark-400 text-xs line-clamp-1 min-w-0 flex-1">
+            {result.firstPrompt}
+          </p>
+          <CopySessionId sessionId={result.sessionId} short />
+        </div>
 
         {/* Context block: before → matched message → after */}
         <div className="space-y-0.5 mb-2">
@@ -580,9 +606,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
           <button onClick={onBack} className="p-1 text-dark-400 hover:text-dark-100 shrink-0">
             <ArrowLeft size={18} />
           </button>
-          <span className="text-dark-500 font-mono text-xs truncate">
-            {sessionId.slice(0, 8)}...
-          </span>
+          <CopySessionId sessionId={sessionId} short />
           {detail?.linkedTaskId && (
             <button
               onClick={() => {
