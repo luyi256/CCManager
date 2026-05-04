@@ -121,10 +121,7 @@ export class DockerExecutor extends EventEmitter {
 
     // Claude CLI arguments (after the image, these become the CMD)
     const isContinue = !!(task.continueSession && task.sessionId);
-
-    if (!isContinue) {
-      args.push('-p', task.prompt);
-    }
+    args.push('-p', task.prompt);
     args.push('--output-format', 'stream-json', '--verbose');
 
     if (task.model) {
@@ -141,7 +138,7 @@ export class DockerExecutor extends EventEmitter {
 
     args.push('--dangerously-skip-permissions');
 
-    return this.runDocker(args, isContinue ? task.prompt : undefined);
+    return this.runDocker(args);
   }
 
   private getSessionsDir(projectId: string): string {
@@ -151,7 +148,7 @@ export class DockerExecutor extends EventEmitter {
     return dir;
   }
 
-  private async runDocker(args: string[], stdinPrompt?: string): Promise<void> {
+  private async runDocker(args: string[]): Promise<void> {
     return new Promise((resolve, reject) => {
       this.process = spawn('docker', args, {
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -166,14 +163,8 @@ export class DockerExecutor extends EventEmitter {
         }
       }, this.taskTimeout);
 
-      if (stdinPrompt) {
-        // Resume session: write follow-up prompt to stdin, then close to trigger processing
-        this.process.stdin?.write(stdinPrompt);
-        this.process.stdin?.end();
-      } else {
-        // Non-interactive print mode: close stdin immediately
-        this.process.stdin?.end();
-      }
+      // Non-interactive print mode: close stdin immediately
+      this.process.stdin?.end();
 
       let buffer = '';
 
