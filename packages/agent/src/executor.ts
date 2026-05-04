@@ -55,6 +55,7 @@ export class ClaudeExecutor extends EventEmitter {
   private sessionId: string | null = null;
   private hasStreamedDelta = false; // Track if content_block_delta has emitted text
   private tempImageFiles: string[] = [];
+  private collectedOutput = ''; // Track all output for auth failure detection
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT) {
     super();
@@ -67,6 +68,7 @@ export class ClaudeExecutor extends EventEmitter {
   async execute(task: TaskRequest, workingDir: string): Promise<void> {
     this.currentTaskId = task.taskId;
     this.tempImageFiles = [];
+    this.collectedOutput = '';
 
     // Save base64 images to temp files so Claude Code can read them
     let prompt = task.prompt;
@@ -184,7 +186,9 @@ export class ClaudeExecutor extends EventEmitter {
       });
 
       this.process.stderr?.on('data', (data: Buffer) => {
-        this.emit('output', data.toString());
+        const text = data.toString();
+        this.collectedOutput += text;
+        this.emit('output', text);
       });
 
       this.process.on('error', (error) => {
@@ -201,6 +205,21 @@ export class ClaudeExecutor extends EventEmitter {
         if (buffer.trim()) {
           this.parseLine(buffer);
         }
+
+        // Detect auth failure: CLI exited without establishing a session
+        // and output contains "Not logged in" indicator
+        if (!this.sessionId && /not logged in|please run \/login/i.test(this.collectedOutput)) {
+          const authError = new Error(
+            'Claude CLI is not logged in on this agent. ' +
+            'Run "claude login" on the agent machine, or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN environment variable.'
+          );
+          this.emit('error', authError);
+          this.process = null;
+          this.currentTaskId = null;
+          reject(authError);
+          return;
+        }
+
         this.emit('exit', code);
         this.process = null;
         this.currentTaskId = null;
@@ -212,6 +231,13 @@ export class ClaudeExecutor extends EventEmitter {
   private parseLine(line: string): void {
     try {
       const event = JSON.parse(line);
+
+      // Handle plain JSON string output (e.g. "Not logged in · Please run /login")
+      if (typeof event === 'string') {
+        this.collectedOutput += event;
+        this.emit('output', event);
+        return;
+      }
 
       switch (event.type) {
         case 'assistant':
@@ -284,6 +310,7 @@ export class ClaudeExecutor extends EventEmitter {
       if (line.startsWith('{') || line.startsWith('[')) {
         console.warn('Failed to parse potential JSON line:', error);
       }
+      this.collectedOutput += line;
       this.emit('output', line + '\n');
     }
   }
