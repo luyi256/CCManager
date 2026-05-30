@@ -4,6 +4,7 @@ import { VitePWA } from 'vite-plugin-pwa';
 import path from 'path';
 
 export default defineConfig({
+  base: '/ccm/',
   plugins: [
     react(),
     VitePWA({
@@ -39,14 +40,16 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': {
-        target: 'http://localhost:3001',
-        changeOrigin: true
-      },
-      '/socket.io': {
+      '/ccm/api': {
         target: 'http://localhost:3001',
         changeOrigin: true,
-        ws: true
+        rewrite: (p) => p.replace(/^\/ccm/, '')
+      },
+      '/ccm/socket.io': {
+        target: 'http://localhost:3001',
+        changeOrigin: true,
+        ws: true,
+        rewrite: (p) => p.replace(/^\/ccm/, '')
       }
     }
   }

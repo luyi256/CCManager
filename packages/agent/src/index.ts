@@ -82,7 +82,7 @@ function gitPullDataPath(dataPath: string): void {
 
 /** Read server URL from dataPath/server-url.txt (local file or remote URL).
  *  For local agents (dataPath is a filesystem path): try localhost first,
- *  then fall back to server-url.txt (which contains the tunnel URL). */
+ *  then fall back to server-url.txt. */
 async function resolveServerUrl(dataPath: string): Promise<string> {
   // Remote: dataPath is a URL base (e.g. https://raw.githubusercontent.com/.../main)
   if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
@@ -105,10 +105,10 @@ async function resolveServerUrl(dataPath: string): Promise<string> {
     // localhost not reachable, fall back to server-url.txt
   }
 
-  // git pull to get latest tunnel URL before reading
+  // git pull to get latest server URL before reading
   gitPullDataPath(dataPath);
 
-  // Fall back to server-url.txt (contains tunnel URL for remote access)
+  // Fall back to server-url.txt
   const filePath = path.join(dataPath, 'server-url.txt');
   if (!fs.existsSync(filePath)) {
     throw new Error(`Local server not reachable and ${filePath} not found`);

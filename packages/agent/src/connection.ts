@@ -34,7 +34,12 @@ export class AgentConnection {
   connect(): void {
     console.log(`Connecting to manager: ${this.currentUrl}`);
 
-    this.socket = io(`${this.currentUrl}/agent`, {
+    // Parse base path from URL (e.g. https://example.com/ccm → basePath="/ccm")
+    const parsedUrl = new URL(this.currentUrl);
+    const basePath = parsedUrl.pathname.replace(/\/$/, '');
+
+    this.socket = io(`${parsedUrl.origin}/agent`, {
+      path: `${basePath}/socket.io`,
       auth: {
         token: this.config.authToken,
         agentId: this.config.agentId,
@@ -408,7 +413,7 @@ export class AgentConnection {
           if (res.ok) return localhostUrl;
         } catch { /* not reachable */ }
 
-        // git pull to get latest tunnel URL
+        // git pull to get latest server URL
         try {
           const { existsSync: gitExists } = await import('fs');
           const { join: gitJoin } = await import('path');
@@ -420,7 +425,7 @@ export class AgentConnection {
           console.warn('URL discovery: git pull failed (non-fatal):', e instanceof Error ? e.message : e);
         }
 
-        // Fall back to server-url.txt (tunnel URL)
+        // Fall back to server-url.txt
         const { readFileSync, existsSync } = await import('fs');
         const { join } = await import('path');
         const filePath = join(dataPath, 'server-url.txt');

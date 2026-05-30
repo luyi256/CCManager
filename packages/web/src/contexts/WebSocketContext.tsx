@@ -35,6 +35,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     const token = getApiToken();
     const socket = io(socketUrl, {
+      path: '/ccm/socket.io',
       auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,

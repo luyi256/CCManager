@@ -1,7 +1,7 @@
 import type { Project, Task, GlobalConfig, Agent } from '../types';
 import { getApiToken, clearApiToken } from './auth';
 
-const API_BASE = '/api';
+const API_BASE = '/ccm/api';
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1s

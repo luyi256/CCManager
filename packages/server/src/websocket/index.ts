@@ -3,6 +3,7 @@ import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
 import { getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
+import { dequeue, hasQueued, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import type {
@@ -219,6 +220,73 @@ export function setupWebSocket(server: HttpServer): Server {
           }
           await saveTask(task.projectId, task);
         }
+
+        // Drain queued follow-up messages: merge all pending into one and resume session
+        if (task && hasQueued(data.taskId)) {
+          const prompts: string[] = [];
+          const allImages: string[] = [];
+          let msg;
+          while ((msg = dequeue(data.taskId))) {
+            prompts.push(msg.prompt);
+            if (msg.images) allImages.push(...msg.images);
+          }
+          clearFollowUpQueue(data.taskId);
+
+          const mergedPrompt = prompts.join('\n\n');
+          let sessionId: string | undefined;
+          if (task.gitInfo) {
+            try {
+              sessionId = JSON.parse(task.gitInfo).sessionId;
+            } catch { /* ignore */ }
+          }
+
+          if (sessionId) {
+            const project = await getProject(task.projectId);
+            if (project) {
+              // Log merged follow-up
+              await appendTaskLog(task.projectId, task.id, {
+                type: 'user_message',
+                content: mergedPrompt,
+              });
+
+              const startedAt = new Date().toISOString();
+              task.status = 'running';
+              task.continuePrompt = mergedPrompt;
+              task.startedAt = startedAt;
+              task.completedAt = undefined;
+              task.error = undefined;
+              await saveTask(task.projectId, task);
+
+              console.log(`Task ${data.taskId}: Draining ${prompts.length} queued follow-up(s), resuming session`);
+              agentPool.dispatchTask(project.agentId, {
+                taskId: task.id,
+                projectId: project.id,
+                projectPath: project.projectPath,
+                prompt: mergedPrompt,
+                isPlanMode: task.isPlanMode,
+                model: task.model,
+                executor: project.executor,
+                dockerImage: project.dockerImage,
+                worktreeBranch: task.worktreeBranch,
+                continueSession: true,
+                sessionId,
+                postTaskHook: project.postTaskHook,
+                extraMounts: project.extraMounts,
+                allowedPaths: buildTaskAllowedPaths(project),
+                images: allImages.length > 0 ? allImages : undefined,
+                startedAt,
+              });
+
+              // Broadcast that task is running again
+              broadcastToTask(data.taskId, 'task:status', {
+                taskId: data.taskId,
+                status: 'running',
+              });
+              return; // Skip the completed broadcast since we're continuing
+            }
+          }
+        }
+
         // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
         broadcastToTask(data.taskId, 'task:status', {
           taskId: data.taskId,
@@ -242,6 +310,13 @@ export function setupWebSocket(server: HttpServer): Server {
           task.completedAt = new Date().toISOString();
           await saveTask(task.projectId, task);
         }
+
+        // Clear queued follow-ups on failure (don't try to continue a failed session)
+        if (hasQueued(data.taskId)) {
+          clearFollowUpQueue(data.taskId);
+          console.log(`Task ${data.taskId}: Cleared queued follow-ups due to failure`);
+        }
+
         // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
         broadcastToTask(data.taskId, 'task:status', {
           taskId: data.taskId,
