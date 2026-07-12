@@ -10,6 +10,7 @@ import { homedir } from 'os';
 
 export interface SessionListItem {
   sessionId: string;
+  title?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -30,6 +31,7 @@ export interface SessionTimelineEntry {
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TITLE_MAX_LENGTH = 72;
 
 /**
  * Check if a message is a CLI command/skill invocation (e.g. /login, /commit).
@@ -98,6 +100,31 @@ function cleanUserMessage(content: string): string | null {
   return cleaned || null;
 }
 
+function cleanTitleText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/^[#>*\-\d.)\s]+/, '')
+    .trim();
+}
+
+function buildSessionTitle(firstPrompt: string): string {
+  const source = cleanTitleText(firstPrompt);
+  if (!source) return 'Untitled session';
+
+  const firstLine = source.split(/\n/).map((line) => line.trim()).find(Boolean) || source;
+  const firstSentence = firstLine.split(/(?<=[.!?。！？])\s+/)[0] || firstLine;
+  const withoutLeadIn = firstSentence
+    .replace(/^(please|can you|could you|帮我|请|麻烦|我想要?|当前项目)\s*[:,，：-]?\s*/i, '')
+    .trim();
+  const title = withoutLeadIn || firstSentence;
+
+  return title.length > TITLE_MAX_LENGTH
+    ? `${title.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`
+    : title;
+}
+
 function getSessionDir(projectPath: string): string {
   const baseDir = join(homedir(), '.claude', 'projects');
   const primary = join(baseDir, projectPath.replace(/[^a-zA-Z0-9]/g, '-'));
@@ -123,7 +150,7 @@ function getSessionDir(projectPath: string): string {
   return primary;
 }
 
-async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; gitBranch?: string } | null> {
+async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; title: string; gitBranch?: string } | null> {
   return new Promise((resolve) => {
     const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
     let resolved = false;
@@ -150,6 +177,7 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; g
           rl.close();
           resolve({
             prompt: cleaned.slice(0, 200),
+            title: buildSessionTitle(cleaned),
             gitBranch: gitBranch ?? obj.gitBranch,
           });
         }
@@ -158,7 +186,7 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; g
     rl.on('close', () => {
       if (!resolved) {
         if (fallbackPrompt) {
-          resolve({ prompt: fallbackPrompt.slice(0, 200), gitBranch });
+          resolve({ prompt: fallbackPrompt.slice(0, 200), title: buildSessionTitle(fallbackPrompt), gitBranch });
         } else {
           resolve(null);
         }

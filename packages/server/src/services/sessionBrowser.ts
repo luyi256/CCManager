@@ -7,6 +7,7 @@ import { db } from './database.js';
 
 export interface SessionListItem {
   sessionId: string;
+  title?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -46,6 +47,7 @@ export interface SessionSearchMatch {
 
 export interface SessionSearchResult {
   sessionId: string;
+  title?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -63,6 +65,7 @@ export interface SessionSearchResult {
 }
 
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const TITLE_MAX_LENGTH = 72;
 
 /**
  * Check if a message is a CLI command/skill invocation (e.g. /login, /commit).
@@ -134,6 +137,31 @@ export function cleanUserMessage(content: string): string | null {
   return cleaned || null;
 }
 
+function cleanTitleText(text: string): string {
+  return text
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/\s+/g, ' ')
+    .replace(/^[#>*\-\d.)\s]+/, '')
+    .trim();
+}
+
+export function buildSessionTitle(firstPrompt: string, taskSummary?: string | null): string {
+  const source = cleanTitleText(taskSummary || firstPrompt);
+  if (!source) return 'Untitled session';
+
+  const firstLine = source.split(/\n/).map((line) => line.trim()).find(Boolean) || source;
+  const firstSentence = firstLine.split(/(?<=[.!?。！？])\s+/)[0] || firstLine;
+  const withoutLeadIn = firstSentence
+    .replace(/^(please|can you|could you|帮我|请|麻烦|我想要?|当前项目)\s*[:,，：-]?\s*/i, '')
+    .trim();
+  const title = withoutLeadIn || firstSentence;
+
+  return title.length > TITLE_MAX_LENGTH
+    ? `${title.slice(0, TITLE_MAX_LENGTH - 1).trimEnd()}…`
+    : title;
+}
+
 function projectPathToHash(projectPath: string): string {
   return projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 }
@@ -147,7 +175,7 @@ function getSessionDir(projectPath: string): string {
  * Read the first meaningful user prompt from a JSONL session file (efficient - stops early).
  * Skips internal system messages (caveats, command output), CLI commands, and continuation summaries.
  */
-async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; gitBranch?: string; timestamp?: string } | null> {
+async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; title: string; gitBranch?: string; timestamp?: string } | null> {
   return new Promise((resolve) => {
     const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
     let resolved = false;
@@ -177,6 +205,7 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; g
           rl.close();
           resolve({
             prompt: cleaned.slice(0, 200),
+            title: buildSessionTitle(cleaned),
             gitBranch: gitBranch ?? obj.gitBranch,
             timestamp: timestamp ?? obj.timestamp,
           });
@@ -188,7 +217,7 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; g
       if (!resolved) {
         // If no real prompt found, use fallback (command name or continuation marker)
         if (fallbackPrompt) {
-          resolve({ prompt: fallbackPrompt.slice(0, 200), gitBranch, timestamp });
+          resolve({ prompt: fallbackPrompt.slice(0, 200), title: buildSessionTitle(fallbackPrompt), gitBranch, timestamp });
         } else {
           resolve(null);
         }
@@ -223,6 +252,29 @@ export function getLinkedTaskIds(projectId: string): Map<string, number> {
   return map;
 }
 
+function getLinkedTaskSummaries(projectId: string): Map<string, { taskId: number; summary?: string; prompt?: string }> {
+  const map = new Map<string, { taskId: number; summary?: string; prompt?: string }>();
+  try {
+    const stmt = db.prepare(
+      'SELECT id, prompt, summary, git_info FROM tasks WHERE project_id = ? AND git_info IS NOT NULL'
+    );
+    const rows = stmt.all(projectId) as Array<{ id: number; prompt: string; summary: string | null; git_info: string }>;
+    for (const row of rows) {
+      try {
+        const info = JSON.parse(row.git_info);
+        if (info.sessionId) {
+          map.set(info.sessionId, {
+            taskId: row.id,
+            summary: row.summary || undefined,
+            prompt: row.prompt || undefined,
+          });
+        }
+      } catch { /* skip */ }
+    }
+  } catch { /* skip */ }
+  return map;
+}
+
 /**
  * Merge sessions with the same firstPrompt into a single entry.
  * Uses the latest (by lastModified) session as representative.
@@ -232,7 +284,7 @@ export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
 
   const groups = new Map<string, SessionListItem[]>();
   for (const s of sessions) {
-    const key = s.firstPrompt;
+    const key = s.title || s.firstPrompt;
     const group = groups.get(key);
     if (group) {
       group.push(s);
@@ -254,6 +306,7 @@ export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
 
     merged.push({
       sessionId: latest.sessionId,
+      title: latest.title,
       firstPrompt: latest.firstPrompt,
       lastModified: latest.lastModified,
       fileSize: group.reduce((sum, s) => sum + s.fileSize, 0),
@@ -285,7 +338,7 @@ export async function listSessions(projectPath: string, projectId: string): Prom
   }
 
   // Batch lookup for linked tasks
-  const linkedTasks = getLinkedTaskIds(projectId);
+  const linkedTasks = getLinkedTaskSummaries(projectId);
   const now = Date.now();
 
   const results: SessionListItem[] = [];
@@ -308,13 +361,15 @@ export async function listSessions(projectPath: string, projectId: string): Prom
 
           if (!meta) return null;
 
+          const linkedTask = linkedTasks.get(sessionId);
           return {
             sessionId,
+            title: buildSessionTitle(meta.prompt, linkedTask?.summary || linkedTask?.prompt),
             firstPrompt: meta.prompt,
             lastModified: fileStat.mtime.toISOString(),
             fileSize: fileStat.size,
             gitBranch: meta.gitBranch,
-            linkedTaskId: linkedTasks.get(sessionId),
+            linkedTaskId: linkedTask?.taskId,
             isActive: now - fileStat.mtime.getTime() <= ACTIVE_THRESHOLD_MS,
           };
         } catch {
@@ -350,7 +405,7 @@ export async function listActiveSessions(projectPath: string, projectId: string)
   }
 
   const now = Date.now();
-  const linkedTasks = getLinkedTaskIds(projectId);
+  const linkedTasks = getLinkedTaskSummaries(projectId);
   const results: SessionListItem[] = [];
 
   // Phase 1: stat all files to find active ones (cheap)
@@ -382,13 +437,15 @@ export async function listActiveSessions(projectPath: string, projectId: string)
     try {
       const meta = await getFirstUserPrompt(join(dir, file));
       if (!meta) continue;
+      const linkedTask = linkedTasks.get(sessionId);
       results.push({
         sessionId,
+        title: buildSessionTitle(meta.prompt, linkedTask?.summary || linkedTask?.prompt),
         firstPrompt: meta.prompt,
         lastModified: mtime.toISOString(),
         fileSize: size,
         gitBranch: meta.gitBranch,
-        linkedTaskId: linkedTasks.get(sessionId),
+        linkedTaskId: linkedTask?.taskId,
         isActive: true,
       });
     } catch { /* skip */ }
@@ -564,12 +621,12 @@ export async function getSessionDetail(
     allEntries.push(...deduped);
   }
 
-  const linkedTasks = getLinkedTaskIds(projectId);
+  const linkedTasks = getLinkedTaskSummaries(projectId);
 
   return {
     sessionId,
     entries: allEntries,
-    linkedTaskId: linkedTasks.get(sessionId),
+    linkedTaskId: linkedTasks.get(sessionId)?.taskId,
   };
 }
 
@@ -593,7 +650,7 @@ export async function searchSessions(
     return [];
   }
 
-  const linkedTasks = getLinkedTaskIds(projectId);
+  const linkedTasks = getLinkedTaskSummaries(projectId);
   const q = query.toLowerCase();
   const results: SessionSearchResult[] = [];
 
@@ -673,13 +730,15 @@ export async function searchSessions(
             } catch { /* skip */ }
           }
 
+          const linkedTask = linkedTasks.get(sessionId);
           return {
             sessionId,
+            title: buildSessionTitle(firstPrompt, linkedTask?.summary || linkedTask?.prompt),
             firstPrompt: firstPrompt.slice(0, 200),
             lastModified: fileStat.mtime.toISOString(),
             fileSize: fileStat.size,
             gitBranch,
-            linkedTaskId: linkedTasks.get(sessionId),
+            linkedTaskId: linkedTask?.taskId,
             matches: allMatches,
             // Backward compat
             matchedMessage: allMatches[0].message,
