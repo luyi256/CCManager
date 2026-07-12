@@ -56,6 +56,9 @@ export class ClaudeExecutor extends EventEmitter {
   private hasStreamedDelta = false; // Track if content_block_delta has emitted text
   private tempImageFiles: string[] = [];
   private collectedOutput = ''; // Track all output for auth failure detection
+  private fatalError: Error | null = null;
+  private outputBuffer = '';
+  private outputFlushTimer: NodeJS.Timeout | null = null;
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'claude') {
     super();
@@ -69,6 +72,13 @@ export class ClaudeExecutor extends EventEmitter {
     this.currentTaskId = task.taskId;
     this.tempImageFiles = [];
     this.collectedOutput = '';
+    this.hasStreamedDelta = false;
+    this.fatalError = null;
+    this.outputBuffer = '';
+    if (this.outputFlushTimer) {
+      clearTimeout(this.outputFlushTimer);
+      this.outputFlushTimer = null;
+    }
 
     // Save base64 images to temp files so Claude Code can read them
     let prompt = task.prompt;
@@ -142,6 +152,9 @@ export class ClaudeExecutor extends EventEmitter {
     return new Promise((resolve, reject) => {
       // Use full environment to ensure Claude Code can access credentials
       const env = { ...process.env };
+      if (this.command === 'qwen') {
+        env.QWEN_CODE_SUPPRESS_YOLO_WARNING = '1';
+      }
 
       // Remove CLAUDECODE to prevent "nested session" detection
       delete env.CLAUDECODE;
@@ -210,6 +223,17 @@ export class ClaudeExecutor extends EventEmitter {
           this.parseLine(buffer);
         }
 
+        this.flushOutputBuffer();
+
+        if (this.fatalError) {
+          const error = this.fatalError;
+          this.process = null;
+          this.currentTaskId = null;
+          this.fatalError = null;
+          reject(error);
+          return;
+        }
+
         // Detect auth failure: CLI exited without establishing a session
         // and output contains "Not logged in" indicator
         if (!this.sessionId && /not logged in|please run \/login/i.test(this.collectedOutput)) {
@@ -221,6 +245,15 @@ export class ClaudeExecutor extends EventEmitter {
           this.process = null;
           this.currentTaskId = null;
           reject(authError);
+          return;
+        }
+
+        if (code !== 0) {
+          const error = new Error(`${this.command} exited with code ${code}`);
+          this.emit('error', error);
+          this.process = null;
+          this.currentTaskId = null;
+          reject(error);
           return;
         }
 
@@ -239,83 +272,136 @@ export class ClaudeExecutor extends EventEmitter {
       // Handle plain JSON string output (e.g. "Not logged in · Please run /login")
       if (typeof event === 'string') {
         this.collectedOutput += event;
-        this.emit('output', event);
+        this.emitOutput(event);
         return;
       }
 
-      switch (event.type) {
-        case 'assistant':
-          if (event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'text') {
-                // Only emit text from assistant if no content_block_delta was received.
-                // Normally text comes via content_block_delta (streaming); emitting from
-                // both causes duplicate output. This is a fallback for formats that
-                // only emit assistant events.
-                if (!this.hasStreamedDelta) {
-                  this.emit('output', block.text);
-                }
-              } else if (block.type === 'tool_use') {
-                this.emit('tool_use', {
-                  id: block.id,
-                  name: block.name,
-                  input: block.input,
-                });
-              }
-            }
-          }
-          // Reset delta flag after processing assistant message
-          this.hasStreamedDelta = false;
-          break;
-
-        case 'content_block_delta':
-          if (event.delta?.type === 'text_delta') {
-            this.hasStreamedDelta = true;
-            this.emit('output', event.delta.text);
-          }
-          break;
-
-        case 'result':
-          // Capture session_id from result event
-          if (event.session_id && !this.sessionId) {
-            this.sessionId = event.session_id;
-            this.emit('session_id', event.session_id);
-          }
-          // Don't emit result text as output - it duplicates what was already
-          // streamed via 'assistant' events
-          break;
-
-        case 'user':
-          // User input request (plan question, permission, etc.)
-          if (event.message?.content) {
-            for (const block of event.message.content) {
-              if (block.type === 'tool_result') {
-                // Could be a plan question or permission request
-                if (block.content?.includes('plan')) {
-                  this.emit('plan_question', block);
-                } else if (block.content?.includes('permission')) {
-                  this.emit('permission_request', block);
-                }
-              }
-            }
-          }
-          break;
-
-        case 'system':
-          // Extract session_id from init message
-          if (event.subtype === 'init' && event.session_id) {
-            this.sessionId = event.session_id;
-            this.emit('session_id', event.session_id);
-          }
-          break;
+      if (event.type === 'stream_event' && event.event) {
+        this.parseEvent(event.event);
+        return;
       }
+
+      this.parseEvent(event);
     } catch (error) {
       // Non-JSON output, emit as raw text (Bug #21: log parse failures for debugging)
       if (line.startsWith('{') || line.startsWith('[')) {
         console.warn('Failed to parse potential JSON line:', error);
       }
       this.collectedOutput += line;
-      this.emit('output', line + '\n');
+      this.emitOutput(line + '\n');
+    }
+  }
+
+  private emitOutput(text: string): void {
+    if (this.command !== 'qwen') {
+      this.emit('output', text);
+      return;
+    }
+
+    this.outputBuffer += text;
+    if (text.includes('\n') || this.outputBuffer.length >= 240) {
+      this.flushOutputBuffer();
+      return;
+    }
+
+    if (!this.outputFlushTimer) {
+      this.outputFlushTimer = setTimeout(() => this.flushOutputBuffer(), 250);
+    }
+  }
+
+  private flushOutputBuffer(): void {
+    if (this.outputFlushTimer) {
+      clearTimeout(this.outputFlushTimer);
+      this.outputFlushTimer = null;
+    }
+    if (!this.outputBuffer) return;
+    const text = this.outputBuffer;
+    this.outputBuffer = '';
+    this.emit('output', text);
+  }
+
+  private parseEvent(event: any): void {
+    switch (event.type) {
+      case 'assistant':
+        if (event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'text') {
+              // Only emit text from assistant if no content_block_delta was received.
+              // Normally text comes via content_block_delta (streaming); emitting from
+              // both causes duplicate output. This is a fallback for formats that
+              // only emit assistant events.
+              if (!this.hasStreamedDelta) {
+                this.emitOutput(block.text);
+              }
+            } else if (block.type === 'tool_use') {
+              this.emit('tool_use', {
+                id: block.id,
+                name: block.name,
+                input: block.input,
+              });
+            }
+          }
+        }
+        // Reset delta flag after processing assistant message
+        this.hasStreamedDelta = false;
+        break;
+
+      case 'content_block_delta':
+        if (event.delta?.type === 'text_delta') {
+          this.hasStreamedDelta = true;
+          this.emitOutput(event.delta.text);
+        }
+        break;
+
+      case 'content_block_stop':
+      case 'message_stop':
+        this.flushOutputBuffer();
+        break;
+
+      case 'result':
+        // Capture session_id from result event
+        if (event.session_id && !this.sessionId) {
+          this.sessionId = event.session_id;
+          this.emit('session_id', event.session_id);
+        }
+        if (event.is_error || event.subtype?.startsWith('error')) {
+          const message =
+            event.error?.message ||
+            event.result ||
+            `${this.command} returned an error result`;
+          this.fatalError = new Error(message);
+          this.collectedOutput += message;
+          this.emitOutput(`[${this.command} Error] ${message}\n`);
+          this.flushOutputBuffer();
+          this.emit('error', this.fatalError);
+        }
+        // Don't emit result text as output - it duplicates what was already
+        // streamed via 'assistant' events
+        break;
+
+      case 'user':
+        // User input request (plan question, permission, etc.)
+        if (event.message?.content) {
+          for (const block of event.message.content) {
+            if (block.type === 'tool_result') {
+              // Could be a plan question or permission request
+              if (block.content?.includes('plan')) {
+                this.emit('plan_question', block);
+              } else if (block.content?.includes('permission')) {
+                this.emit('permission_request', block);
+              }
+            }
+          }
+        }
+        break;
+
+      case 'system':
+        // Extract session_id from init message
+        if (event.subtype === 'init' && event.session_id) {
+          this.sessionId = event.session_id;
+          this.emit('session_id', event.session_id);
+        }
+        break;
     }
   }
 

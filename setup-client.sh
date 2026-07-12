@@ -221,7 +221,7 @@ if pm2 describe ccm-agent &>/dev/null 2>&1; then
   pm2 delete ccm-agent 2>/dev/null || true
 fi
 
-pm2 start npm --name ccm-agent \
+QWEN_CODE_SUPPRESS_YOLO_WARNING=1 pm2 start npm --name ccm-agent \
   --cwd "$SCRIPT_DIR/packages/agent" \
   -- run dev
 
