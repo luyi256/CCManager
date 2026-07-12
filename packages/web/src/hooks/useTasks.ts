@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import * as api from '../services/api';
-import type { Task } from '../types';
+import type { Runner, Task } from '../types';
 
 export function useTasks(projectId: string) {
   return useQuery({
@@ -24,7 +24,7 @@ export function useCreateTask(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { prompt: string; isPlanMode: boolean; runner?: 'claude' | 'codex'; model?: string; dependsOn?: number; images?: string[] }) =>
+    mutationFn: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; dependsOn?: number; images?: string[] }) =>
       api.createTask(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
@@ -73,8 +73,19 @@ export function useContinueTask() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: ({ taskId, prompt, images }: { taskId: number; prompt: string; images?: string[] }) =>
-      api.continueTask(taskId, prompt, images),
+    mutationFn: ({
+      taskId,
+      prompt,
+      images,
+      runner,
+      model,
+    }: {
+      taskId: number;
+      prompt: string;
+      images?: string[];
+      runner?: Runner;
+      model?: string;
+    }) => api.continueTask(taskId, prompt, images, runner, model),
     onSuccess: (task) => {
       // Immediately update the task cache with new data
       queryClient.setQueryData(['task', task.id], task);

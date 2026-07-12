@@ -1,14 +1,8 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { Send, Loader2, AlertCircle, X, Image, Paperclip } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
-import * as api from '../../services/api';
-import type { Task } from '../../types';
-
-const PRESET_MODELS = [
-  'claude-sonnet-4-5-20250514',
-  'claude-opus-4-5-20250414',
-  'claude-haiku-4-5-20251001',
-];
+import ModelSwitcher from '../Conversation/ModelSwitcher';
+import type { Runner, Task } from '../../types';
 
 interface PastedImage {
   id: string;
@@ -17,30 +11,22 @@ interface PastedImage {
 }
 
 interface TaskInputProps {
-  onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: 'claude' | 'codex'; model?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
+  onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   tasks: Task[];
   lastModel?: string;
+  agentId?: string;
 }
 
-export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel }: TaskInputProps) {
+export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, agentId }: TaskInputProps) {
   const [prompt, setPrompt] = useState('');
   const [isPlanMode, setIsPlanMode] = useState(false);
-  const [runner, setRunner] = useState<'claude' | 'codex'>('claude');
+  const [runner, setRunner] = useState<Runner>('claude');
   const [model, setModel] = useState(lastModel || '');
-  const [customModelInput, setCustomModelInput] = useState('');
-  const [showCustomInput, setShowCustomInput] = useState(false);
-  const [customModels, setCustomModels] = useState<string[]>([]);
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<PastedImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const customInputRef = useRef<HTMLInputElement>(null);
-
-  // Load custom models on mount
-  useEffect(() => {
-    api.getCustomModels().then(setCustomModels).catch(() => {});
-  }, []);
 
   // Update model when lastModel prop changes (project switch)
   useEffect(() => {
@@ -49,35 +35,9 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel }: 
     }
   }, [lastModel]);
 
-  const allModels = [...PRESET_MODELS, ...customModels.filter(m => !PRESET_MODELS.includes(m))];
-
   const pendingTasks = tasks.filter((t) =>
     ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)
   );
-
-  const handleModelChange = (value: string) => {
-    if (value === '__custom__') {
-      setShowCustomInput(true);
-      setTimeout(() => customInputRef.current?.focus(), 50);
-    } else {
-      setModel(value);
-      setShowCustomInput(false);
-    }
-  };
-
-  const handleAddCustomModel = () => {
-    const trimmed = customModelInput.trim();
-    if (!trimmed) return;
-    setModel(trimmed);
-    setShowCustomInput(false);
-    setCustomModelInput('');
-    // Persist if not already known
-    if (!allModels.includes(trimmed)) {
-      const updated = [...customModels, trimmed];
-      setCustomModels(updated);
-      api.saveCustomModels(updated).catch(() => {});
-    }
-  };
 
   const addImagesFromClipboard = useCallback((items: DataTransferItemList) => {
     const newImages: PastedImage[] = [];
@@ -179,12 +139,6 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel }: 
     setPrompt((prev) => (prev ? `${prev} ${text}` : text));
   };
 
-  // Helper to get display name for model
-  const modelDisplayName = (m: string) => {
-    // Strip common prefixes for shorter display
-    return m.replace(/^claude-/, '');
-  };
-
   return (
     <form onSubmit={handleSubmit} className="card p-4">
       {error && (
@@ -216,7 +170,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel }: 
                 }
               }
             }}
-            placeholder="Describe the task for Claude Code..."
+            placeholder="Describe the coding task..."
             className="input resize-none flex-1"
             disabled={isSubmitting}
           />
@@ -283,79 +237,13 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel }: 
       </div>
 
       <div className="flex items-center gap-4 mt-3 flex-wrap">
-        <div className="flex items-center gap-1 bg-dark-800 rounded-lg p-0.5">
-          <button
-            type="button"
-            onClick={() => setRunner('claude')}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-              runner === 'claude'
-                ? 'bg-primary-600 text-white'
-                : 'text-dark-400 hover:text-dark-200'
-            }`}
-          >
-            Claude
-          </button>
-          <button
-            type="button"
-            onClick={() => setRunner('codex')}
-            className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${
-              runner === 'codex'
-                ? 'bg-emerald-600 text-white'
-                : 'text-dark-400 hover:text-dark-200'
-            }`}
-          >
-            Codex
-          </button>
-        </div>
-
-        {/* Model selector */}
-        <div className="flex items-center gap-1.5">
-          {showCustomInput ? (
-            <div className="flex items-center gap-1">
-              <input
-                ref={customInputRef}
-                type="text"
-                value={customModelInput}
-                onChange={(e) => setCustomModelInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') { e.preventDefault(); handleAddCustomModel(); }
-                  if (e.key === 'Escape') { setShowCustomInput(false); setCustomModelInput(''); }
-                }}
-                placeholder="model-name"
-                className="input py-1 text-sm w-[200px]"
-              />
-              <button
-                type="button"
-                onClick={handleAddCustomModel}
-                className="px-2 py-1 text-xs font-medium rounded-md bg-primary-600 text-white hover:bg-primary-700 transition-colors"
-              >
-                OK
-              </button>
-              <button
-                type="button"
-                onClick={() => { setShowCustomInput(false); setCustomModelInput(''); }}
-                className="px-1.5 py-1 text-xs text-dark-400 hover:text-dark-200"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          ) : (
-            <select
-              value={allModels.includes(model) || model === '' ? model : '__current_custom__'}
-              onChange={(e) => handleModelChange(e.target.value)}
-              className="input py-1.5 text-sm max-w-[220px]"
-            >
-              <option value="">Default Model</option>
-              {allModels.map((m) => (
-                <option key={m} value={m}>{modelDisplayName(m)}</option>
-              ))}
-              {model && !allModels.includes(model) && (
-                <option value="__current_custom__">{modelDisplayName(model)}</option>
-              )}
-              <option value="__custom__">Custom...</option>
-            </select>
-          )}
-        </div>
+        <ModelSwitcher
+          selectedRunner={runner}
+          selectedModel={model}
+          onRunnerChange={setRunner}
+          onModelChange={setModel}
+          agentId={agentId}
+        />
 
         <label className="flex items-center gap-2 cursor-pointer">
           <input

@@ -2,20 +2,21 @@ import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
 import { Settings, RefreshCw, History } from 'lucide-react';
-import TaskBoard from '../components/Task/TaskBoard';
 import TaskInput from '../components/Task/TaskInput';
-import TaskDetail from '../components/Task/TaskDetail';
 import SessionBrowser from '../components/Session/SessionBrowser';
 import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
+import ConversationSidebar from '../components/Conversation/ConversationSidebar';
+import ConversationPanel from '../components/Conversation/ConversationPanel';
 import { useProject } from '../hooks/useProjects';
 import { useTasks, useCreateTask } from '../hooks/useTasks';
 import { useActiveSessions } from '../hooks/useSessions';
-import type { Task } from '../types';
-import type { SessionListItem } from '../services/api';
+import type { Runner } from '../types';
 
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
-  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
+  const [isComposing, setIsComposing] = useState(true);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
   const [initialSession, setInitialSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
@@ -24,6 +25,11 @@ export default function ProjectPage() {
   const { data: tasks = [], isLoading: tasksLoading, refetch } = useTasks(projectId!);
   const createTask = useCreateTask(projectId!);
   const { data: activeSessions } = useActiveSessions(projectId!);
+
+  const selectedTask = useMemo(() => {
+    if (!selectedTaskId) return null;
+    return tasks.find((task) => task.id === selectedTaskId) ?? null;
+  }, [selectedTaskId, tasks]);
 
   // Filter out active sessions that are linked to any CCManager task
   const allTaskIds = useMemo(() => {
@@ -35,23 +41,17 @@ export default function ProjectPage() {
     return activeSessions.filter(s => !s.linkedTaskId || !allTaskIds.has(s.linkedTaskId));
   }, [activeSessions, allTaskIds]);
 
-  const handleSessionClick = (session: SessionListItem) => {
-    setInitialSession({ id: session.sessionId, relatedIds: session.relatedSessionIds });
-    setSessionBrowserOpen(true);
-  };
-
   const handleCreateTask = async (data: {
     prompt: string;
     isPlanMode: boolean;
-    runner?: 'claude' | 'codex';
+    runner?: Runner;
     model?: string;
     dependsOn?: number;
     images?: string[];
   }) => {
     const task = await createTask.mutateAsync(data);
-    if (data.isPlanMode) {
-      setSelectedTask(task);
-    }
+    setSelectedTaskId(task.id);
+    setIsComposing(false);
   };
 
   if (projectLoading) {
@@ -81,83 +81,79 @@ export default function ProjectPage() {
   }
 
   return (
-    <div className="max-w-7xl mx-auto px-4 py-6">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-4 mb-6">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold text-dark-100">{project.name}</h1>
-          <p className="text-dark-400 mt-1 break-all">
-            Agent: {project.agentId} • {project.projectPath}
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          <button
-            onClick={() => setSessionBrowserOpen(true)}
-            className="btn btn-ghost p-2"
-            title="CLI Sessions"
-          >
-            <History size={18} />
-          </button>
-          <button
-            onClick={() => refetch()}
-            className="btn btn-ghost p-2"
-            title="Refresh"
-          >
-            <RefreshCw size={18} />
-          </button>
-          <button onClick={() => setSettingsOpen(true)} className="btn btn-ghost p-2" title="Settings">
-            <Settings size={18} />
-          </button>
-        </div>
-      </div>
+    <div className="h-[calc(100vh-3.5rem)] flex overflow-hidden bg-dark-900">
+      <ConversationSidebar
+        tasks={tasks}
+        selectedTaskId={isComposing ? null : selectedTaskId}
+        onSelectTask={(task) => {
+          setSelectedTaskId(task.id);
+          setIsComposing(false);
+        }}
+        onNewConversation={() => {
+          setSelectedTaskId(null);
+          setIsComposing(true);
+        }}
+        isLoading={tasksLoading}
+        isMobileOpen={mobileSidebarOpen}
+        onMobileToggle={() => setMobileSidebarOpen((value) => !value)}
+      />
 
-      {/* Task Input */}
-      <div className="mb-6">
-        <TaskInput
-          onSubmit={handleCreateTask}
-          isSubmitting={createTask.isPending}
-          tasks={tasks}
-          lastModel={project.lastModel}
-        />
-      </div>
-
-      {/* Task Board */}
-      {tasksLoading ? (
-        <div className="flex gap-4 overflow-x-auto pb-4">
-          {[1, 2, 3, 4, 5].map((i) => (
-            <div
-              key={i}
-              className="min-w-[280px] bg-dark-850 rounded-xl animate-pulse"
+      <main className="flex-1 min-w-0 flex flex-col">
+        <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-dark-700 bg-dark-850">
+          <div className="min-w-0 pl-8 md:pl-0">
+            <h1 className="text-sm font-semibold text-dark-100 truncate">{project.name}</h1>
+            <p className="text-xs text-dark-500 truncate">
+              Agent: {project.agentId} • {project.projectPath}
+              {externalSessions.length > 0 ? ` • ${externalSessions.length} external session${externalSessions.length > 1 ? 's' : ''}` : ''}
+            </p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              onClick={() => setSessionBrowserOpen(true)}
+              className="btn btn-ghost p-2"
+              title="CLI Sessions"
             >
-              <div className="px-3 py-2 border-b border-dark-700">
-                <div className="h-5 bg-dark-700 rounded w-20" />
-              </div>
-              <div className="p-2 space-y-2">
-                <div className="h-24 bg-dark-800 rounded" />
-                <div className="h-24 bg-dark-800 rounded" />
-              </div>
-            </div>
-          ))}
+              <History size={18} />
+            </button>
+            <button
+              onClick={() => refetch()}
+              className="btn btn-ghost p-2"
+              title="Refresh"
+            >
+              <RefreshCw size={18} />
+            </button>
+            <button onClick={() => setSettingsOpen(true)} className="btn btn-ghost p-2" title="Settings">
+              <Settings size={18} />
+            </button>
+          </div>
         </div>
-      ) : (
-        <TaskBoard
-          tasks={tasks}
-          onTaskClick={setSelectedTask}
-          activeTaskId={selectedTask?.id}
-          activeSessions={externalSessions}
-          onSessionClick={handleSessionClick}
-        />
-      )}
 
-      {/* Task Detail Drawer */}
-      <AnimatePresence>
-        {selectedTask && (
-          <TaskDetail
+        {selectedTask && !isComposing ? (
+          <ConversationPanel
             task={selectedTask}
-            onClose={() => setSelectedTask(null)}
+            agentId={project.agentId}
+            onBack={() => setMobileSidebarOpen(true)}
           />
+        ) : (
+          <div className="flex-1 overflow-y-auto px-4 py-6">
+            <div className="max-w-3xl mx-auto min-h-full flex flex-col justify-center">
+              <div className="mb-4">
+                <h2 className="text-xl font-semibold text-dark-100">New conversation</h2>
+                <p className="text-sm text-dark-500 mt-1">
+                  Start a coding session in this project.
+                </p>
+              </div>
+              <TaskInput
+                onSubmit={handleCreateTask}
+                isSubmitting={createTask.isPending}
+                tasks={tasks}
+                lastModel={project.lastModel}
+                agentId={project.agentId}
+              />
+            </div>
+          </div>
         )}
-      </AnimatePresence>
+      </main>
 
       {/* Session Browser Drawer */}
       <AnimatePresence>
@@ -170,11 +166,15 @@ export default function ProjectPage() {
               setSessionBrowserOpen(false);
               setInitialSession(null);
               const task = tasks.find(t => t.id === taskId);
-              if (task) setSelectedTask(task);
+              if (task) {
+                setSelectedTaskId(task.id);
+                setIsComposing(false);
+              }
             }}
             onTaskCreated={(task) => {
               refetch();
-              setSelectedTask(task);
+              setSelectedTaskId(task.id);
+              setIsComposing(false);
             }}
           />
         )}

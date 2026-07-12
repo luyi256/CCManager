@@ -1,7 +1,8 @@
-import type { Project, Task, GlobalConfig, Agent } from '../types';
+import type { Project, Task, GlobalConfig, Agent, Runner } from '../types';
 import { getApiToken, clearApiToken } from './auth';
 
-const API_BASE = '/ccm/api';
+const APP_BASE = import.meta.env.BASE_URL.replace(/\/$/, '');
+const API_BASE = `${APP_BASE || ''}/api`;
 
 const MAX_RETRIES = 3;
 const INITIAL_RETRY_DELAY = 1000; // 1s
@@ -111,6 +112,20 @@ export async function getOnlineAgents(): Promise<Agent[]> {
   return request('/agents/online');
 }
 
+export interface RunnerModelsResponse {
+  runner: Runner;
+  models: string[];
+  raw?: string;
+  cached?: boolean;
+  updatedAt?: string;
+}
+
+export async function getRunnerModels(agentId: string, runner: Runner, force = false): Promise<RunnerModelsResponse> {
+  const params = new URLSearchParams({ runner });
+  if (force) params.set('force', '1');
+  return request(`/agents/${agentId}/models?${params.toString()}`);
+}
+
 // Tasks
 export async function getTasks(projectId: string): Promise<Task[]> {
   return request(`/projects/${projectId}/tasks`);
@@ -123,7 +138,7 @@ export async function getTask(taskId: number): Promise<Task> {
 export async function createTask(projectId: string, data: {
   prompt: string;
   isPlanMode: boolean;
-  runner?: 'claude' | 'codex';
+  runner?: Runner;
   model?: string;
   dependsOn?: number;
   images?: string[];
@@ -153,10 +168,16 @@ export async function retryTask(taskId: number): Promise<Task> {
   });
 }
 
-export async function continueTask(taskId: number, prompt: string, images?: string[]): Promise<Task> {
+export async function continueTask(
+  taskId: number,
+  prompt: string,
+  images?: string[],
+  runner?: Runner,
+  model?: string
+): Promise<Task> {
   return request(`/tasks/${taskId}/continue`, {
     method: 'POST',
-    body: JSON.stringify({ prompt, images }),
+    body: JSON.stringify({ prompt, images, runner, model }),
   });
 }
 

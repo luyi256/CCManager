@@ -44,6 +44,8 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled';
 
+export type Runner = 'claude' | 'codex' | 'qwen';
+
 export interface GitInfo {
   branch: string;
   commits: Array<{
@@ -63,7 +65,7 @@ export interface Task {
   prompt: string;
   status: TaskStatus;
   isPlanMode: boolean;
-  runner?: 'claude' | 'codex';
+  runner?: Runner;
   model?: string;
   dependsOn?: number;
   worktreeBranch?: string;
