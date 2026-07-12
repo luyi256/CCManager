@@ -15,13 +15,14 @@ interface TaskInputProps {
   isSubmitting: boolean;
   tasks: Task[];
   lastModel?: string;
+  lastRunner?: Runner;
   agentId?: string;
 }
 
-export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, agentId }: TaskInputProps) {
+export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, lastRunner, agentId }: TaskInputProps) {
   const [prompt, setPrompt] = useState('');
   const [isPlanMode, setIsPlanMode] = useState(false);
-  const [runner, setRunner] = useState<Runner>('claude');
+  const [runner, setRunner] = useState<Runner>(lastRunner || 'claude');
   const [model, setModel] = useState(lastModel || '');
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
@@ -34,6 +35,12 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, ag
       setModel(lastModel || '');
     }
   }, [lastModel]);
+
+  useEffect(() => {
+    if (lastRunner) {
+      setRunner(lastRunner);
+    }
+  }, [lastRunner]);
 
   const pendingTasks = tasks.filter((t) =>
     ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)

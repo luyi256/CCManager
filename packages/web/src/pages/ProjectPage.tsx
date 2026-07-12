@@ -31,6 +31,17 @@ export default function ProjectPage() {
     return tasks.find((task) => task.id === selectedTaskId) ?? null;
   }, [selectedTaskId, tasks]);
 
+  const lastRunner = useMemo<Runner | undefined>(() => {
+    const latest = [...tasks]
+      .filter((task) => task.runner)
+      .sort((a, b) => {
+        const aTime = new Date(a.startedAt || a.createdAt).getTime();
+        const bTime = new Date(b.startedAt || b.createdAt).getTime();
+        return bTime - aTime;
+      })[0];
+    return latest?.runner;
+  }, [tasks]);
+
   // Filter out active sessions that are linked to any CCManager task
   const allTaskIds = useMemo(() => {
     return new Set(tasks.map(t => t.id));
@@ -148,6 +159,7 @@ export default function ProjectPage() {
                 isSubmitting={createTask.isPending}
                 tasks={tasks}
                 lastModel={project.lastModel}
+                lastRunner={lastRunner}
                 agentId={project.agentId}
               />
             </div>
