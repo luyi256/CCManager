@@ -104,6 +104,16 @@ db.exec(`
     FOREIGN KEY (agent_id) REFERENCES agents(id) ON DELETE CASCADE
   );
 
+  -- Cached coding CLI model lists, keyed per agent and runner
+  CREATE TABLE IF NOT EXISTS model_cache (
+    agent_id TEXT NOT NULL,
+    runner TEXT NOT NULL,
+    models TEXT NOT NULL,
+    raw TEXT,
+    updated_at TEXT NOT NULL,
+    PRIMARY KEY (agent_id, runner)
+  );
+
   -- Create indexes
   CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -111,6 +121,7 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_projects_agent ON projects(agent_id);
   CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
   CREATE INDEX IF NOT EXISTS idx_agent_tokens_hash ON agent_tokens(token_hash);
+  CREATE INDEX IF NOT EXISTS idx_model_cache_updated ON model_cache(updated_at);
 `);
 
 // Migrations

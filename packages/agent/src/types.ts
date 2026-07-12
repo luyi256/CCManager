@@ -31,7 +31,7 @@ export interface TaskRequest {
   projectPath: string;
   prompt: string;
   isPlanMode: boolean;
-  runner?: 'claude' | 'codex';
+  runner?: 'claude' | 'codex' | 'qwen';
   model?: string;
   executor?: 'local' | 'docker';
   dockerImage?: string;

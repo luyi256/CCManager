@@ -3,8 +3,58 @@ import { agentPool } from '../services/agentPool.js';
 import * as storage from '../services/storage.js';
 import { generateToken, hashToken } from '../services/auth.js';
 import { db } from '../services/database.js';
+import type { Runner } from '../types/index.js';
 
 const router = Router();
+const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+interface RunnerModelsResponse {
+  ok?: boolean;
+  runner: Runner;
+  models: string[];
+  raw?: string;
+  cached?: boolean;
+  updatedAt?: string;
+}
+
+function getCachedModels(agentId: string, runner: Runner): RunnerModelsResponse | null {
+  const row = db.prepare(
+    'SELECT models, raw, updated_at FROM model_cache WHERE agent_id = ? AND runner = ?'
+  ).get(agentId, runner) as { models: string; raw: string | null; updated_at: string } | undefined;
+
+  if (!row) return null;
+
+  try {
+    const updatedAtMs = new Date(row.updated_at).getTime();
+    if (Number.isNaN(updatedAtMs) || Date.now() - updatedAtMs > MODEL_CACHE_TTL_MS) {
+      return null;
+    }
+
+    return {
+      runner,
+      models: JSON.parse(row.models) as string[],
+      raw: row.raw || undefined,
+      cached: true,
+      updatedAt: row.updated_at,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveModelCache(agentId: string, result: RunnerModelsResponse): RunnerModelsResponse {
+  const updatedAt = new Date().toISOString();
+  db.prepare(`
+    INSERT INTO model_cache (agent_id, runner, models, raw, updated_at)
+    VALUES (?, ?, ?, ?, ?)
+    ON CONFLICT(agent_id, runner) DO UPDATE SET
+      models = excluded.models,
+      raw = excluded.raw,
+      updated_at = excluded.updated_at
+  `).run(agentId, result.runner, JSON.stringify(result.models), result.raw || null, updatedAt);
+
+  return { ...result, cached: false, updatedAt };
+}
 
 // Get all agents (both connected and offline)
 router.get('/', async (req, res) => {
@@ -31,6 +81,47 @@ router.get('/online', async (req, res) => {
   } catch (error) {
     console.error('Failed to get online agents:', error);
     res.status(500).json({ message: 'Failed to get online agents' });
+  }
+});
+
+// Get available models for a coding CLI by asking the agent to run /model.
+router.get('/:id/models', async (req, res) => {
+  try {
+    const runner = req.query.runner;
+    if (runner !== 'claude' && runner !== 'codex' && runner !== 'qwen') {
+      return res.status(400).json({ message: 'Invalid runner' });
+    }
+
+    const typedRunner = runner as Runner;
+    const force = req.query.force === '1' || req.query.force === 'true';
+    if (!force) {
+      const cached = getCachedModels(req.params.id, typedRunner);
+      if (cached) {
+        return res.json(cached);
+      }
+    }
+
+    const result = await agentPool.requestModels(req.params.id, typedRunner);
+    if (
+      typeof result === 'object' &&
+      result !== null &&
+      'ok' in result &&
+      (result as { ok?: boolean }).ok === false
+    ) {
+      return res.status(502).json({
+        message: (result as { error?: string }).error || 'Failed to load models',
+      });
+    }
+
+    const modelResult = result as RunnerModelsResponse;
+    res.json(saveModelCache(req.params.id, {
+      runner: typedRunner,
+      models: Array.isArray(modelResult.models) ? modelResult.models : [],
+      raw: modelResult.raw,
+    }));
+  } catch (error) {
+    console.error('Failed to get runner models:', error);
+    res.status(500).json({ message: error instanceof Error ? error.message : 'Failed to get runner models' });
   }
 });
 

@@ -1,16 +1,26 @@
+import type { Runner } from '../types/index.js';
+
 // Per-task follow-up message queue
 // When a task is actively running, follow-ups are queued here and merged when execution finishes.
 
 interface QueuedMessage {
   prompt: string;
   images?: string[];
+  runner?: Runner;
+  model?: string;
 }
 
 const queues = new Map<number, QueuedMessage[]>();
 
-export function enqueue(taskId: number, prompt: string, images?: string[]): void {
+export function enqueue(
+  taskId: number,
+  prompt: string,
+  images?: string[],
+  runner?: Runner,
+  model?: string
+): void {
   if (!queues.has(taskId)) queues.set(taskId, []);
-  queues.get(taskId)!.push({ prompt, images });
+  queues.get(taskId)!.push({ prompt, images, runner, model });
 }
 
 export function dequeue(taskId: number): QueuedMessage | undefined {

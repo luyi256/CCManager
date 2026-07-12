@@ -163,7 +163,7 @@ class AgentPool {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
-    runner?: 'claude' | 'codex';
+    runner?: 'claude' | 'codex' | 'qwen';
     model?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
@@ -275,6 +275,19 @@ class AgentPool {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 15000);
       agent.socket.emit('sessions:detail', { projectPath, sessionId }, (result: unknown) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+  }
+
+  /** Ask agent to run the selected coding CLI's /model command. */
+  requestModels(agentId: string, runner: 'claude' | 'codex' | 'qwen'): Promise<unknown> {
+    const agent = this.agents.get(agentId);
+    if (!agent) return Promise.reject(new Error('Agent not connected'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Agent timeout')), 20000);
+      agent.socket.emit('models:list', { runner }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });

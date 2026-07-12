@@ -44,6 +44,8 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled';
 
+export type Runner = 'claude' | 'codex' | 'qwen';
+
 export interface GitInfo {
   branch: string;
   commits: Array<{
@@ -63,7 +65,7 @@ export interface Task {
   prompt: string;
   status: TaskStatus;
   isPlanMode: boolean;
-  runner?: 'claude' | 'codex';
+  runner?: Runner;
   model?: string;
   dependsOn?: number;
   worktreeBranch?: string;
@@ -128,14 +130,19 @@ export interface ServerToAgentEvents {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
+    runner?: Runner;
     model?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;
+    continueSession?: boolean;
+    sessionId?: string;
+    isRetry?: boolean;
     postTaskHook?: string;
     extraMounts?: ExtraMount[];
     allowedPaths?: string[];
     images?: string[];
+    startedAt?: string;
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;
   'task:cancel': (data: { taskId: number }) => void;

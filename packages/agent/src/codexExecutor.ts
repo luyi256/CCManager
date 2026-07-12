@@ -47,10 +47,15 @@ export class CodexExecutor extends EventEmitter {
 
     if (task.continueSession && task.sessionId) {
       // Resume a previous session
-      args = ['exec', 'resume', task.sessionId, '--json', '--dangerously-bypass-approvals-and-sandbox'];
+      args = ['exec', 'resume', task.sessionId, task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox'];
+      args.push(...imageArgs);
     } else {
       args = ['exec', task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox', '-C', workingDir];
       args.push(...imageArgs);
+    }
+
+    if (task.model) {
+      args.push('--model', task.model);
     }
 
     try {

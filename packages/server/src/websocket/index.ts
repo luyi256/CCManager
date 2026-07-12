@@ -100,6 +100,7 @@ export function setupWebSocket(server: HttpServer): Server {
               projectPath: project.projectPath,
               prompt,
               isPlanMode: task.isPlanMode,
+              runner: task.runner,
               model: task.model,
               executor: project.executor,
               dockerImage: project.dockerImage,
@@ -225,10 +226,14 @@ export function setupWebSocket(server: HttpServer): Server {
         if (task && hasQueued(data.taskId)) {
           const prompts: string[] = [];
           const allImages: string[] = [];
+          let queuedRunner = task.runner;
+          let queuedModel = task.model;
           let msg;
           while ((msg = dequeue(data.taskId))) {
             prompts.push(msg.prompt);
             if (msg.images) allImages.push(...msg.images);
+            if (msg.runner) queuedRunner = msg.runner;
+            if (msg.model !== undefined) queuedModel = msg.model;
           }
           clearFollowUpQueue(data.taskId);
 
@@ -252,6 +257,8 @@ export function setupWebSocket(server: HttpServer): Server {
               const startedAt = new Date().toISOString();
               task.status = 'running';
               task.continuePrompt = mergedPrompt;
+              task.runner = queuedRunner;
+              task.model = queuedModel;
               task.startedAt = startedAt;
               task.completedAt = undefined;
               task.error = undefined;
@@ -264,6 +271,7 @@ export function setupWebSocket(server: HttpServer): Server {
                 projectPath: project.projectPath,
                 prompt: mergedPrompt,
                 isPlanMode: task.isPlanMode,
+                runner: task.runner,
                 model: task.model,
                 executor: project.executor,
                 dockerImage: project.dockerImage,

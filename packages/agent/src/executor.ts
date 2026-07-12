@@ -57,7 +57,7 @@ export class ClaudeExecutor extends EventEmitter {
   private tempImageFiles: string[] = [];
   private collectedOutput = ''; // Track all output for auth failure detection
 
-  constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT) {
+  constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'claude') {
     super();
   }
 
@@ -97,14 +97,18 @@ export class ClaudeExecutor extends EventEmitter {
     const isContinue = !!(task.continueSession && task.sessionId);
 
     const args: string[] = [];
+    const isQwen = this.command === 'qwen';
     args.push('-p', prompt);
-    args.push('--output-format', 'stream-json', '--verbose');
+    args.push(isQwen ? '-o' : '--output-format', 'stream-json');
+    if (!isQwen) {
+      args.push('--verbose');
+    }
 
     if (task.model) {
       args.push('--model', task.model);
     }
 
-    if (task.isPlanMode) {
+    if (!isQwen && task.isPlanMode) {
       args.push('--permission-mode', 'plan');
     }
 
@@ -112,7 +116,7 @@ export class ClaudeExecutor extends EventEmitter {
       args.push('--resume', task.sessionId!);
     }
 
-    args.push('--dangerously-skip-permissions');
+    args.push(isQwen ? '--yolo' : '--dangerously-skip-permissions');
 
     try {
       await this.runClaudeCode(args, workingDir);
@@ -158,7 +162,7 @@ export class ClaudeExecutor extends EventEmitter {
         console.log(`Dropping privileges to uid=${uid} gid=${gid} for claude subprocess`);
       }
 
-      this.process = spawn('claude', args, spawnOpts);
+      this.process = spawn(this.command, args, spawnOpts);
 
       // Set execution timeout (Bug #25 fix)
       this.timeoutHandle = setTimeout(() => {

@@ -12,6 +12,65 @@ import { listSessions, listActiveSessions, getSessionDetail, searchSessions } fr
 const execAsync = promisify(exec);
 
 type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
+type Runner = 'claude' | 'codex' | 'qwen';
+
+function parseModelOutput(output: string, runner: Runner): string[] {
+  const models = new Set<string>();
+  const patterns = [
+    /(?:claude|qwen|gemini|gpt|o[1-9])[-/][A-Za-z0-9_.:-]+/g,
+    /(?:sonnet|opus|haiku)[-_][A-Za-z0-9_.:-]+/g,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of output.matchAll(pattern)) {
+      models.add(match[0].replace(/[,\])}]+$/, ''));
+    }
+  }
+
+  if (models.size === 0) {
+    for (const line of output.split('\n')) {
+      const cleaned = line
+        .replace(/^[\s>*-]+/, '')
+        .replace(/\s+\(.*\)$/, '')
+        .trim();
+      if (
+        cleaned &&
+        cleaned.length <= 80 &&
+        !/^(available|select|current|model|error|warning)/i.test(cleaned) &&
+        (runner === 'qwen' ? /qwen|gemini|coder/i.test(cleaned) : /claude|codex|gpt|o[1-9]|sonnet|opus|haiku/i.test(cleaned))
+      ) {
+        models.add(cleaned.split(/\s+/)[0]);
+      }
+    }
+  }
+
+  return Array.from(models);
+}
+
+async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: Runner; models?: string[]; raw?: string; error?: string }> {
+  const commandByRunner: Record<Runner, string> = {
+    claude: 'claude',
+    codex: 'codex',
+    qwen: 'qwen',
+  };
+  const command = commandByRunner[runner];
+  const cmd = runner === 'codex'
+    ? `${command} exec "/model" --json`
+    : `${command} -p "/model"`;
+
+  try {
+    const { stdout, stderr } = await execAsync(cmd, {
+      timeout: 15000,
+      maxBuffer: 1024 * 1024,
+      env: { ...process.env },
+    });
+    const raw = `${stdout}\n${stderr}`.trim();
+    return { ok: true, runner, models: parseModelOutput(raw, runner), raw };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return { ok: false, runner, error: message };
+  }
+}
 
 export class AgentConnection {
   private socket: Socket | null = null;
@@ -171,6 +230,14 @@ export class AgentConnection {
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });
+
+    this.socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
+      if (data.runner !== 'claude' && data.runner !== 'codex' && data.runner !== 'qwen') {
+        callback({ ok: false, error: 'Invalid runner' });
+        return;
+      }
+      callback(await listRunnerModels(data.runner));
+    });
   }
 
   private register(): void {
@@ -242,7 +309,7 @@ export class AgentConnection {
       await new Promise<void>((resolve) => setTimeout(resolve, 3000));
     }
 
-    let executor: ClaudeExecutor | DockerExecutor | undefined;
+    let executor: Executor | undefined;
     let executionPath = task.projectPath;
 
     try {
@@ -266,9 +333,15 @@ export class AgentConnection {
         }
       }
 
-      // Create executor based on task's executor setting (per-project)
+      // Create executor based on task runner first, then project executor.
+      // Docker execution currently wraps Claude Code only, so Codex uses the
+      // local Codex CLI even when the project executor is docker.
       const taskExecutor = task.executor ?? this.config.executor ?? 'local';
-      if (taskExecutor === 'docker' && this.config.dockerConfig) {
+      if (task.runner === 'codex') {
+        executor = new CodexExecutor();
+      } else if (task.runner === 'qwen') {
+        executor = new ClaudeExecutor(undefined, 'qwen');
+      } else if (taskExecutor === 'docker' && this.config.dockerConfig) {
         const dockerConfig = task.dockerImage
           ? { ...this.config.dockerConfig, image: task.dockerImage }
           : this.config.dockerConfig;

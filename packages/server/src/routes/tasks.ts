@@ -7,9 +7,16 @@ import { cancelDependentTasks } from '../services/waitingTasks.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { errorResponse } from '../utils/errorResponse.js';
 import { enqueue, hasQueued, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
-import type { Task } from '../types/index.js';
+import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
+const VALID_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen']);
+
+function parseRunner(value: unknown): Runner | undefined {
+  return typeof value === 'string' && VALID_RUNNERS.has(value as Runner)
+    ? value as Runner
+    : undefined;
+}
 
 // Get tasks for project
 router.get('/projects/:projectId/tasks', async (req, res) => {
@@ -46,6 +53,7 @@ router.get('/tasks/:id', async (req, res) => {
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
     const { prompt, isPlanMode, runner, model, dependsOn, images } = req.body;
+    const selectedRunner = parseRunner(runner) ?? 'claude';
     const projectId = req.params.projectId;
 
     if (!prompt && (!images || images.length === 0)) {
@@ -70,7 +78,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       prompt,
       status: 'pending',
       isPlanMode: isPlanMode || false,
-      runner: runner || 'claude',
+      runner: selectedRunner,
       model: model || undefined,
       dependsOn,
       createdAt: new Date().toISOString(),
@@ -303,7 +311,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
 router.post('/tasks/:id/continue', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id, 10);
-    const { prompt, images } = req.body;
+    const { prompt, images, runner, model } = req.body;
 
     if (!prompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt or images required' });
@@ -351,7 +359,9 @@ router.post('/tasks/:id/continue', async (req, res) => {
     // If task is currently active (running/waiting/etc.), queue instead of dispatching
     const activeStatuses = ['running', 'waiting', 'waiting_permission', 'plan_review'];
     if (activeStatuses.includes(task.status)) {
-      enqueue(taskId, prompt, images as string[] | undefined);
+      const nextRunner = parseRunner(runner) ?? task.runner;
+      const nextModel = typeof model === 'string' && model.trim() ? model : task.model;
+      enqueue(taskId, prompt, images as string[] | undefined, nextRunner, nextModel);
       const queued = queueSize(taskId);
       console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
       // Broadcast queue info to frontend
@@ -368,6 +378,8 @@ router.post('/tasks/:id/continue', async (req, res) => {
     const startedAt = new Date().toISOString();
     task.status = 'running';
     task.continuePrompt = prompt;
+    task.runner = parseRunner(runner) ?? task.runner;
+    task.model = typeof model === 'string' && model.trim() ? model : undefined;
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
@@ -380,6 +392,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       projectPath: project.projectPath,
       prompt: prompt,
       isPlanMode: task.isPlanMode,
+      runner: task.runner,
       model: task.model,
       executor: project.executor,
       dockerImage: project.dockerImage,
