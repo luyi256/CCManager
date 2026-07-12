@@ -108,8 +108,16 @@ export class ClaudeExecutor extends EventEmitter {
 
     const args: string[] = [];
     const isQwen = this.command === 'qwen';
-    args.push('-p', prompt);
-    args.push(isQwen ? '-o' : '--output-format', 'stream-json');
+    if (isQwen) {
+      // Qwen Code deprecated -p/--prompt and rejects it when any positional
+      // query is present. Use the positional prompt, and keep --resume attached
+      // to its value so older parsers do not treat the session id as a query.
+      args.push(prompt);
+      args.push('-o', 'stream-json');
+    } else {
+      args.push('-p', prompt);
+      args.push('--output-format', 'stream-json');
+    }
     if (!isQwen) {
       args.push('--verbose');
     }
@@ -123,7 +131,11 @@ export class ClaudeExecutor extends EventEmitter {
     }
 
     if (isContinue) {
-      args.push('--resume', task.sessionId!);
+      if (isQwen) {
+        args.push(`--resume=${task.sessionId!}`);
+      } else {
+        args.push('--resume', task.sessionId!);
+      }
     }
 
     args.push(isQwen ? '--yolo' : '--dangerously-skip-permissions');

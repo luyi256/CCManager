@@ -47,6 +47,15 @@ function formatDate(date: unknown): string {
   }
 }
 
+function hasResumeSession(task: Task): boolean {
+  if (!task.gitInfo) return false;
+  try {
+    return Boolean(JSON.parse(task.gitInfo).sessionId);
+  } catch {
+    return false;
+  }
+}
+
 interface ConversationPanelProps {
   task: Task;
   agentId?: string;
@@ -65,6 +74,12 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const task = liveTask || initialTask;
 
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(task.status);
+  const canSendFollowUp =
+    isActive ||
+    (
+      ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status) &&
+      hasResumeSession(task)
+    );
 
   const prevStatusRef = useRef(task.status);
   const followUpTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -157,7 +172,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     const prevStatus = prevStatusRef.current;
     prevStatusRef.current = task.status;
 
-    if ((prevStatus === 'completed' || prevStatus === 'cancelled' || prevStatus === 'failed') && task.status === 'running') {
+    if (['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(prevStatus) && task.status === 'running') {
       stream.reset();
       refetchLogs();
     }
@@ -503,7 +518,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
         {/* Bottom actions + input */}
         <div className="border-t border-dark-700 flex-shrink-0 bg-dark-850">
           {/* Follow-up input */}
-          {(task.status === 'completed' || isActive) && (
+          {canSendFollowUp && (
             <div className="p-3">
               <form
                 onSubmit={(e) => {

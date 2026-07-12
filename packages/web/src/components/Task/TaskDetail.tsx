@@ -46,6 +46,15 @@ function formatDate(date: unknown): string {
   }
 }
 
+function hasResumeSession(task: Task): boolean {
+  if (!task.gitInfo) return false;
+  try {
+    return Boolean(JSON.parse(task.gitInfo).sessionId);
+  } catch {
+    return false;
+  }
+}
+
 interface TaskDetailProps {
   task: Task;
   onClose: () => void;
@@ -64,6 +73,12 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
     task.status
   );
+  const canSendFollowUp =
+    isActive ||
+    (
+      ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status) &&
+      hasResumeSession(task)
+    );
 
   // Track previous status to detect transitions
   const prevStatusRef = useRef(task.status);
@@ -154,7 +169,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     prevStatusRef.current = task.status;
 
     // If transitioning from completed/cancelled/failed to running (retry/continuation), reset stream
-    if ((prevStatus === 'completed' || prevStatus === 'cancelled' || prevStatus === 'failed') && task.status === 'running') {
+    if (['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(prevStatus) && task.status === 'running') {
       stream.reset();
       // Refetch logs to get any newly saved content
       refetchLogs();
@@ -624,8 +639,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
 
           {/* Actions */}
           <div className="p-4 border-t border-dark-700 space-y-2 flex-shrink-0">
-            {/* Follow-up input: show for completed or active tasks */}
-            {(task.status === 'completed' || isActive) && (
+            {/* Follow-up input: show for active tasks and resumable finished sessions */}
+            {canSendFollowUp && (
               <>
                 <form
                   onSubmit={(e) => {
