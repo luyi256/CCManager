@@ -34,8 +34,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     const socketUrl = `${protocol}//${window.location.host}`;
 
     const token = getApiToken();
+    const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
     const socket = io(socketUrl, {
-      path: '/ccm/socket.io',
+      path: `${appBase || ''}/socket.io`,
       auth: { token },
       reconnection: true,
       reconnectionAttempts: Infinity,

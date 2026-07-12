@@ -137,13 +137,21 @@ app.get('/api/health', (req, res) => {
 const webDistPath = process.env.STATIC_PATH || path.resolve(__dirname, '../../web/dist');
 if (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === 'true') {
   console.log(`Serving static files from: ${webDistPath}`);
-  // Disable caching for development
+  // Keep the SPA shell and generated assets fresh; the PWA service worker
+  // handles its own precache lifecycle.
   app.use((req, res, next) => {
-    if (req.path.endsWith('.js') || req.path.endsWith('.css')) {
+    if (
+      req.path.endsWith('.js') ||
+      req.path.endsWith('.css') ||
+      req.path.endsWith('.html') ||
+      req.path.endsWith('/sw.js') ||
+      req.path.endsWith('/registerSW.js')
+    ) {
       res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
     }
     next();
   });
+  app.use('/ccm', express.static(webDistPath));
   app.use(express.static(webDistPath));
   app.get('*', (req, res) => {
     if (!req.path.startsWith('/api') && !req.path.startsWith('/socket.io')) {
