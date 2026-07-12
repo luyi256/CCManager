@@ -459,6 +459,27 @@ export async function appendTaskLog(
   taskId: number,
   entry: { type: string; content: unknown }
 ): Promise<void> {
+  if (entry.type === 'output' && typeof entry.content === 'string') {
+    const last = db.prepare(`
+      SELECT id, type, content FROM task_logs
+      WHERE task_id = ?
+      ORDER BY id DESC
+      LIMIT 1
+    `).get(taskId) as { id: number; type: string; content: string } | undefined;
+
+    if (last?.type === 'output') {
+      const previous = safeJsonParse(last.content, undefined);
+      if (typeof previous === 'string') {
+        db.prepare(`
+          UPDATE task_logs
+          SET timestamp = ?, content = ?
+          WHERE id = ?
+        `).run(new Date().toISOString(), JSON.stringify(previous + entry.content), last.id);
+        return;
+      }
+    }
+  }
+
   const stmt = db.prepare(`
     INSERT INTO task_logs (task_id, timestamp, type, content)
     VALUES (?, ?, ?, ?)

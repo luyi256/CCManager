@@ -135,6 +135,7 @@ export type GroupedItem =
 export function groupTimeline(timeline: TimelineItem[]): GroupedItem[] {
   const groups: GroupedItem[] = [];
   let toolBuffer: TimelineItem[] = [];
+  let outputBuffer: TimelineItem | null = null;
 
   const flushTools = () => {
     if (toolBuffer.length === 0) return;
@@ -146,18 +147,40 @@ export function groupTimeline(timeline: TimelineItem[]): GroupedItem[] {
     toolBuffer = [];
   };
 
+  const flushOutput = () => {
+    if (!outputBuffer) return;
+    groups.push({ type: 'single', item: outputBuffer });
+    outputBuffer = null;
+  };
+
   for (const item of timeline) {
     if (item.type === 'tool_use' || item.type === 'tool_result') {
+      flushOutput();
       if (item.type === 'tool_use') {
         toolBuffer.push(item);
       }
       // tool_result items are already embedded in tool_use via toolResult, skip standalone
+    } else if (item.type === 'output') {
+      flushTools();
+      if (outputBuffer) {
+        const previous: TimelineItem = outputBuffer;
+        outputBuffer = {
+          ...previous,
+          id: `${previous.id}-${item.id}`,
+          timestamp: item.timestamp,
+          content: `${previous.content}${item.content}`,
+        };
+      } else {
+        outputBuffer = item;
+      }
     } else {
       flushTools();
+      flushOutput();
       groups.push({ type: 'single', item });
     }
   }
   flushTools();
+  flushOutput();
   return groups;
 }
 
