@@ -1,9 +1,9 @@
 module.exports = {
   apps: [
     {
-      // API server + web (Express + Socket.IO). Reads .env (DATA_PATH/PORT/HOST)
-      // and <DATA_PATH>/secrets.env itself; only STATIC_PATH/SERVE_STATIC are
-      // supplied here so a fresh `pm2 start ecosystem.config.cjs` serves the SPA.
+      // API server + web (Express + Socket.IO). Reads <DATA_PATH>/secrets.env
+      // itself; DATA_PATH/STATIC_PATH/SERVE_STATIC are set here so a fresh
+      // `pm2 start ecosystem.config.cjs` uses the real data dir and serves the SPA.
       name: 'ccm-server',
       cwd: './packages/server',
       script: 'dist/index.js',
@@ -11,7 +11,7 @@ module.exports = {
       error_file: '/tmp/ccm-server.log',
       merge_logs: true,
       env: {
-        NODE_ENV: 'production',
+        DATA_PATH: '/home/CC/CCManagerData',
         SERVE_STATIC: 'true',
         STATIC_PATH: '/home/CC/CCManager/packages/web/dist'
       },
