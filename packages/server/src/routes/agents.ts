@@ -6,56 +6,20 @@ import { db } from '../services/database.js';
 import type { Runner } from '../types/index.js';
 
 const router = Router();
-const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
 
-interface RunnerModelsResponse {
-  ok?: boolean;
-  runner: Runner;
-  models: string[];
-  raw?: string;
-  cached?: boolean;
-  updatedAt?: string;
-}
-
-function getCachedModels(agentId: string, runner: Runner): RunnerModelsResponse | null {
-  const row = db.prepare(
-    'SELECT models, raw, updated_at FROM model_cache WHERE agent_id = ? AND runner = ?'
-  ).get(agentId, runner) as { models: string; raw: string | null; updated_at: string } | undefined;
-
-  if (!row) return null;
-
-  try {
-    const updatedAtMs = new Date(row.updated_at).getTime();
-    if (Number.isNaN(updatedAtMs) || Date.now() - updatedAtMs > MODEL_CACHE_TTL_MS) {
-      return null;
-    }
-
-    return {
-      runner,
-      models: JSON.parse(row.models) as string[],
-      raw: row.raw || undefined,
-      cached: true,
-      updatedAt: row.updated_at,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function saveModelCache(agentId: string, result: RunnerModelsResponse): RunnerModelsResponse {
-  const updatedAt = new Date().toISOString();
-  db.prepare(`
-    INSERT INTO model_cache (agent_id, runner, models, raw, updated_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(agent_id, runner) DO UPDATE SET
-      models = excluded.models,
-      raw = excluded.raw,
-      updated_at = excluded.updated_at
-  `).run(agentId, result.runner, JSON.stringify(result.models), result.raw || null, updatedAt);
-
-  return { ...result, cached: false, updatedAt };
-}
+// Coding CLIs can't enumerate models non-interactively — `<cli> -p "/model"` just sends
+// "/model" as a prompt and burns a full agent turn (codex literally replies "I'm Codex").
+// So we serve a known, instant list per runner instead of a slow, costly, useless call.
+// "Use default model" is always available in the UI. Values are what each CLI accepts for
+// its --model flag; edit here as CLIs add or rename models.
+const KNOWN_MODELS: Record<Runner, string[]> = {
+  claude: ['opus', 'sonnet', 'haiku'],
+  tclaude: ['opus', 'sonnet', 'haiku'],
+  codex: ['gpt-5-codex', 'gpt-5', 'o3'],
+  tcodex: ['gpt-5-codex', 'gpt-5', 'o3'],
+  qwen: ['qwen3-coder-plus', 'qwen3-coder-flash'],
+};
 
 // Get all agents (both connected and offline)
 router.get('/', async (req, res) => {
@@ -85,45 +49,20 @@ router.get('/online', async (req, res) => {
   }
 });
 
-// Get available models for a coding CLI by asking the agent to run /model.
+// Get available models for a coding CLI. Served instantly from a known list —
+// no agent round-trip (see KNOWN_MODELS above for why).
 router.get('/:id/models', async (req, res) => {
-  try {
-    const runner = req.query.runner;
-    if (typeof runner !== 'string' || !VALID_MODEL_RUNNERS.has(runner as Runner)) {
-      return res.status(400).json({ message: 'Invalid runner' });
-    }
-
-    const typedRunner = runner as Runner;
-    const force = req.query.force === '1' || req.query.force === 'true';
-    if (!force) {
-      const cached = getCachedModels(req.params.id, typedRunner);
-      if (cached) {
-        return res.json(cached);
-      }
-    }
-
-    const result = await agentPool.requestModels(req.params.id, typedRunner);
-    if (
-      typeof result === 'object' &&
-      result !== null &&
-      'ok' in result &&
-      (result as { ok?: boolean }).ok === false
-    ) {
-      return res.status(502).json({
-        message: (result as { error?: string }).error || 'Failed to load models',
-      });
-    }
-
-    const modelResult = result as RunnerModelsResponse;
-    res.json(saveModelCache(req.params.id, {
-      runner: typedRunner,
-      models: Array.isArray(modelResult.models) ? modelResult.models : [],
-      raw: modelResult.raw,
-    }));
-  } catch (error) {
-    console.error('Failed to get runner models:', error);
-    res.status(500).json({ message: error instanceof Error ? error.message : 'Failed to get runner models' });
+  const runner = req.query.runner;
+  if (typeof runner !== 'string' || !VALID_MODEL_RUNNERS.has(runner as Runner)) {
+    return res.status(400).json({ message: 'Invalid runner' });
   }
+  const typedRunner = runner as Runner;
+  res.json({
+    runner: typedRunner,
+    models: KNOWN_MODELS[typedRunner] ?? [],
+    cached: true,
+    pending: false,
+  });
 });
 
 // Pre-register an agent and generate its token

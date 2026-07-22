@@ -118,6 +118,8 @@ export interface RunnerModelsResponse {
   raw?: string;
   cached?: boolean;
   updatedAt?: string;
+  /** True when the list is stale/empty and the server is refreshing it in the background. */
+  pending?: boolean;
 }
 
 export async function getRunnerModels(agentId: string, runner: Runner, force = false): Promise<RunnerModelsResponse> {
@@ -386,6 +388,17 @@ export async function continueSession(projectId: string, sessionId: string, prom
   return request(`/projects/${projectId}/sessions/${sessionId}/continue`, {
     method: 'POST',
     body: JSON.stringify({ prompt, images }),
+  });
+}
+
+/**
+ * Adopt a CLI session as a conversation: creates a task linked to the session
+ * with its history imported, without running it. Opens in the sidebar + center.
+ */
+export async function adoptSession(projectId: string, sessionId: string, relatedSessionIds?: string[]): Promise<Task> {
+  return request(`/projects/${projectId}/sessions/${sessionId}/adopt`, {
+    method: 'POST',
+    body: JSON.stringify({ relatedSessionIds }),
   });
 }
 

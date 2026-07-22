@@ -8,27 +8,18 @@ import {
   Clock,
   ArrowDown,
   ExternalLink,
-  Send,
   ChevronDown,
   Loader2,
   Copy,
   Check,
-  Image as ImageIcon,
-  Paperclip,
+  Play,
 } from 'lucide-react';
 import { useSessions, useActiveSessions, useSessionDetail, useSessionSearch } from '../../hooks/useSessions';
-import { continueSession } from '../../services/api';
+import { adoptSession } from '../../services/api';
 import type { SessionSearchMatch } from '../../services/api';
 import { groupTimeline, TimelineView } from '../Task/TimelineRenderer';
 import type { TimelineItem } from '../Task/TimelineRenderer';
 import type { Task } from '../../types';
-import VoiceInput from '../common/VoiceInput';
-
-interface PastedImage {
-  id: string;
-  dataUrl: string;
-  name: string;
-}
 
 /** Flattened search result: one entry per matched message */
 interface FlatSearchResult {
@@ -518,12 +509,8 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
 }) {
   const { data: detail, isLoading } = useSessionDetail(projectId, sessionId, relatedSessionIds);
   const containerRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const [autoScroll, setAutoScroll] = useState(false);
-  const [followUpPrompt, setFollowUpPrompt] = useState('');
-  const [images, setImages] = useState<PastedImage[]>([]);
-  const [sending, setSending] = useState(false);
+  const [adopting, setAdopting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const hasScrolledToEntry = useRef(false);
 
@@ -581,83 +568,19 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
     setAutoScroll(!isAtBottom && scrollTop > 0);
   }, []);
 
-  // Auto-resize textarea
-  useEffect(() => {
-    const el = textareaRef.current;
-    if (el) {
-      el.style.height = 'auto';
-      el.style.height = `${el.scrollHeight}px`;
-    }
-  }, [followUpPrompt]);
-
-  const addImageFile = useCallback((file: File) => {
-    if (!file.type.startsWith('image/')) return;
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const dataUrl = event.target?.result as string;
-      if (!dataUrl) return;
-
-      setImages((prev) => [
-        ...prev,
-        {
-          id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          dataUrl,
-          name: file.name || `image-${Date.now()}.png`,
-        },
-      ]);
-    };
-    reader.readAsDataURL(file);
-  }, []);
-
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    if (!e.clipboardData?.items) return;
-
-    for (let i = 0; i < e.clipboardData.items.length; i++) {
-      const item = e.clipboardData.items[i];
-      if (!item.type.startsWith('image/')) continue;
-      const file = item.getAsFile();
-      if (file) addImageFile(file);
-    }
-  }, [addImageFile]);
-
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    for (let i = 0; i < files.length; i++) {
-      addImageFile(files[i]);
-    }
-    e.target.value = '';
-  }, [addImageFile]);
-
-  const removeImage = useCallback((id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
-  }, []);
-
-  const handleVoiceTranscription = useCallback((text: string) => {
-    setFollowUpPrompt((prev) => (prev ? `${prev} ${text}` : text));
-  }, []);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const prompt = followUpPrompt.trim();
-    if ((!prompt && images.length === 0) || sending) return;
-
-    setSending(true);
+  const handleContinue = async () => {
+    if (adopting) return;
+    setAdopting(true);
     setError(null);
     try {
-      const imageBase64s = images.length > 0
-        ? images.map((img) => img.dataUrl)
-        : undefined;
-      const task = await continueSession(projectId, sessionId, prompt, imageBase64s);
-      // Close session browser and open the new task
+      const task = await adoptSession(projectId, sessionId, relatedSessionIds);
+      // Close the browser and open the adopted conversation (sidebar + center).
       onClose();
       onTaskCreated?.(task);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to continue session');
     } finally {
-      setSending(false);
+      setAdopting(false);
     }
   };
 
@@ -742,90 +665,24 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
         )}
       </div>
 
-      {/* Follow-up input */}
+      {/* Continue action — adopt this session into the conversation view */}
       {!isLoading && timeline.length > 0 && (
         <div className="p-4 border-t border-dark-700 flex-shrink-0">
           {error && (
             <div className="text-red-400 text-xs mb-2">{error}</div>
           )}
-          <form onSubmit={handleSubmit}>
-            <div className="flex gap-2">
-              <div className="flex-1 min-w-0">
-                <textarea
-                  ref={textareaRef}
-                  value={followUpPrompt}
-                  onChange={(e) => setFollowUpPrompt(e.target.value)}
-                  onPaste={handlePaste}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                      e.preventDefault();
-                      handleSubmit(e);
-                    }
-                  }}
-                  placeholder="Continue this session..."
-                  rows={1}
-                  className="w-full px-3 py-2 bg-dark-800 border border-dark-700 rounded-lg text-dark-200 text-sm placeholder-dark-500 focus:outline-none focus:border-primary-500 resize-none max-h-32 overflow-y-auto"
-                />
-                {images.length > 0 && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {images.map((img) => (
-                      <div
-                        key={img.id}
-                        className="relative group w-14 h-14 rounded-lg overflow-hidden border border-dark-600 bg-dark-800"
-                      >
-                        <img
-                          src={img.dataUrl}
-                          alt={img.name}
-                          className="w-full h-full object-cover"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => removeImage(img.id)}
-                          className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
-                          title="Remove image"
-                        >
-                          <X size={12} />
-                        </button>
-                      </div>
-                    ))}
-                    <div className="flex items-center text-dark-500 text-xs gap-1">
-                      <ImageIcon size={12} />
-                      <span>{images.length}</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <VoiceInput onTranscription={handleVoiceTranscription} compact />
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                className="hidden"
-                onChange={handleFileSelect}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={sending}
-                className="p-2 rounded-lg bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600 transition-colors self-start disabled:opacity-50"
-                title="Upload images"
-              >
-                <Paperclip size={18} />
-              </button>
-              <button
-                type="submit"
-                disabled={(!followUpPrompt.trim() && images.length === 0) || sending}
-                className="btn btn-primary p-2 shrink-0 disabled:opacity-50 self-start"
-                title="Send follow-up (creates a new task)"
-              >
-                {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-              </button>
-            </div>
-            <p className="text-xs text-dark-600 mt-1">
-              Creates a new task that resumes this session
-            </p>
-          </form>
+          <button
+            type="button"
+            onClick={handleContinue}
+            disabled={adopting}
+            className="btn btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
+          >
+            {adopting ? <Loader2 size={16} className="animate-spin" /> : <Play size={16} />}
+            继续
+          </button>
+          <p className="text-xs text-dark-600 mt-1.5 text-center">
+            移入左侧对话列表，历史记录显示在中间，可继续对话
+          </p>
         </div>
       )}
     </>

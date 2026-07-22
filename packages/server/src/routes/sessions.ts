@@ -329,4 +329,76 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
   }
 });
 
+// Adopt a CLI session as a conversation WITHOUT running it: create a completed
+// task linked to the session and import its history into the task timeline, so it
+// appears in the conversation sidebar and its history renders in the center view.
+// Follow-ups from there resume the real session via gitInfo.sessionId.
+router.post('/projects/:projectId/sessions/:sessionId/adopt', async (req, res) => {
+  try {
+    const project = await storage.getProject(req.params.projectId);
+    if (!project) {
+      return res.status(404).json({ message: 'Project not found' });
+    }
+
+    const sessionId = req.params.sessionId;
+    const relatedRaw = req.body?.relatedSessionIds;
+    const relatedSessionIds = Array.isArray(relatedRaw)
+      ? relatedRaw.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
+      : undefined;
+
+    // Idempotent: if a task already represents this session, just return it.
+    const existingId = getLinkedTaskIds(project.id).get(sessionId);
+    if (existingId) {
+      const existing = await storage.getTaskById(existingId);
+      if (existing) return res.json(existing);
+    }
+
+    const detail = await fetchSessionDetail(project, sessionId, relatedSessionIds);
+    if (!detail || detail.entries.length === 0) {
+      return res.status(404).json({ message: 'Session not found or has no content' });
+    }
+
+    const firstUser = detail.entries.find((e) => e.type === 'user_message');
+    const promptText = (firstUser?.content || 'Resumed CLI session').slice(0, 2000);
+    const firstTs = detail.entries[0]?.timestamp;
+    const createdAt = firstTs ? new Date(firstTs).toISOString() : new Date().toISOString();
+
+    // Create a completed task pre-linked to the session.
+    const task = await storage.createTask(project.id, {
+      projectId: project.id,
+      prompt: promptText,
+      status: 'completed',
+      isPlanMode: false,
+      createdAt,
+    });
+    task.gitInfo = JSON.stringify({ sessionId });
+    task.completedAt = new Date().toISOString();
+    await storage.saveTask(project.id, task);
+
+    // Import the session timeline as task logs. Skip the first user message —
+    // it becomes the task prompt (rendered as the opening message in the panel).
+    let promptConsumed = false;
+    for (const e of detail.entries) {
+      if (!promptConsumed && e.type === 'user_message' && e.content === firstUser?.content) {
+        promptConsumed = true;
+        continue;
+      }
+      if (e.type === 'output') {
+        await storage.appendTaskLog(project.id, task.id, { type: 'output', content: e.content });
+      } else if (e.type === 'user_message') {
+        await storage.appendTaskLog(project.id, task.id, { type: 'user_message', content: e.content });
+      } else if (e.type === 'tool_use') {
+        await storage.appendTaskLog(project.id, task.id, { type: 'tool_use', content: { id: e.id, name: e.toolName, input: e.toolInput } });
+      } else if (e.type === 'tool_result') {
+        await storage.appendTaskLog(project.id, task.id, { type: 'tool_result', content: { id: e.id, result: e.toolResult } });
+      }
+    }
+
+    res.json(task);
+  } catch (error) {
+    console.error('Failed to adopt session:', error);
+    res.status(500).json({ message: 'Failed to adopt session' });
+  }
+});
+
 export default router;
