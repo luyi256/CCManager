@@ -7,7 +7,9 @@ export function isPathAllowed(projectPath: string, allowedPaths: string[]): bool
   for (const allowed of allowedPaths) {
     if (allowed.endsWith('/*')) {
       const base = path.posix.normalize(allowed.slice(0, -2));
-      if (normalized.startsWith(base + '/')) return true;
+      // `/base/*` also matches the base directory itself (parity with `/**`),
+      // so a project rooted at the allowed base is not rejected on a trailing slash.
+      if (normalized === base || normalized.startsWith(base + '/')) return true;
     } else if (allowed.endsWith('/**')) {
       const base = path.posix.normalize(allowed.slice(0, -3));
       if (normalized === base || normalized.startsWith(base + '/')) return true;

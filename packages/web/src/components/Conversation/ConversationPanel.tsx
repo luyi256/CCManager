@@ -29,6 +29,7 @@ import {
   groupTimeline,
   TimelineView,
 } from '../Task/TimelineRenderer';
+import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
 
 interface PastedImage {
   id: string;
@@ -44,15 +45,6 @@ function formatDate(date: unknown): string {
     return d.toLocaleString();
   } catch {
     return 'Invalid date';
-  }
-}
-
-function hasResumeSession(task: Task): boolean {
-  if (!task.gitInfo) return false;
-  try {
-    return Boolean(JSON.parse(task.gitInfo).sessionId);
-  } catch {
-    return false;
   }
 }
 
@@ -73,13 +65,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const { data: liveTask } = useTask(initialTask.id);
   const task = liveTask || initialTask;
 
-  const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(task.status);
-  const canSendFollowUp =
-    isActive ||
-    (
-      ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status) &&
-      hasResumeSession(task)
-    );
+  const isActive = isTaskActive(task.status);
+  const canSendFollowUp = canSendFollowUpForTask(task);
 
   const prevStatusRef = useRef(task.status);
   const followUpTextareaRef = useRef<HTMLTextAreaElement>(null);
@@ -303,7 +290,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   }, [task.id, task.runner, task.model]);
 
   return (
-    <div className="flex-1 flex flex-col min-w-0 h-full">
+    <div className="flex-1 min-h-0 flex flex-col min-w-0">
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-dark-700 flex-shrink-0 bg-dark-850">
         {onBack && (
@@ -368,9 +355,10 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
         </div>
       )}
 
-      <ErrorBoundary>
-        {/* Timeline content */}
-        <div className="flex-1 overflow-hidden flex flex-col min-h-0">
+      <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+        <ErrorBoundary>
+          {/* Timeline content */}
+          <div className="flex-1 overflow-hidden flex flex-col min-h-0">
           {hasContent && (
             <div className="flex-1 relative min-h-0">
               <div
@@ -513,10 +501,10 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
               )}
             </div>
           )}
-        </div>
+          </div>
 
-        {/* Bottom actions + input */}
-        <div className="border-t border-dark-700 flex-shrink-0 bg-dark-850">
+          {/* Bottom actions + input */}
+          <div className="border-t border-dark-700 flex-shrink-0 bg-dark-850">
           {/* Follow-up input */}
           {canSendFollowUp && (
             <div className="p-3">
@@ -644,8 +632,9 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
               )}
             </div>
           )}
-        </div>
-      </ErrorBoundary>
+          </div>
+        </ErrorBoundary>
+      </div>
     </div>
   );
 }

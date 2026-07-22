@@ -198,10 +198,17 @@ export class DockerExecutor extends EventEmitter {
         if (buffer.trim()) {
           this.parseLine(buffer);
         }
-        this.emit('exit', code);
         this.process = null;
         this.currentTaskId = null;
         this.containerName = null;
+        // Non-zero exit is a failure (previously reported as success).
+        if (code !== 0) {
+          const error = new Error(`docker task exited with code ${code}`);
+          this.emit('error', error);
+          reject(error);
+          return;
+        }
+        this.emit('exit', code);
         resolve();
       });
     });

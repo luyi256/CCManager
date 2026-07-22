@@ -109,7 +109,7 @@ export default function ProjectPage() {
         onMobileToggle={() => setMobileSidebarOpen((value) => !value)}
       />
 
-      <main className="flex-1 min-w-0 flex flex-col">
+      <main className="flex-1 min-w-0 min-h-0 flex flex-col">
         <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-dark-700 bg-dark-850">
           <div className="min-w-0 pl-8 md:pl-0">
             <h1 className="text-sm font-semibold text-dark-100 truncate">{project.name}</h1>

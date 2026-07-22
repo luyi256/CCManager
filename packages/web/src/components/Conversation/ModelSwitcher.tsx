@@ -5,11 +5,13 @@ import type { Runner } from '../../types';
 
 const RUNNERS: Array<{ id: Runner; label: string; accent: string }> = [
   { id: 'codex', label: 'Codex', accent: 'text-emerald-400' },
+  { id: 'tcodex', label: 'tCodex', accent: 'text-teal-400' },
   { id: 'claude', label: 'Claude', accent: 'text-primary-400' },
+  { id: 'tclaude', label: 'tClaude', accent: 'text-sky-400' },
   { id: 'qwen', label: 'Qwen', accent: 'text-amber-400' },
 ];
 
-type Step = 'runner' | 'mode' | 'models';
+type Step = 'runner' | 'models';
 
 interface ModelSwitcherProps {
   selectedRunner: Runner;
@@ -96,13 +98,14 @@ export default function ModelSwitcher({
     close();
   };
 
-  const openModelList = () => {
-    onRunnerChange(draftRunner);
+  const openModelList = (runner: Runner) => {
+    setDraftRunner(runner);
+    onRunnerChange(runner);
     onModelChange('');
     setStep('models');
     setModels([]);
     setModelListMeta(null);
-    void loadModels(draftRunner);
+    void loadModels(runner);
   };
 
   return (
@@ -153,9 +156,8 @@ export default function ModelSwitcher({
                     key={runner.id}
                     type="button"
                     onClick={() => {
-                      setDraftRunner(runner.id);
-                      setStep('mode');
                       setError(null);
+                      openModelList(runner.id);
                     }}
                     className="flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
                   >
@@ -165,30 +167,6 @@ export default function ModelSwitcher({
                   </button>
                 ))}
               </div>
-            </div>
-          )}
-
-          {step === 'mode' && (
-            <div className="p-2">
-              <div className="px-1 pb-2 text-xs uppercase text-dark-500">
-                {draftRunnerMeta.label} model option
-              </div>
-              <button
-                type="button"
-                onClick={applyDefault}
-                className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
-              >
-                <span className="w-4">{!selectedModel && selectedRunner === draftRunner && <Check size={14} />}</span>
-                <span className="flex-1">Use default model</span>
-              </button>
-              <button
-                type="button"
-                onClick={openModelList}
-                className="mt-1 w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
-              >
-                <RefreshCw size={14} className="text-dark-500" />
-                <span className="flex-1">Switch model from /model</span>
-              </button>
             </div>
           )}
 
@@ -213,6 +191,15 @@ export default function ModelSwitcher({
                   {isLoading ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
                 </button>
               </div>
+
+              <button
+                type="button"
+                onClick={applyDefault}
+                className="mb-1 w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
+              >
+                <span className="w-4">{!selectedModel && selectedRunner === draftRunner && <Check size={14} />}</span>
+                <span className="flex-1">Use default model</span>
+              </button>
 
               <div className="max-h-64 overflow-y-auto py-1">
                 {isLoading && models.length === 0 ? (

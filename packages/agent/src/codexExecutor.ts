@@ -14,8 +14,10 @@ export class CodexExecutor extends EventEmitter {
   private timeoutHandle: NodeJS.Timeout | null = null;
   private sessionId: string | null = null;
   private tempImageFiles: string[] = [];
+  private collectedOutput = ''; // Track output for auth-failure detection
+  private fatalError: Error | null = null;
 
-  constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT) {
+  constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'codex') {
     super();
   }
 
@@ -26,6 +28,8 @@ export class CodexExecutor extends EventEmitter {
   async execute(task: TaskRequest, workingDir: string): Promise<void> {
     this.currentTaskId = task.taskId;
     this.tempImageFiles = [];
+    this.collectedOutput = '';
+    this.fatalError = null;
 
     // Save base64 images to temp files
     const imageArgs: string[] = [];
@@ -82,7 +86,7 @@ export class CodexExecutor extends EventEmitter {
     return new Promise((resolve, reject) => {
       const env = { ...process.env };
 
-      this.process = spawn('codex', args, {
+      this.process = spawn(this.command, args, {
         cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -115,6 +119,7 @@ export class CodexExecutor extends EventEmitter {
 
       this.process.stderr?.on('data', (data: Buffer) => {
         const text = data.toString();
+        this.collectedOutput += text;
         // Filter out codex's own log lines (timestamps with ERROR/WARN/INFO)
         if (!text.match(/^\d{4}-\d{2}-\d{2}T.*(?:ERROR|WARN|INFO)/)) {
           this.emit('output', text);
@@ -122,8 +127,15 @@ export class CodexExecutor extends EventEmitter {
       });
 
       this.process.on('error', (error) => {
-        this.emit('error', error);
-        reject(error);
+        const friendly =
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? new Error(
+                `${this.command} CLI not found on this agent. ` +
+                `Install it or ensure "${this.command}" is on the agent process PATH.`
+              )
+            : error;
+        this.emit('error', friendly);
+        reject(friendly);
       });
 
       this.process.on('exit', (code) => {
@@ -134,6 +146,41 @@ export class CodexExecutor extends EventEmitter {
         if (buffer.trim()) {
           this.parseLine(buffer);
         }
+
+        // A turn.failed / error event during the run is fatal — surface its message.
+        if (this.fatalError) {
+          const error = this.fatalError;
+          this.process = null;
+          this.currentTaskId = null;
+          this.fatalError = null;
+          reject(error);
+          return;
+        }
+
+        // Detect auth failure: CLI exited without establishing a session and the
+        // output indicates the user is not logged in.
+        if (!this.sessionId && /not logged in|please run .*login|unauthorized|authentication (failed|error)|401/i.test(this.collectedOutput)) {
+          const authError = new Error(
+            `${this.command} CLI is not logged in on this agent. ` +
+            `Run "${this.command} login" on the agent machine, or configure its credentials.`
+          );
+          this.emit('error', authError);
+          this.process = null;
+          this.currentTaskId = null;
+          reject(authError);
+          return;
+        }
+
+        // Non-zero exit is a failure (previously reported as success).
+        if (code !== 0) {
+          const error = new Error(`${this.command} exited with code ${code}`);
+          this.emit('error', error);
+          this.process = null;
+          this.currentTaskId = null;
+          reject(error);
+          return;
+        }
+
         this.emit('exit', code);
         this.process = null;
         this.currentTaskId = null;
@@ -186,12 +233,16 @@ export class CodexExecutor extends EventEmitter {
 
         case 'turn.failed':
           if (event.error?.message) {
-            this.emit('error', new Error(event.error.message));
+            this.fatalError = new Error(event.error.message);
+            this.collectedOutput += event.error.message;
+            this.emit('error', this.fatalError);
           }
           break;
 
         case 'error':
           if (event.message) {
+            this.collectedOutput += event.message;
+            if (!this.fatalError) this.fatalError = new Error(event.message);
             this.emit('output', `[Codex Error] ${event.message}\n`);
           }
           break;

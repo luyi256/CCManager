@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useRef, useState, useCallback, ReactNode } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { io, Socket } from 'socket.io-client';
 import type { Agent } from '../types';
 import { getApiToken } from '../services/auth';
@@ -23,6 +24,7 @@ interface WebSocketContextType {
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
 
 export function WebSocketProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [agents, setAgents] = useState<Agent[]>([]);
@@ -34,6 +36,9 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     const socketUrl = `${protocol}//${window.location.host}`;
 
     const token = getApiToken();
+    // Derive the socket.io path from the app base (Vite base = '/ccm/') so it matches
+    // the nginx reverse-proxy location `/ccm/socket.io/`. Hardcoding '/socket.io' 404s
+    // in production behind the proxy (which only forwards the /ccm-prefixed path).
     const appBase = import.meta.env.BASE_URL.replace(/\/$/, '');
     const socket = io(socketUrl, {
       path: `${appBase || ''}/socket.io`,
@@ -86,11 +91,20 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       'task:status',
       'task:completed',
       'task:failed',
+      'task:followup_queued',
     ];
 
     for (const event of taskEvents) {
       socket.on(event, (data: WebSocketMessage) => {
         const msg: WebSocketMessage = { ...data, type: event };
+        if (
+          typeof msg.taskId === 'number' &&
+          ['task:status', 'task:completed', 'task:failed', 'task:followup_queued'].includes(event)
+        ) {
+          queryClient.invalidateQueries({ queryKey: ['task', msg.taskId] });
+          queryClient.invalidateQueries({ queryKey: ['tasks'] });
+          queryClient.invalidateQueries({ queryKey: ['taskLogs', msg.taskId] });
+        }
         handlersRef.current.forEach((handler) => handler(msg));
       });
     }
@@ -98,7 +112,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     return () => {
       socket.disconnect();
     };
-  }, []);
+  }, [queryClient]);
 
   const subscribe = useCallback((taskId: string) => {
     socketRef.current?.emit('subscribe:task', { taskId });

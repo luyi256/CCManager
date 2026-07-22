@@ -40,12 +40,33 @@ router.post('/', async (req, res) => {
     if (!name || !agentId || !projectPath) {
       return res.status(400).json({ message: 'Missing required fields: name, agentId, projectPath' });
     }
+    if (typeof name !== 'string' || typeof agentId !== 'string' || typeof projectPath !== 'string') {
+      return res.status(400).json({ message: 'Invalid fields: name, agentId, and projectPath must be strings' });
+    }
+    if (securityMode && !['auto', 'safe'].includes(securityMode)) {
+      return res.status(400).json({ message: 'Invalid securityMode' });
+    }
+    if (executor && !['local', 'docker'].includes(executor)) {
+      return res.status(400).json({ message: 'Invalid executor' });
+    }
+    if (allowedPaths !== undefined && (!Array.isArray(allowedPaths) || allowedPaths.some((p) => typeof p !== 'string'))) {
+      return res.status(400).json({ message: 'allowedPaths must be an array of strings' });
+    }
+    if (extraMounts !== undefined && !Array.isArray(extraMounts)) {
+      return res.status(400).json({ message: 'extraMounts must be an array' });
+    }
+
+    const normalizedAgentId = agentId.trim();
+    const agent = agentPool.getAgent(normalizedAgentId);
+    if (!agent) {
+      return res.status(503).json({ message: `Agent ${agentId} is not connected` });
+    }
 
     const project: Omit<Project, 'taskCount' | 'runningCount'> = {
       id: uuidv4(),
-      name,
-      agentId,
-      projectPath,
+      name: name.trim(),
+      agentId: normalizedAgentId,
+      projectPath: projectPath.trim(),
       securityMode: securityMode || 'auto',
       executor: executor || 'local',
       dockerImage: dockerImage || undefined,

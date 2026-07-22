@@ -87,17 +87,26 @@ const apiLimiter = rateLimit({
   message: { error: 'Too many requests, please try again later' },
 });
 app.use('/api', apiLimiter);
+app.use('/ccm/api', apiLimiter);
+
+// Health check must stay public so setup scripts and remote devices can probe connectivity.
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+app.get('/ccm/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 
 // Request logging for debugging
 app.use((req, res, next) => {
-  if (req.path.startsWith('/api')) {
+  if (req.path.startsWith('/api') || req.path.startsWith('/ccm/api')) {
     console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
   }
   next();
 });
 
 // API authentication middleware — device-token based
-app.use('/api', (req, res, next) => {
+const apiAuthMiddleware: express.RequestHandler = (req, res, next) => {
   // Public endpoints: health check
   if (req.path === '/health') return next();
 
@@ -117,7 +126,9 @@ app.use('/api', (req, res, next) => {
   // Update last_used_at with debounce
   updateDeviceLastUsed(tokenHash);
   next();
-});
+};
+app.use('/api', apiAuthMiddleware);
+app.use('/ccm/api', apiAuthMiddleware);
 
 // API Routes
 app.use('/api/auth', authRouter);
@@ -127,11 +138,13 @@ app.use('/api', tasksRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/transcribe', transcribeRouter);
 app.use('/api', sessionsRouter);
-
-// Health check
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
+app.use('/ccm/api/auth', authRouter);
+app.use('/ccm/api/projects', projectsRouter);
+app.use('/ccm/api/agents', agentsRouter);
+app.use('/ccm/api', tasksRouter);
+app.use('/ccm/api/settings', settingsRouter);
+app.use('/ccm/api/transcribe', transcribeRouter);
+app.use('/ccm/api', sessionsRouter);
 
 // Serve static files in production
 const webDistPath = process.env.STATIC_PATH || path.resolve(__dirname, '../../web/dist');
@@ -154,7 +167,11 @@ if (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === 'true'
   app.use('/ccm', express.static(webDistPath));
   app.use(express.static(webDistPath));
   app.get('*', (req, res) => {
-    if (!req.path.startsWith('/api') && !req.path.startsWith('/socket.io')) {
+    if (
+      !req.path.startsWith('/api') &&
+      !req.path.startsWith('/ccm/api') &&
+      !req.path.startsWith('/socket.io')
+    ) {
       res.sendFile(path.join(webDistPath, 'index.html'));
     }
   });

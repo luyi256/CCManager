@@ -7,6 +7,7 @@ import type { Runner } from '../types/index.js';
 
 const router = Router();
 const MODEL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
 
 interface RunnerModelsResponse {
   ok?: boolean;
@@ -88,7 +89,7 @@ router.get('/online', async (req, res) => {
 router.get('/:id/models', async (req, res) => {
   try {
     const runner = req.query.runner;
-    if (runner !== 'claude' && runner !== 'codex' && runner !== 'qwen') {
+    if (typeof runner !== 'string' || !VALID_MODEL_RUNNERS.has(runner as Runner)) {
       return res.status(400).json({ message: 'Invalid runner' });
     }
 

@@ -221,8 +221,16 @@ export class ClaudeExecutor extends EventEmitter {
       });
 
       this.process.on('error', (error) => {
-        this.emit('error', error);
-        reject(error);
+        // Turn the cryptic "spawn <cmd> ENOENT" into an actionable message.
+        const friendly =
+          (error as NodeJS.ErrnoException).code === 'ENOENT'
+            ? new Error(
+                `${this.command} CLI not found on this agent. ` +
+                `Install it or ensure "${this.command}" is on the agent process PATH.`
+              )
+            : error;
+        this.emit('error', friendly);
+        reject(friendly);
       });
 
       this.process.on('exit', (code) => {

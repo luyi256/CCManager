@@ -156,7 +156,7 @@ export default function ConversationSidebar({
                     className={`
                       w-full text-left px-3 py-2.5 rounded-lg transition-colors group
                       ${selectedTaskId === task.id
-                        ? 'bg-dark-700 text-dark-100'
+                        ? 'bg-dark-700 text-dark-100 ring-1 ring-inset ring-primary-500/30'
                         : 'hover:bg-dark-800 text-dark-300'
                       }
                     `}

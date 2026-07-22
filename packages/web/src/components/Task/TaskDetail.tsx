@@ -27,6 +27,7 @@ import {
   groupTimeline,
   TimelineView,
 } from './TimelineRenderer';
+import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
 
 interface PastedImage {
   id: string;
@@ -46,15 +47,6 @@ function formatDate(date: unknown): string {
   }
 }
 
-function hasResumeSession(task: Task): boolean {
-  if (!task.gitInfo) return false;
-  try {
-    return Boolean(JSON.parse(task.gitInfo).sessionId);
-  } catch {
-    return false;
-  }
-}
-
 interface TaskDetailProps {
   task: Task;
   onClose: () => void;
@@ -70,15 +62,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const { data: liveTask } = useTask(initialTask.id);
   const task = liveTask || initialTask;
 
-  const isActive = ['running', 'waiting', 'waiting_permission', 'plan_review'].includes(
-    task.status
-  );
-  const canSendFollowUp =
-    isActive ||
-    (
-      ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status) &&
-      hasResumeSession(task)
-    );
+  const isActive = isTaskActive(task.status);
+  const canSendFollowUp = canSendFollowUpForTask(task);
 
   // Track previous status to detect transitions
   const prevStatusRef = useRef(task.status);

@@ -55,7 +55,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     }
 
     const error = await response.json().catch(() => ({ message: response.statusText }));
-    lastError = new Error(error.message || 'Request failed');
+    lastError = new Error(error.message || error.error || 'Request failed');
 
     // Auth failure — clear token and reload to show login page
     if (response.status === 401 || response.status === 403) {
@@ -382,10 +382,10 @@ export async function getSessionDetail(projectId: string, sessionId: string, rel
   return request(`/projects/${projectId}/sessions/${sessionId}${params}`);
 }
 
-export async function continueSession(projectId: string, sessionId: string, prompt: string): Promise<Task> {
+export async function continueSession(projectId: string, sessionId: string, prompt: string, images?: string[]): Promise<Task> {
   return request(`/projects/${projectId}/sessions/${sessionId}/continue`, {
     method: 'POST',
-    body: JSON.stringify({ prompt }),
+    body: JSON.stringify({ prompt, images }),
   });
 }
 

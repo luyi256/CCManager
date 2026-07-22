@@ -21,16 +21,10 @@ export function useCreateProject() {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: Omit<Project, 'id' | 'createdAt' | 'taskCount' | 'runningCount'>) => {
-      console.log('useCreateProject mutationFn called with:', data);
-      return api.createProject(data);
-    },
-    onSuccess: (result) => {
-      console.log('useCreateProject onSuccess:', result);
+    mutationFn: (data: Omit<Project, 'id' | 'createdAt' | 'taskCount' | 'runningCount'>) =>
+      api.createProject(data),
+    onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['projects'] });
-    },
-    onError: (error) => {
-      console.error('useCreateProject onError:', error);
     },
   });
 }

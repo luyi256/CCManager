@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Loader2, Server, Circle, Plus, X, Monitor, Box } from 'lucide-react';
 import Modal from '../common/Modal';
-import { useCreateProject } from '../../hooks/useProjects';
+import { useAgents, useCreateProject } from '../../hooks/useProjects';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import type { ExtraMount } from '../../types';
 
@@ -34,17 +34,25 @@ const initialFormData: FormData = {
 
 export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProps) {
   const [formData, setFormData] = useState<FormData>(initialFormData);
-  const { agents } = useWebSocket();
-  console.log('AddProjectModal render, agents:', agents, 'formData:', formData);
+  const [submitError, setSubmitError] = useState('');
+  const { agents: socketAgents, isConnected } = useWebSocket();
+  const { data: apiAgents = [], isLoading: isLoadingAgents } = useAgents();
+  const agents = socketAgents.length > 0 ? socketAgents : apiAgents;
 
   const createProject = useCreateProject();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    console.log('handleSubmit called, formData:', formData);
+    setSubmitError('');
 
     if (!formData.agentId) {
-      console.log('No agentId selected, returning');
+      setSubmitError('Select an execution agent');
+      return;
+    }
+
+    const selectedAgent = agents.find((agent) => agent.id === formData.agentId);
+    if (!selectedAgent || selectedAgent.status === 'offline') {
+      setSubmitError('Selected agent is not connected');
       return;
     }
 
@@ -56,14 +64,11 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           ? formData.extraMounts.filter(m => m.source && m.target)
           : undefined,
       };
-      console.log('Calling createProject.mutateAsync with:', submitData);
       await createProject.mutateAsync(submitData);
-      console.log('createProject succeeded');
       onClose();
       setFormData(initialFormData);
     } catch (err) {
-      console.error('createProject failed:', err);
-      // Error handled by mutation
+      setSubmitError(err instanceof Error ? err.message : 'Failed to create project');
     }
   };
 
@@ -110,7 +115,12 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           <label className="block text-sm font-medium text-dark-300 mb-1.5">
             Execution Agent
           </label>
-          {agents.length === 0 ? (
+          {isLoadingAgents && agents.length === 0 ? (
+            <div className="card p-4 text-center">
+              <Loader2 size={24} className="mx-auto text-dark-500 mb-2 animate-spin" />
+              <p className="text-dark-400 text-sm">Loading agents...</p>
+            </div>
+          ) : agents.length === 0 ? (
             <div className="card p-4 text-center">
               <Server size={24} className="mx-auto text-dark-500 mb-2" />
               <p className="text-dark-400 text-sm">No agents connected</p>
@@ -172,6 +182,11 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
                 </label>
               ))}
             </div>
+          )}
+          {!isConnected && apiAgents.length > 0 && (
+            <p className="text-xs text-yellow-400 mt-2">
+              Live updates are disconnected; showing the latest agent list from the server.
+            </p>
           )}
         </div>
 
@@ -434,11 +449,12 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           </button>
         </div>
 
-        {createProject.isError && (
+        {(submitError || createProject.isError) && (
           <p className="text-red-400 text-sm mt-2">
-            {createProject.error instanceof Error
+            {submitError ||
+            (createProject.error instanceof Error
               ? createProject.error.message
-              : 'Failed to create project'}
+              : 'Failed to create project')}
           </p>
         )}
       </form>

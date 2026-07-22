@@ -1,5 +1,6 @@
 import type { Socket, Namespace } from 'socket.io';
 import { db } from './database.js';
+import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
   socket: Socket;
@@ -163,7 +164,7 @@ class AgentPool {
     projectPath: string;
     prompt: string;
     isPlanMode: boolean;
-    runner?: 'claude' | 'codex' | 'qwen';
+    runner?: Runner;
     model?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
@@ -282,7 +283,7 @@ class AgentPool {
   }
 
   /** Ask agent to run the selected coding CLI's /model command. */
-  requestModels(agentId: string, runner: 'claude' | 'codex' | 'qwen'): Promise<unknown> {
+  requestModels(agentId: string, runner: Runner): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {

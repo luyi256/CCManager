@@ -40,9 +40,12 @@ function validatePathInternal(normalizedPath: string, config: AgentConfig): void
   let allowed = false;
   for (const allowedPath of config.allowedPaths) {
     // Handle glob patterns like /home/user/projects/*
+    // A `/base/*` pattern also matches the base directory itself, so a project
+    // rooted directly at the allowed base (e.g. project "/home/user/" with allow
+    // "/home/user/*") is accepted instead of being rejected over a trailing slash.
     if (allowedPath.endsWith('/*')) {
       const basePath = path.resolve(allowedPath.slice(0, -2));
-      if (normalizedPath.startsWith(basePath + path.sep)) {
+      if (normalizedPath === basePath || normalizedPath.startsWith(basePath + path.sep)) {
         allowed = true;
         break;
       }

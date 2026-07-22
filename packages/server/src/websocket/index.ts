@@ -248,12 +248,6 @@ export function setupWebSocket(server: HttpServer): Server {
           if (sessionId) {
             const project = await getProject(task.projectId);
             if (project) {
-              // Log merged follow-up
-              await appendTaskLog(task.projectId, task.id, {
-                type: 'user_message',
-                content: mergedPrompt,
-              });
-
               const startedAt = new Date().toISOString();
               task.status = 'running';
               task.continuePrompt = mergedPrompt;
@@ -265,7 +259,7 @@ export function setupWebSocket(server: HttpServer): Server {
               await saveTask(task.projectId, task);
 
               console.log(`Task ${data.taskId}: Draining ${prompts.length} queued follow-up(s), resuming session`);
-              agentPool.dispatchTask(project.agentId, {
+              const dispatched = agentPool.dispatchTask(project.agentId, {
                 taskId: task.id,
                 projectId: project.id,
                 projectPath: project.projectPath,
@@ -285,12 +279,23 @@ export function setupWebSocket(server: HttpServer): Server {
                 startedAt,
               });
 
-              // Broadcast that task is running again
-              broadcastToTask(data.taskId, 'task:status', {
-                taskId: data.taskId,
-                status: 'running',
-              });
-              return; // Skip the completed broadcast since we're continuing
+              if (dispatched) {
+                // Broadcast that task is running again
+                broadcastToTask(data.taskId, 'task:status', {
+                  taskId: data.taskId,
+                  status: 'running',
+                });
+                return; // Skip the completed broadcast since we're continuing
+              }
+
+              // Agent went away before the queued follow-up could be dispatched.
+              // Revert to completed so the task is not stuck in "running", then fall
+              // through to the normal completed broadcast below.
+              console.warn(`Task ${data.taskId}: Failed to dispatch queued follow-up (agent unavailable); leaving task completed`);
+              task.status = 'completed';
+              task.completedAt = new Date().toISOString();
+              task.continuePrompt = undefined;
+              await saveTask(task.projectId, task);
             }
           }
         }

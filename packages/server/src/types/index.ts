@@ -44,7 +44,7 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled';
 
-export type Runner = 'claude' | 'codex' | 'qwen';
+export type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
 export interface GitInfo {
   branch: string;

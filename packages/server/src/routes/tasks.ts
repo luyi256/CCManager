@@ -6,11 +6,11 @@ import { broadcast } from '../websocket/index.js';
 import { cancelDependentTasks } from '../services/waitingTasks.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { errorResponse } from '../utils/errorResponse.js';
-import { enqueue, hasQueued, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
+import { enqueue, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
-const VALID_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen']);
+const VALID_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
 
 function parseRunner(value: unknown): Runner | undefined {
   return typeof value === 'string' && VALID_RUNNERS.has(value as Runner)
@@ -279,7 +279,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       isRetry: true,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
-      allowedPaths: project.allowedPaths,
+      allowedPaths: buildTaskAllowedPaths(project),
       startedAt,
     });
 
@@ -327,21 +327,6 @@ router.post('/tasks/:id/continue', async (req, res) => {
       return res.status(404).json({ message: 'Project not found' });
     }
 
-    // Get session ID from gitInfo
-    let sessionId: string | undefined;
-    if (task.gitInfo) {
-      try {
-        const gitInfo = JSON.parse(task.gitInfo);
-        sessionId = gitInfo.sessionId;
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
-    if (!sessionId) {
-      return res.status(400).json({ message: 'No session ID found for this task' });
-    }
-
     // Check if agent is connected
     const agent = agentPool.getAgent(project.agentId);
     if (!agent) {
@@ -369,6 +354,22 @@ router.post('/tasks/:id/continue', async (req, res) => {
       return res.json({ ...task, followUpQueued: true, queueSize: queued });
     }
 
+    // Get session ID from gitInfo. Active tasks can accept queued follow-ups before
+    // the session ID is available; completed tasks need it to resume immediately.
+    let sessionId: string | undefined;
+    if (task.gitInfo) {
+      try {
+        const gitInfo = JSON.parse(task.gitInfo);
+        sessionId = gitInfo.sessionId;
+      } catch {
+        // Ignore parse errors
+      }
+    }
+
+    if (!sessionId) {
+      return res.status(400).json({ message: 'No session ID found for this task' });
+    }
+
     // Task is completed/failed — dispatch immediately as a continue session
     // Update task status BEFORE dispatching to avoid race condition
     // where task:completed handler could overwrite with stale data
@@ -379,7 +380,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
     task.status = 'running';
     task.continuePrompt = prompt;
     task.runner = parseRunner(runner) ?? task.runner;
-    task.model = typeof model === 'string' && model.trim() ? model : undefined;
+    task.model = typeof model === 'string' && model.trim() ? model : task.model;
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
@@ -401,7 +402,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       sessionId: sessionId,
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
-      allowedPaths: project.allowedPaths,
+      allowedPaths: buildTaskAllowedPaths(project),
       images: images as string[] | undefined,
       startedAt,
     });

@@ -12,7 +12,7 @@ import { listSessions, listActiveSessions, getSessionDetail, searchSessions } fr
 const execAsync = promisify(exec);
 
 type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
-type Runner = 'claude' | 'codex' | 'qwen';
+type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
 function parseModelOutput(output: string, runner: Runner): string[] {
   const models = new Set<string>();
@@ -52,9 +52,11 @@ async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: 
     claude: 'claude',
     codex: 'codex',
     qwen: 'qwen',
+    tclaude: 'tclaude',
+    tcodex: 'tcodex',
   };
   const command = commandByRunner[runner];
-  const cmd = runner === 'codex'
+  const cmd = runner === 'codex' || runner === 'tcodex'
     ? `${command} exec "/model" --json`
     : `${command} -p "/model"`;
 
@@ -232,7 +234,7 @@ export class AgentConnection {
     });
 
     this.socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
-      if (data.runner !== 'claude' && data.runner !== 'codex' && data.runner !== 'qwen') {
+      if (data.runner !== 'claude' && data.runner !== 'codex' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
         callback({ ok: false, error: 'Invalid runner' });
         return;
       }
@@ -281,6 +283,14 @@ export class AgentConnection {
     }
   }
 
+  /** Poll until the executor's process has exited, or the cap elapses. */
+  private async waitForExecutorStop(executor: Executor, capMs: number): Promise<void> {
+    const start = Date.now();
+    while (executor.isRunning && Date.now() - start < capMs) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 100));
+    }
+  }
+
   private async handleTask(task: TaskRequest): Promise<void> {
     console.log(`Received task ${task.taskId}: ${task.prompt.substring(0, 50)}...`);
     console.log(`Task ${task.taskId} projectPath: ${task.projectPath}`);
@@ -293,8 +303,9 @@ export class AgentConnection {
         const oldExecutor = this.executors.get(task.taskId)!;
         oldExecutor.cancel();
         this.executors.delete(task.taskId);
-        // Wait for process to die before starting new one
-        await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+        // Wait for the old process to actually exit (up to 5s) rather than a blind
+        // fixed sleep, so the follow-up starts promptly once the previous run is gone.
+        await this.waitForExecutorStop(oldExecutor, 5000);
       } else {
         // Duplicate dispatch (e.g. reconnect recovery) — skip
         console.log(`Task ${task.taskId}: Already running, skipping duplicate dispatch`);
@@ -337,10 +348,12 @@ export class AgentConnection {
       // Docker execution currently wraps Claude Code only, so Codex uses the
       // local Codex CLI even when the project executor is docker.
       const taskExecutor = task.executor ?? this.config.executor ?? 'local';
-      if (task.runner === 'codex') {
-        executor = new CodexExecutor();
+      if (task.runner === 'codex' || task.runner === 'tcodex') {
+        executor = new CodexExecutor(undefined, task.runner === 'tcodex' ? 'tcodex' : 'codex');
       } else if (task.runner === 'qwen') {
         executor = new ClaudeExecutor(undefined, 'qwen');
+      } else if (task.runner === 'tclaude') {
+        executor = new ClaudeExecutor(undefined, 'tclaude');
       } else if (taskExecutor === 'docker' && this.config.dockerConfig) {
         const dockerConfig = task.dockerImage
           ? { ...this.config.dockerConfig, image: task.dockerImage }
