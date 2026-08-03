@@ -3,23 +3,11 @@ import { agentPool } from '../services/agentPool.js';
 import * as storage from '../services/storage.js';
 import { generateToken, hashToken } from '../services/auth.js';
 import { db } from '../services/database.js';
+import { getRunnerModelCatalog } from '../services/runnerModels.js';
 import type { Runner } from '../types/index.js';
 
 const router = Router();
 const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
-
-// Coding CLIs can't enumerate models non-interactively — `<cli> -p "/model"` just sends
-// "/model" as a prompt and burns a full agent turn (codex literally replies "I'm Codex").
-// So we serve a known, instant list per runner instead of a slow, costly, useless call.
-// "Use default model" is always available in the UI. Values are what each CLI accepts for
-// its --model flag; edit here as CLIs add or rename models.
-const KNOWN_MODELS: Record<Runner, string[]> = {
-  claude: ['opus', 'sonnet', 'haiku'],
-  tclaude: ['opus', 'sonnet', 'haiku'],
-  codex: ['gpt-5-codex', 'gpt-5', 'o3'],
-  tcodex: ['gpt-5-codex', 'gpt-5', 'o3'],
-  qwen: ['qwen3-coder-plus', 'qwen3-coder-flash'],
-};
 
 // Get all agents (both connected and offline)
 router.get('/', async (req, res) => {
@@ -49,19 +37,30 @@ router.get('/online', async (req, res) => {
   }
 });
 
-// Get available models for a coding CLI. Served instantly from a known list —
-// no agent round-trip (see KNOWN_MODELS above for why).
+// Get the model catalog reported by this agent at registration time. The agent
+// derives it from each installed CLI's machine-readable catalog/help/config.
 router.get('/:id/models', async (req, res) => {
   const runner = req.query.runner;
   if (typeof runner !== 'string' || !VALID_MODEL_RUNNERS.has(runner as Runner)) {
     return res.status(400).json({ message: 'Invalid runner' });
   }
   const typedRunner = runner as Runner;
+  const connected = agentPool.getAgent(req.params.id);
+  const agent = connected ?? await storage.getAgent(req.params.id);
+  if (!agent) {
+    return res.status(404).json({ message: 'Agent not found' });
+  }
+  const catalog = getRunnerModelCatalog(agent.capabilities, typedRunner);
   res.json({
     runner: typedRunner,
-    models: KNOWN_MODELS[typedRunner] ?? [],
-    cached: true,
-    pending: false,
+    models: catalog?.models ?? [],
+    available: catalog?.installed ?? false,
+    source: 'agent',
+    ...(catalog === null ? {
+      message: `Agent has not reported whether ${typedRunner} is available. Reconnect it after updating the agent.`,
+    } : !catalog.installed ? {
+      message: `${typedRunner} CLI is not installed on this agent`,
+    } : {}),
   });
 });
 

@@ -119,7 +119,8 @@ else
     --cwd "$SCRIPT_DIR" \
     --env DATA_PATH="$DATA_PATH" \
     --env SERVE_STATIC=true \
-    --env STATIC_PATH="$SCRIPT_DIR/packages/web/dist"
+    --env STATIC_PATH="$SCRIPT_DIR/packages/web/dist" \
+    --env SOCKET_IO_PATH="/ccm/socket.io"
 fi
 
 pm2 save

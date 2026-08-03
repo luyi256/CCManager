@@ -7,10 +7,24 @@ import { cancelDependentTasks } from '../services/waitingTasks.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { errorResponse } from '../utils/errorResponse.js';
 import { enqueue, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
+import { validateRunnerSelection } from '../services/runnerModels.js';
+import { taskLogToStreamEvent } from '../services/taskStream.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
 const VALID_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
+
+async function broadcastStreamPhase(
+  task: Task,
+  phase: 'starting' | 'cancelled'
+): Promise<void> {
+  const log = await storage.appendTaskLog(task.projectId, task.id, {
+    type: 'stream_phase',
+    content: { phase, runId: task.startedAt },
+  });
+  const event = taskLogToStreamEvent(task.id, log, task.startedAt);
+  if (event) broadcast(task.id, { type: 'task:stream', ...event });
+}
 
 function parseRunner(value: unknown): Runner | undefined {
   return typeof value === 'string' && VALID_RUNNERS.has(value as Runner)
@@ -72,6 +86,10 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         message: `Agent ${project.agentId} is not connected. Please ensure the agent is running.`,
       });
     }
+    const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
+    if (selectedModel.error) {
+      return res.status(400).json({ message: selectedModel.error });
+    }
 
     const task = await storage.createTask(projectId, {
       projectId,
@@ -79,7 +97,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       status: 'pending',
       isPlanMode: isPlanMode || false,
       runner: selectedRunner,
-      model: model || undefined,
+      model: selectedModel.model,
       dependsOn,
       createdAt: new Date().toISOString(),
     });
@@ -120,12 +138,11 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         task.error = 'Failed to dispatch task to agent';
       }
       await storage.saveTask(projectId, task);
+      if (dispatched) await broadcastStreamPhase(task, 'starting');
     }
 
-    // Update project's last used model
-    if (model) {
-      db.prepare(`UPDATE projects SET last_model = ? WHERE id = ?`).run(model, projectId);
-    }
+    // Keep the remembered model aligned with the most recent runner selection.
+    db.prepare(`UPDATE projects SET last_model = ? WHERE id = ?`).run(selectedModel.model || null, projectId);
 
     res.status(201).json(task);
   } catch (error) {
@@ -186,6 +203,7 @@ router.post('/tasks/:id/cancel', async (req, res) => {
     // Previously we cleared it, but that caused retry to fall back to the
     // original prompt (whose work is already done), making it appear to "not run".
     await storage.saveTask(task.projectId, task);
+    await broadcastStreamPhase(task, 'cancelled');
 
     // Clear any queued follow-ups
     clearFollowUpQueue(taskId);
@@ -271,6 +289,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       isPlanMode: task.isPlanMode,
       runner: task.runner,
       model: task.model,
+      skipModelValidation: true,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,
@@ -299,6 +318,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       task.continuePrompt = undefined;
     }
     await storage.saveTask(task.projectId, task);
+    await broadcastStreamPhase(task, 'starting');
 
     res.json(task);
   } catch (error) {
@@ -334,6 +354,16 @@ router.post('/tasks/:id/continue', async (req, res) => {
         message: `Agent ${project.agentId} is not connected`,
       });
     }
+    const nextRunner = parseRunner(runner) ?? task.runner ?? 'claude';
+    const modelWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'model');
+    const selectedModel = validateRunnerSelection(agent.capabilities, nextRunner, model);
+    if (selectedModel.error) {
+      return res.status(400).json({ message: selectedModel.error });
+    }
+    const runnerChanged = nextRunner !== (task.runner ?? 'claude');
+    const nextModel = modelWasProvided
+      ? selectedModel.model
+      : runnerChanged ? undefined : task.model;
 
     // Log the follow-up prompt FIRST so it appears in the timeline
     await storage.appendTaskLog(task.projectId, task.id, {
@@ -344,8 +374,6 @@ router.post('/tasks/:id/continue', async (req, res) => {
     // If task is currently active (running/waiting/etc.), queue instead of dispatching
     const activeStatuses = ['running', 'waiting', 'waiting_permission', 'plan_review'];
     if (activeStatuses.includes(task.status)) {
-      const nextRunner = parseRunner(runner) ?? task.runner;
-      const nextModel = typeof model === 'string' && model.trim() ? model : task.model;
       enqueue(taskId, prompt, images as string[] | undefined, nextRunner, nextModel);
       const queued = queueSize(taskId);
       console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
@@ -379,8 +407,8 @@ router.post('/tasks/:id/continue', async (req, res) => {
     const startedAt = new Date().toISOString();
     task.status = 'running';
     task.continuePrompt = prompt;
-    task.runner = parseRunner(runner) ?? task.runner;
-    task.model = typeof model === 'string' && model.trim() ? model : task.model;
+    task.runner = nextRunner;
+    task.model = nextModel;
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
@@ -418,6 +446,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
 
+    await broadcastStreamPhase(task, 'starting');
     res.json(task);
   } catch (error) {
     console.error('Failed to continue task:', error);

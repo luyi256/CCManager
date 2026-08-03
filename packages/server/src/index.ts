@@ -170,7 +170,8 @@ if (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === 'true'
     if (
       !req.path.startsWith('/api') &&
       !req.path.startsWith('/ccm/api') &&
-      !req.path.startsWith('/socket.io')
+      !req.path.startsWith('/socket.io') &&
+      !req.path.startsWith('/ccm/socket.io')
     ) {
       res.sendFile(path.join(webDistPath, 'index.html'));
     }
@@ -178,7 +179,7 @@ if (process.env.NODE_ENV === 'production' || process.env.SERVE_STATIC === 'true'
 }
 
 // WebSocket (Socket.IO)
-setupWebSocket(server);
+setupWebSocket(server, process.env.SOCKET_IO_PATH || '/socket.io');
 
 // Start waiting task checker
 startWaitingTaskChecker();

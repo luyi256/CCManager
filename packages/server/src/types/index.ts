@@ -46,6 +46,57 @@ export type TaskStatus =
 
 export type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
+export type TaskStreamPhase =
+  | 'connecting'
+  | 'queued'
+  | 'starting'
+  | 'thinking'
+  | 'tool'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface TaskStreamTool {
+  id: string;
+  name: string;
+  input?: unknown;
+  result?: unknown;
+  status: 'running' | 'completed' | 'failed';
+}
+
+export interface TaskStreamEvent {
+  version: 1;
+  taskId: number;
+  eventId: string;
+  kind: 'phase' | 'text' | 'tool' | 'interaction' | 'error';
+  timestamp: string;
+  logId?: number;
+  runId?: string;
+  blockId?: string;
+  phase?: TaskStreamPhase;
+  mode?: 'delta' | 'snapshot';
+  offset?: number;
+  text?: string;
+  tool?: TaskStreamTool;
+  interaction?: {
+    type: 'plan_question' | 'permission_request';
+    data: unknown;
+  };
+  error?: string;
+  replay?: boolean;
+}
+
+export interface TaskStreamSnapshot {
+  version: 1;
+  taskId: number;
+  cursor: number;
+  phase: TaskStreamPhase;
+  runId?: string;
+  generatedAt: string;
+  events: TaskStreamEvent[];
+}
+
 export interface GitInfo {
   branch: string;
   commits: Array<{
@@ -109,8 +160,16 @@ export interface PlanQuestion {
 }
 
 export interface TaskLogEntry {
+  id: number;
   timestamp: string;
-  type: 'assistant' | 'tool_use' | 'tool_result' | 'user' | 'system';
+  type:
+    | 'output'
+    | 'tool_use'
+    | 'tool_result'
+    | 'plan_question'
+    | 'permission_request'
+    | 'user_message'
+    | 'stream_phase';
   content: unknown;
 }
 
@@ -157,14 +216,16 @@ export interface AgentToServerEvents {
     capabilities: string[];
     executor?: 'local' | 'docker';
   }) => void;
-  status: (data: { status: 'online' | 'busy'; taskId?: number }) => void;
+  status: (data: { status: 'online' | 'busy'; taskId?: number; runningTasks?: number[]; taskCount?: number }) => void;
+  'task:stream': (data: TaskStreamEvent) => void;
   'task:output': (data: { taskId: number; text: string }) => void;
   'task:tool_use': (data: { taskId: number; id: string; name: string; input: unknown }) => void;
   'task:tool_result': (data: { taskId: number; id: string; result: unknown }) => void;
   'task:plan_question': (data: { taskId: number; question: unknown }) => void;
   'task:permission_request': (data: { taskId: number; request: unknown }) => void;
-  'task:completed': (data: { taskId: number; status: string; summary?: string }) => void;
-  'task:failed': (data: { taskId: number; error: string }) => void;
+  'task:session_id': (data: { taskId: number; sessionId: string }) => void;
+  'task:completed': (data: { taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }) => void;
+  'task:failed': (data: { taskId: number; error: string; startedAt?: string }) => void;
   'task:error': (data: { taskId: number; error: string }) => void;
   'task:merge-result': (data: { taskId: number; success: boolean; mergeCommit?: string; conflicts?: string[]; error?: string }) => void;
   'task:worktree-cleaned': (data: { taskId: number; branch: string }) => void;
@@ -174,6 +235,8 @@ export interface ServerToUserEvents {
   'agent:list': (agents: Agent[]) => void;
   'agent:status': (data: { agentId: string; status: string }) => void;
   'task:output': (data: { taskId: number; text: string }) => void;
+  'task:stream': (data: TaskStreamEvent) => void;
+  'task:stream_snapshot': (data: TaskStreamSnapshot) => void;
   'task:tool_use': (data: { taskId: number; id: string; name: string; input: unknown }) => void;
   'task:tool_result': (data: { taskId: number; id: string; result: unknown }) => void;
   'task:plan_question': (data: { taskId: number; question: unknown }) => void;

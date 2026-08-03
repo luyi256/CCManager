@@ -1,5 +1,6 @@
 import type { Socket, Namespace } from 'socket.io';
 import { db } from './database.js';
+import { validateRunnerSelection } from './runnerModels.js';
 import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
@@ -170,6 +171,7 @@ class AgentPool {
     dockerImage?: string;
     worktreeBranch?: string;
     requiredCapabilities?: string[];
+    skipModelValidation?: boolean;
     continueSession?: boolean;
     sessionId?: string;
     postTaskHook?: string;
@@ -183,6 +185,17 @@ class AgentPool {
     if (!agent || agent.status !== 'online') {
       console.error(`Agent ${agentId} not available for task dispatch`);
       return false;
+    }
+    if (!task.skipModelValidation) {
+      const selection = validateRunnerSelection(
+        agent.capabilities,
+        task.runner ?? 'claude',
+        task.model
+      );
+      if (selection.error) {
+        console.error(`Agent ${agentId} rejected task ${task.taskId} model selection: ${selection.error}`);
+        return false;
+      }
     }
 
     // Check capabilities match (Bug #15 fix)
@@ -276,19 +289,6 @@ class AgentPool {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 15000);
       agent.socket.emit('sessions:detail', { projectPath, sessionId }, (result: unknown) => {
-        clearTimeout(timer);
-        resolve(result);
-      });
-    });
-  }
-
-  /** Ask agent to run the selected coding CLI's /model command. */
-  requestModels(agentId: string, runner: Runner): Promise<unknown> {
-    const agent = this.agents.get(agentId);
-    if (!agent) return Promise.reject(new Error('Agent not connected'));
-    return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Agent timeout')), 20000);
-      agent.socket.emit('models:list', { runner }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });

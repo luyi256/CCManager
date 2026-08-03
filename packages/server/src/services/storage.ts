@@ -454,28 +454,43 @@ export async function getNextTaskId(projectId: string): Promise<number> {
 }
 
 // Task Logs
+export interface StoredTaskLog {
+  id: number;
+  timestamp: string;
+  type: string;
+  content: unknown;
+}
+
 export async function appendTaskLog(
   projectId: string,
   taskId: number,
   entry: { type: string; content: unknown }
-): Promise<void> {
+): Promise<StoredTaskLog> {
+  const timestamp = new Date().toISOString();
+
   if (entry.type === 'output' && typeof entry.content === 'string') {
     const last = db.prepare(`
-      SELECT id, type, content FROM task_logs
+      SELECT id, timestamp, type, content FROM task_logs
       WHERE task_id = ?
       ORDER BY id DESC
       LIMIT 1
-    `).get(taskId) as { id: number; type: string; content: string } | undefined;
+    `).get(taskId) as { id: number; timestamp: string; type: string; content: string } | undefined;
 
     if (last?.type === 'output') {
       const previous = safeJsonParse(last.content, undefined);
       if (typeof previous === 'string') {
+        const content = previous + entry.content;
         db.prepare(`
           UPDATE task_logs
           SET timestamp = ?, content = ?
           WHERE id = ?
-        `).run(new Date().toISOString(), JSON.stringify(previous + entry.content), last.id);
-        return;
+        `).run(timestamp, JSON.stringify(content), last.id);
+        return {
+          id: last.id,
+          timestamp,
+          type: entry.type,
+          content,
+        };
       }
     }
   }
@@ -484,21 +499,29 @@ export async function appendTaskLog(
     INSERT INTO task_logs (task_id, timestamp, type, content)
     VALUES (?, ?, ?, ?)
   `);
-  stmt.run(taskId, new Date().toISOString(), entry.type, JSON.stringify(entry.content));
+  const result = stmt.run(taskId, timestamp, entry.type, JSON.stringify(entry.content));
+  return {
+    id: Number(result.lastInsertRowid),
+    timestamp,
+    type: entry.type,
+    content: entry.content,
+  };
 }
 
 export async function getTaskLogs(
   projectId: string,
   taskId: number
-): Promise<Array<{ timestamp: string; type: string; content: unknown }>> {
+): Promise<StoredTaskLog[]> {
   const stmt = db.prepare('SELECT * FROM task_logs WHERE task_id = ? ORDER BY id');
   const rows = stmt.all(taskId) as Array<{
+    id: number;
     timestamp: string;
     type: string;
     content: string;
   }>;
 
   return rows.map((row) => ({
+    id: row.id,
     timestamp: row.timestamp,
     type: row.type,
     content: safeJsonParse(row.content, row.content),

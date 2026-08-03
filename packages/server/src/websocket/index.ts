@@ -1,15 +1,18 @@
 import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
-import { getTaskById, saveTask, getProject, appendTaskLog, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
+import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
 import { dequeue, hasQueued, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
+import { buildTaskStreamSnapshot, taskLogToStreamEvent } from '../services/taskStream.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
   ServerToUserEvents,
+  TaskStreamEvent,
+  TaskStreamPhase,
   UserToServerEvents,
 } from '../types/index.js';
 
@@ -19,9 +22,49 @@ let userNamespace: Namespace;
 
 // Track user subscriptions
 const userSubscriptions = new Map<string, Set<number>>();
+const taskStreamSequences = new Map<number, number>();
 
-export function setupWebSocket(server: HttpServer): Server {
+function nextTaskStreamSequence(taskId: number): number {
+  const next = (taskStreamSequences.get(taskId) || 0) + 1;
+  taskStreamSequences.set(taskId, next);
+  return next;
+}
+
+function liveStreamEvent(
+  taskId: number,
+  event: Omit<TaskStreamEvent, 'version' | 'taskId' | 'eventId' | 'timestamp'> & {
+    eventId?: string;
+    timestamp?: string;
+  }
+): TaskStreamEvent {
+  const sequence = nextTaskStreamSequence(taskId);
+  return {
+    version: 1,
+    taskId,
+    eventId: event.eventId || `live:${taskId}:${sequence}`,
+    timestamp: event.timestamp || new Date().toISOString(),
+    ...event,
+  };
+}
+
+async function persistAndBroadcastPhase(
+  taskId: number,
+  phase: TaskStreamPhase,
+  runId?: string
+): Promise<void> {
+  const task = await getTaskById(taskId);
+  if (!task) return;
+  const log = await appendTaskLog(task.projectId, taskId, {
+    type: 'stream_phase',
+    content: { phase, runId },
+  });
+  const event = taskLogToStreamEvent(taskId, log, runId);
+  if (event) broadcastToTask(taskId, 'task:stream', event);
+}
+
+export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server {
   io = new Server(server, {
+    path,
     cors: {
       origin: false,
     },
@@ -102,6 +145,7 @@ export function setupWebSocket(server: HttpServer): Server {
               isPlanMode: task.isPlanMode,
               runner: task.runner,
               model: task.model,
+              skipModelValidation: true,
               executor: project.executor,
               dockerImage: project.dockerImage,
               worktreeBranch: task.worktreeBranch,
@@ -131,11 +175,84 @@ export function setupWebSocket(server: HttpServer): Server {
       }
     });
 
+    socket.on('task:stream', async (data: TaskStreamEvent) => {
+      try {
+        const task = await getTaskById(data.taskId);
+        if (!task) return;
+
+        if (data.kind === 'text' && data.text) {
+          const log = await appendTaskLog(task.projectId, data.taskId, {
+            type: 'output',
+            content: data.text,
+          });
+          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
+          return;
+        }
+
+        if (data.kind === 'phase' && data.phase) {
+          await persistAndBroadcastPhase(data.taskId, data.phase, data.runId || task.startedAt);
+          return;
+        }
+
+        if (data.kind === 'tool' && data.tool) {
+          const type = data.tool.status === 'running' ? 'tool_use' : 'tool_result';
+          const content = data.tool.status === 'running'
+            ? {
+                taskId: data.taskId,
+                id: data.tool.id,
+                name: data.tool.name,
+                input: data.tool.input,
+              }
+            : {
+                taskId: data.taskId,
+                id: data.tool.id,
+                name: data.tool.name,
+                result: data.tool.result,
+                error: data.tool.status === 'failed',
+              };
+          const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
+          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
+          return;
+        }
+
+        if (data.kind === 'interaction' && data.interaction) {
+          const type = data.interaction.type;
+          const content = type === 'plan_question'
+            ? { taskId: data.taskId, question: data.interaction.data }
+            : { taskId: data.taskId, request: data.interaction.data };
+          const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
+          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
+          return;
+        }
+
+        broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
+          kind: data.kind,
+          runId: data.runId || task.startedAt,
+          blockId: data.blockId,
+          mode: data.mode,
+          offset: data.offset,
+          text: data.text,
+          tool: data.tool,
+          interaction: data.interaction,
+          error: data.error,
+          eventId: data.eventId,
+          timestamp: data.timestamp,
+        }));
+      } catch (error) {
+        console.error('Error handling task:stream:', error);
+      }
+    });
+
     socket.on('task:output', async (data) => {
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
-          await appendTaskLog(task.projectId, data.taskId, { type: 'output', content: data.text });
+          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'output', content: data.text });
+          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
         }
         broadcastToTask(data.taskId, 'task:output', { taskId: data.taskId, text: data.text });
       } catch (error) {
@@ -147,7 +264,9 @@ export function setupWebSocket(server: HttpServer): Server {
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
-          await appendTaskLog(task.projectId, data.taskId, { type: 'tool_use', content: data });
+          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_use', content: data });
+          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
         }
         broadcastToTask(data.taskId, 'task:tool_use', data);
       } catch (error) {
@@ -159,7 +278,9 @@ export function setupWebSocket(server: HttpServer): Server {
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
-          await appendTaskLog(task.projectId, data.taskId, { type: 'tool_result', content: data });
+          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_result', content: data });
+          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
         }
         broadcastToTask(data.taskId, 'task:tool_result', data);
       } catch (error) {
@@ -171,7 +292,9 @@ export function setupWebSocket(server: HttpServer): Server {
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
-          await appendTaskLog(task.projectId, data.taskId, { type: 'plan_question', content: data });
+          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'plan_question', content: data });
+          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
         }
         broadcastToTask(data.taskId, 'task:plan_question', data);
       } catch (error) {
@@ -183,7 +306,9 @@ export function setupWebSocket(server: HttpServer): Server {
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
-          await appendTaskLog(task.projectId, data.taskId, { type: 'permission_request', content: data });
+          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'permission_request', content: data });
+          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+          if (event) broadcastToTask(data.taskId, 'task:stream', event);
         }
         broadcastToTask(data.taskId, 'task:permission_request', data);
       } catch (error) {
@@ -267,6 +392,7 @@ export function setupWebSocket(server: HttpServer): Server {
                 isPlanMode: task.isPlanMode,
                 runner: task.runner,
                 model: task.model,
+                skipModelValidation: true,
                 executor: project.executor,
                 dockerImage: project.dockerImage,
                 worktreeBranch: task.worktreeBranch,
@@ -280,6 +406,7 @@ export function setupWebSocket(server: HttpServer): Server {
               });
 
               if (dispatched) {
+                await persistAndBroadcastPhase(data.taskId, 'starting', startedAt);
                 // Broadcast that task is running again
                 broadcastToTask(data.taskId, 'task:status', {
                   taskId: data.taskId,
@@ -298,6 +425,10 @@ export function setupWebSocket(server: HttpServer): Server {
               await saveTask(task.projectId, task);
             }
           }
+        }
+
+        if (task) {
+          await persistAndBroadcastPhase(data.taskId, 'completed', task.startedAt);
         }
 
         // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
@@ -322,6 +453,7 @@ export function setupWebSocket(server: HttpServer): Server {
           task.error = data.error;
           task.completedAt = new Date().toISOString();
           await saveTask(task.projectId, task);
+          await persistAndBroadcastPhase(data.taskId, 'failed', task.startedAt);
         }
 
         // Clear queued follow-ups on failure (don't try to continue a failed session)
@@ -345,6 +477,10 @@ export function setupWebSocket(server: HttpServer): Server {
     });
 
     socket.on('task:error', (data) => {
+      broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
+        kind: 'error',
+        error: data.error,
+      }));
       broadcastToTask(data.taskId, 'task:failed', { taskId: data.taskId, error: data.error });
     });
 
@@ -419,11 +555,19 @@ export function setupWebSocket(server: HttpServer): Server {
     console.log('Sending agent:list to user:', socket.id, 'agents:', JSON.stringify(agents));
     socket.emit('agent:list', agents);
 
-    socket.on('subscribe:task', (data) => {
+    socket.on('subscribe:task', async (data) => {
       const taskId = Number(data.taskId);
       if (!isNaN(taskId)) {
         userSubscriptions.get(socket.id)?.add(taskId);
         console.log(`User ${socket.id} subscribed to task ${taskId}`);
+        try {
+          const task = await getTaskById(taskId);
+          if (!task || !socket.connected) return;
+          const logs = await getTaskLogs(task.projectId, taskId);
+          socket.emit('task:stream_snapshot', buildTaskStreamSnapshot(task, logs));
+        } catch (error) {
+          console.error(`Failed to send task ${taskId} stream snapshot:`, error);
+        }
       }
     });
 
