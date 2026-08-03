@@ -4,41 +4,68 @@ import {
   Send,
   ChevronRight,
   ChevronDown,
+  Terminal,
+  Loader2,
+  Brain,
+  Wrench,
+  Clock3,
+  CheckCircle2,
+  XCircle,
+  CircleSlash,
+  Wifi,
 } from 'lucide-react';
 import SafeMarkdown from '../common/SafeMarkdown';
+import type { TaskStreamPhase } from '../../types';
+import {
+  groupTimeline,
+  safeStringify,
+  type GroupedItem,
+  type TimelineItem,
+} from '../../utils/timeline';
 
-// Timeline item types
-export interface TimelineItem {
-  id: string;
-  type: 'output' | 'tool_use' | 'tool_result' | 'user_message';
-  timestamp: number;
-  content: string;
-  toolName?: string;
-  toolInput?: unknown;
-  toolResult?: unknown;
-  toolStatus?: 'pending' | 'running' | 'completed';
-}
+export { groupTimeline, safeStringify };
+export type { GroupedItem, TimelineItem };
 
-// Safe JSON stringify that handles circular references
-export function safeStringify(obj: unknown, indent = 2): string {
-  const seen = new WeakSet();
-  try {
-    return JSON.stringify(
-      obj,
-      (_key, value) => {
-        if (typeof value === 'object' && value !== null) {
-          if (seen.has(value)) {
-            return '[Circular]';
-          }
-          seen.add(value);
+const PHASE_META: Record<TaskStreamPhase, {
+  label: string;
+  className: string;
+  icon: typeof Loader2;
+  spin?: boolean;
+}> = {
+  connecting: { label: 'Connecting to live updates', className: 'text-dark-400', icon: Wifi },
+  queued: { label: 'Queued', className: 'text-amber-400', icon: Clock3 },
+  starting: { label: 'Starting runner', className: 'text-blue-400', icon: Loader2, spin: true },
+  thinking: { label: 'Thinking', className: 'text-purple-400', icon: Brain },
+  tool: { label: 'Using tools', className: 'text-green-400', icon: Wrench },
+  waiting: { label: 'Waiting for input', className: 'text-amber-400', icon: Clock3 },
+  completed: { label: 'Completed', className: 'text-green-400', icon: CheckCircle2 },
+  failed: { label: 'Failed', className: 'text-red-400', icon: XCircle },
+  cancelled: { label: 'Cancelled', className: 'text-dark-400', icon: CircleSlash },
+};
+
+export function StreamPhaseIndicator({ phase }: { phase: TaskStreamPhase }) {
+  const meta = PHASE_META[phase];
+  const Icon = meta.icon;
+  return (
+    <div
+      className={`flex items-center gap-1.5 text-xs ${meta.className}`}
+      role="status"
+      aria-live="polite"
+      data-stream-phase={phase}
+    >
+      <Icon
+        size={13}
+        className={
+          meta.spin
+            ? 'animate-spin'
+            : phase === 'thinking' || phase === 'tool'
+              ? 'animate-pulse'
+              : ''
         }
-        return value;
-      },
-      indent
-    );
-  } catch {
-    return String(obj);
-  }
+      />
+      <span>{meta.label}</span>
+    </div>
+  );
 }
 
 // Single collapsible tool call
@@ -65,6 +92,7 @@ export function ToolCallItem({ item, defaultExpanded = false }: { item: Timeline
         {item.toolStatus && (
           <span className={`text-xs ${
             item.toolStatus === 'completed' ? 'text-green-500' :
+            item.toolStatus === 'failed' ? 'text-red-400' :
             item.toolStatus === 'running' ? 'text-blue-400 animate-pulse' :
             'text-dark-500'
           }`}>
@@ -127,61 +155,21 @@ export function ToolCallGroup({ items }: { items: TimelineItem[] }) {
   );
 }
 
-// Group consecutive tool_use items in timeline
-export type GroupedItem =
-  | { type: 'single'; item: TimelineItem }
-  | { type: 'tool_group'; items: TimelineItem[] };
-
-export function groupTimeline(timeline: TimelineItem[]): GroupedItem[] {
-  const groups: GroupedItem[] = [];
-  let toolBuffer: TimelineItem[] = [];
-  let outputBuffer: TimelineItem | null = null;
-
-  const flushTools = () => {
-    if (toolBuffer.length === 0) return;
-    if (toolBuffer.length === 1) {
-      groups.push({ type: 'single', item: toolBuffer[0] });
-    } else {
-      groups.push({ type: 'tool_group', items: [...toolBuffer] });
-    }
-    toolBuffer = [];
-  };
-
-  const flushOutput = () => {
-    if (!outputBuffer) return;
-    groups.push({ type: 'single', item: outputBuffer });
-    outputBuffer = null;
-  };
-
-  for (const item of timeline) {
-    if (item.type === 'tool_use' || item.type === 'tool_result') {
-      flushOutput();
-      if (item.type === 'tool_use') {
-        toolBuffer.push(item);
-      }
-      // tool_result items are already embedded in tool_use via toolResult, skip standalone
-    } else if (item.type === 'output') {
-      flushTools();
-      if (outputBuffer) {
-        const previous: TimelineItem = outputBuffer;
-        outputBuffer = {
-          ...previous,
-          id: `${previous.id}-${item.id}`,
-          timestamp: item.timestamp,
-          content: `${previous.content}${item.content}`,
-        };
-      } else {
-        outputBuffer = item;
-      }
-    } else {
-      flushTools();
-      flushOutput();
-      groups.push({ type: 'single', item });
-    }
-  }
-  flushTools();
-  flushOutput();
-  return groups;
+function ToolResultItem({ item }: { item: TimelineItem }) {
+  const result = typeof item.toolResult === 'string'
+    ? item.toolResult
+    : safeStringify(item.toolResult ?? item.content);
+  return (
+    <div className="flex gap-2 text-sm">
+      <Terminal size={14} className="text-green-500 flex-shrink-0 mt-0.5" />
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium text-dark-500 uppercase mb-1">Tool result</div>
+        <pre className="text-xs text-dark-300 bg-dark-900 p-2 rounded overflow-x-auto whitespace-pre-wrap break-words">
+          {result}
+        </pre>
+      </div>
+    </div>
+  );
 }
 
 // Render a grouped timeline
@@ -225,6 +213,8 @@ export function TimelineView({ grouped, userMessageLabel }: {
               </div>
             ) : item.type === 'tool_use' ? (
               <ToolCallItem item={item} />
+            ) : item.type === 'tool_result' ? (
+              <ToolResultItem item={item} />
             ) : null}
           </div>
         );

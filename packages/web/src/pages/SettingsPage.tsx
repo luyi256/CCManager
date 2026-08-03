@@ -4,10 +4,12 @@ import type { DeviceInfo, AgentTokenInfo } from '../services/api';
 import type { Agent } from '../types';
 import { clearApiToken } from '../services/auth';
 import { Trash2, Monitor, Plus, RefreshCw, Copy, Check, Server } from 'lucide-react';
+import { formatServerDateTime } from '../utils/dateTime';
 
 export default function SettingsPage() {
   const [devices, setDevices] = useState<DeviceInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [devicesError, setDevicesError] = useState('');
   const [revoking, setRevoking] = useState<number | null>(null);
   const [currentDeviceId, setCurrentDeviceId] = useState<number | null>(null);
 
@@ -21,6 +23,7 @@ export default function SettingsPage() {
   const [agents, setAgents] = useState<Agent[]>([]);
   const [agentTokens, setAgentTokens] = useState<Record<string, AgentTokenInfo>>({});
   const [agentsLoading, setAgentsLoading] = useState(true);
+  const [agentsError, setAgentsError] = useState('');
   const [newAgentId, setNewAgentId] = useState('');
   const [newAgentName, setNewAgentName] = useState('');
   const [registering, setRegistering] = useState(false);
@@ -30,11 +33,13 @@ export default function SettingsPage() {
   const [copied, setCopied] = useState(false);
 
   const fetchDevices = async () => {
+    setDevicesError('');
     try {
       const data = await getDeviceTokens();
       setDevices(data);
     } catch (err) {
       console.error('Failed to fetch devices:', err);
+      setDevicesError(err instanceof Error ? err.message : 'Failed to load devices');
     } finally {
       setLoading(false);
     }
@@ -50,6 +55,7 @@ export default function SettingsPage() {
   };
 
   const fetchAgents = async () => {
+    setAgentsError('');
     try {
       const agentList = await getAgents();
       setAgents(agentList);
@@ -63,6 +69,7 @@ export default function SettingsPage() {
       setAgentTokens(tokenInfos);
     } catch (err) {
       console.error('Failed to fetch agents:', err);
+      setAgentsError(err instanceof Error ? err.message : 'Failed to load agents');
     } finally {
       setAgentsLoading(false);
     }
@@ -178,17 +185,6 @@ export default function SettingsPage() {
     } catch { /* ignore */ }
   };
 
-  const formatTime = (iso: string | null | undefined) => {
-    if (!iso) return '-';
-    const d = new Date(iso + 'Z');
-    return d.toLocaleString('en-US', {
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-    });
-  };
-
   return (
     <div className="max-w-3xl mx-auto px-4 py-8 space-y-10">
       {/* Device Management */}
@@ -198,14 +194,14 @@ export default function SettingsPage() {
         {/* Create new device token */}
         <div className="mb-6 p-4 rounded-lg border border-dark-700 bg-dark-800">
           <h3 className="text-sm font-medium text-dark-300 mb-3">Create New Device Token</h3>
-          <div className="flex gap-3">
+          <div className="flex flex-col sm:flex-row gap-3">
             <input
               type="text"
               value={newDeviceName}
               onChange={(e) => setNewDeviceName(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleCreateDevice()}
               placeholder="Device name (e.g. MacBook Pro)"
-              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
+              className="min-w-0 flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
               maxLength={64}
             />
             <button
@@ -245,6 +241,11 @@ export default function SettingsPage() {
 
         {loading ? (
           <p className="text-dark-400">Loading...</p>
+        ) : devicesError ? (
+          <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5">
+            <p className="text-red-400 text-sm mb-3">{devicesError}</p>
+            <button onClick={fetchDevices} className="btn btn-secondary text-sm">Try again</button>
+          </div>
         ) : devices.length === 0 ? (
           <p className="text-dark-400">No registered devices</p>
         ) : (
@@ -254,7 +255,7 @@ export default function SettingsPage() {
               return (
                 <div
                   key={device.id}
-                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                  className={`flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-lg border ${
                     isCurrent
                       ? 'border-blue-500/40 bg-blue-500/5'
                       : 'border-dark-700 bg-dark-800'
@@ -273,10 +274,10 @@ export default function SettingsPage() {
                           </span>
                         )}
                       </div>
-                      <div className="text-sm text-dark-400 mt-0.5">
-                        Registered: {formatTime(device.createdAt)}
+                      <div className="text-sm text-dark-400 mt-0.5 flex flex-col sm:block">
+                        Registered: {formatServerDateTime(device.createdAt)}
                         {device.lastUsedAt && (
-                          <span className="ml-3">Last active: {formatTime(device.lastUsedAt)}</span>
+                          <span className="sm:ml-3">Last active: {formatServerDateTime(device.lastUsedAt)}</span>
                         )}
                       </div>
                     </div>
@@ -285,7 +286,7 @@ export default function SettingsPage() {
                   <button
                     onClick={() => handleRevoke(device.id)}
                     disabled={revoking === device.id}
-                    className="p-2 text-dark-400 hover:text-red-400 transition-colors disabled:opacity-50"
+                    className="p-2 self-end sm:self-auto text-dark-400 hover:text-red-400 transition-colors disabled:opacity-50"
                     title="Revoke"
                   >
                     <Trash2 size={18} />
@@ -304,25 +305,25 @@ export default function SettingsPage() {
         {/* Register new agent */}
         <div className="mb-6 p-4 rounded-lg border border-dark-700 bg-dark-800">
           <h3 className="text-sm font-medium text-dark-300 mb-3">Register New Agent</h3>
-          <div className="flex gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <input
               type="text"
               value={newAgentId}
               onChange={(e) => setNewAgentId(e.target.value)}
               placeholder="Agent ID (e.g. macbook-agent)"
-              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
+              className="min-w-0 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
             />
             <input
               type="text"
               value={newAgentName}
               onChange={(e) => setNewAgentName(e.target.value)}
               placeholder="Name (optional)"
-              className="flex-1 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
+              className="min-w-0 px-3 py-2 bg-dark-900 border border-dark-600 rounded text-dark-100 placeholder-dark-500 text-sm"
             />
             <button
               onClick={handleRegisterAgent}
               disabled={registering || !newAgentId.trim()}
-              className="flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-sm transition-colors"
+              className="sm:col-span-2 flex items-center justify-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded text-sm transition-colors"
             >
               <Plus size={16} />
               Register
@@ -357,6 +358,11 @@ export default function SettingsPage() {
         {/* Agent list */}
         {agentsLoading ? (
           <p className="text-dark-400">Loading...</p>
+        ) : agentsError ? (
+          <div className="p-4 rounded-lg border border-red-500/30 bg-red-500/5">
+            <p className="text-red-400 text-sm mb-3">{agentsError}</p>
+            <button onClick={fetchAgents} className="btn btn-secondary text-sm">Try again</button>
+          </div>
         ) : agents.length === 0 ? (
           <p className="text-dark-400">No registered agents</p>
         ) : (
@@ -366,14 +372,14 @@ export default function SettingsPage() {
               return (
                 <div
                   key={agent.id}
-                  className="flex items-center justify-between p-4 rounded-lg border border-dark-700 bg-dark-800"
+                  className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-4 rounded-lg border border-dark-700 bg-dark-800"
                 >
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-start gap-3 min-w-0">
                     <div className="text-dark-400">
                       <Server size={20} />
                     </div>
-                    <div>
-                      <div className="flex items-center gap-2">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
                         <span className="text-dark-100 font-medium">{agent.name}</span>
                         <span className="text-xs text-dark-500 font-mono">{agent.id}</span>
                         <span className={`text-xs px-1.5 py-0.5 rounded ${
@@ -386,12 +392,12 @@ export default function SettingsPage() {
                           {agent.status}
                         </span>
                       </div>
-                      <div className="text-sm text-dark-400 mt-0.5">
+                      <div className="text-sm text-dark-400 mt-0.5 flex flex-col sm:block">
                         {tokenInfo?.hasToken ? (
                           <>
-                            Token created: {formatTime(tokenInfo.createdAt)}
+                            Token created: {formatServerDateTime(tokenInfo.createdAt)}
                             {tokenInfo.lastUsedAt && (
-                              <span className="ml-3">Last used: {formatTime(tokenInfo.lastUsedAt)}</span>
+                              <span className="sm:ml-3">Last used: {formatServerDateTime(tokenInfo.lastUsedAt)}</span>
                             )}
                           </>
                         ) : (
@@ -401,7 +407,7 @@ export default function SettingsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 self-end sm:self-auto">
                     <button
                       onClick={() => handleGenerateToken(agent.id)}
                       disabled={generatingToken === agent.id}

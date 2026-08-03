@@ -5,6 +5,7 @@ import { motion } from 'framer-motion';
 import type { Project } from '../../types';
 import { useDeleteProject } from '../../hooks/useProjects';
 import Modal from '../common/Modal';
+import { formatRelativeTime } from '../../utils/dateTime';
 
 interface ProjectCardProps {
   project: Project;
@@ -15,7 +16,7 @@ export default function ProjectCard({ project }: ProjectCardProps) {
   const deleteProject = useDeleteProject();
 
   const lastActivity = project.lastActivity
-    ? formatRelativeTime(new Date(project.lastActivity))
+    ? formatRelativeTime(project.lastActivity)
     : 'No activity';
 
   const handleDelete = () => {
@@ -75,8 +76,9 @@ export default function ProjectCard({ project }: ProjectCardProps) {
             e.preventDefault();
             setShowDeleteConfirm(true);
           }}
-          className="absolute top-4 right-10 p-1.5 rounded-md text-dark-600 hover:text-red-400 hover:bg-dark-700 opacity-0 group-hover:opacity-100 transition-all"
+          className="absolute top-4 right-10 p-1.5 rounded-md text-dark-500 hover:text-red-400 hover:bg-dark-700 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-all"
           title="Delete project"
+          aria-label={`Delete ${project.name}`}
         >
           <Trash2 size={16} />
         </button>
@@ -112,21 +114,4 @@ export default function ProjectCard({ project }: ProjectCardProps) {
       </Modal>
     </motion.div>
   );
-}
-
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - date.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-
-  return date.toLocaleDateString();
 }

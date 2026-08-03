@@ -27,9 +27,12 @@ import type { Runner, Task } from '../../types';
 import {
   type TimelineItem,
   groupTimeline,
+  StreamPhaseIndicator,
   TimelineView,
 } from '../Task/TimelineRenderer';
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
+import { getTimestamp } from '../../utils/dateTime';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 interface PastedImage {
   id: string;
@@ -71,8 +74,10 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const prevStatusRef = useRef(task.status);
   const followUpTextareaRef = useRef<HTMLTextAreaElement>(null);
 
-  const { data: savedLogs, refetch: refetchLogs } = useTaskLogs(task.id);
+  const { data: savedLogs, isLoading: logsLoading, refetch: refetchLogs } = useTaskLogs(task.id);
   const stream = useTaskStream(isActive ? task.id : null);
+  const { isConnected } = useWebSocket();
+  const streamReset = stream.reset;
 
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
@@ -160,7 +165,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     prevStatusRef.current = task.status;
 
     if (['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(prevStatus) && task.status === 'running') {
-      stream.reset();
+      streamReset();
       refetchLogs();
     }
 
@@ -169,7 +174,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     if (wasActive && isNowDone) {
       setTimeout(() => refetchLogs(), 300);
     }
-  }, [task.status, stream, refetchLogs]);
+  }, [task.status, streamReset, refetchLogs]);
 
   // Clean up optimistic sentMessages
   useEffect(() => {
@@ -206,13 +211,30 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
         }
 
         if (log.type === 'output') {
-          items.push({ id: `saved-output-${index}`, type: 'output', timestamp, content: String(log.content) });
+          const content = String(log.content);
+          items.push({ id: `saved-output-${log.id}`, type: 'output', timestamp, content, logId: log.id });
         } else if (log.type === 'tool_use') {
           const data = log.content as { id: string; name: string; input: unknown };
-          items.push({ id: `saved-tool-${data.id || index}`, type: 'tool_use', timestamp, content: '', toolName: data.name, toolInput: data.input, toolStatus: 'completed' });
+          items.push({
+            id: `saved-tool-${data.id || index}`,
+            type: 'tool_use',
+            timestamp,
+            content: '',
+            toolCallId: data.id,
+            toolName: data.name,
+            toolInput: data.input,
+            toolStatus: 'completed',
+          });
         } else if (log.type === 'tool_result') {
           const data = log.content as { id: string; result: unknown };
-          items.push({ id: `saved-result-${data.id || index}`, type: 'tool_result', timestamp, content: '', toolResult: data.result });
+          items.push({
+            id: `saved-result-${data.id || index}`,
+            type: 'tool_result',
+            timestamp,
+            content: '',
+            toolCallId: data.id,
+            toolResult: data.result,
+          });
         } else if (log.type === 'user_message') {
           savedUserMessages.add(String(log.content));
           items.push({ id: `saved-user-${index}`, type: 'user_message', timestamp, content: String(log.content) });
@@ -231,17 +253,41 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
       }
     });
 
-    if (stream.messages.length > 0) {
-      const lastSavedTimestamp = items.length > 0 ? Math.max(...items.map(i => i.timestamp)) : 0;
+    if (stream.messages.length > 0 || stream.toolCalls.length > 0) {
       stream.messages.forEach((msg) => {
-        if (msg.timestamp > lastSavedTimestamp) {
-          items.push({ id: `stream-${msg.id}`, type: 'output', timestamp: msg.timestamp, content: msg.text });
-        }
+        const persistedIndex = msg.logId === undefined
+          ? -1
+          : items.findIndex((item) => item.type === 'output' && item.logId === msg.logId);
+        const streamItem: TimelineItem = {
+          id: `stream-${msg.id}`,
+          type: 'output',
+          timestamp: msg.timestamp,
+          content: msg.text,
+          logId: msg.logId,
+        };
+        if (persistedIndex >= 0) items[persistedIndex] = streamItem;
+        else items.push(streamItem);
       });
       stream.toolCalls.forEach((tc) => {
-        const existingTool = items.find(i => i.id.includes(tc.id));
+        const existingTool = items.find(i =>
+          i.type === 'tool_use' && (i.toolCallId === tc.id || i.id.includes(tc.id))
+        );
+        if (existingTool) {
+          existingTool.toolStatus = tc.status;
+          if (tc.result !== undefined) existingTool.toolResult = tc.result;
+        }
         if (!existingTool) {
-          items.push({ id: `stream-tool-${tc.id}`, type: 'tool_use', timestamp: Date.now(), content: '', toolName: tc.name, toolInput: tc.input, toolResult: tc.result, toolStatus: tc.status });
+          items.push({
+            id: `stream-tool-${tc.id}`,
+            type: 'tool_use',
+            timestamp: tc.timestamp,
+            content: '',
+            toolCallId: tc.id,
+            toolName: tc.name,
+            toolInput: tc.input,
+            toolResult: tc.result,
+            toolStatus: tc.status,
+          });
         }
       });
     }
@@ -252,6 +298,27 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
 
   const grouped = useMemo(() => groupTimeline(timeline), [timeline]);
   const hasContent = timeline.length > 0 || isActive;
+  const hasAssistantActivity = timeline.some((item) => item.type === 'output' || item.type === 'tool_use');
+  const waitingForFirstActivity = isActive && !logsLoading && !hasAssistantActivity && !stream.planQuestion && !stream.permissionRequest;
+  const firstActivityStartedAt = getTimestamp(task.startedAt || task.createdAt);
+  const [waitingSeconds, setWaitingSeconds] = useState(0);
+
+  useEffect(() => {
+    if (!waitingForFirstActivity) {
+      setWaitingSeconds(0);
+      return;
+    }
+    const update = () => setWaitingSeconds(
+      firstActivityStartedAt ? Math.max(0, Math.floor((Date.now() - firstActivityStartedAt) / 1000)) : 0
+    );
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [waitingForFirstActivity, firstActivityStartedAt]);
+
+  useEffect(() => {
+    if (isConnected) refetchLogs();
+  }, [isConnected, refetchLogs]);
 
   const handleScroll = useCallback(() => {
     const container = messagesContainerRef.current;
@@ -270,7 +337,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
         container.scrollTop = container.scrollHeight;
       }
     });
-  }, [autoScroll, timeline.length]);
+  }, [autoScroll, timeline.length, stream.messages, stream.toolCalls]);
 
   useEffect(() => {
     return () => cancelAnimationFrame(scrollRafRef.current);
@@ -294,12 +361,13 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
       {/* Header */}
       <div className="flex items-center gap-3 px-4 py-2.5 border-b border-dark-700 flex-shrink-0 bg-dark-850">
         {onBack && (
-          <button onClick={onBack} className="md:hidden p-1 text-dark-400 hover:text-dark-100">
+          <button onClick={onBack} className="md:hidden p-1 text-dark-400 hover:text-dark-100" aria-label="Open conversations">
             <ArrowLeft size={20} />
           </button>
         )}
         <span className="text-dark-500 font-mono text-sm">#{task.id}</span>
         <StatusBadge status={task.status} />
+        {isActive && <StreamPhaseIndicator phase={stream.phase} />}
         {task.isPlanMode && (
           <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Plan</span>
         )}
@@ -317,6 +385,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
           <button
             onClick={() => setShowMeta(!showMeta)}
             className="p-1 text-dark-400 hover:text-dark-200"
+            aria-label={showMeta ? 'Hide conversation details' : 'Show conversation details'}
+            aria-expanded={showMeta}
           >
             <ChevronDown size={16} className={`transition-transform ${showMeta ? 'rotate-180' : ''}`} />
           </button>
@@ -368,8 +438,23 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
               >
                 <div className="max-w-3xl mx-auto py-4">
                   {timeline.length === 0 ? (
-                    <div className="p-3 text-dark-500 text-sm text-center">
-                      {isActive ? 'Waiting for output...' : 'No output recorded'}
+                    <div className="p-6 text-dark-500 text-sm text-center">
+                      {logsLoading ? (
+                        <div className="flex items-center justify-center gap-2">
+                          <span className="w-2 h-2 rounded-full bg-dark-500 animate-pulse" />
+                          Loading conversation history…
+                        </div>
+                      ) : isActive ? (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-center gap-2 text-dark-300">
+                            <span className="w-2 h-2 rounded-full bg-blue-500 animate-pulse" />
+                            <StreamPhaseIndicator phase={stream.phase} />
+                          </div>
+                          <p className="text-xs text-dark-500">
+                            {isConnected ? `Live connection • ${waitingSeconds}s` : 'Reconnecting to live updates…'}
+                          </p>
+                        </div>
+                      ) : 'No output recorded'}
                     </div>
                   ) : (
                     <TimelineView grouped={grouped} />
@@ -385,6 +470,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     setAutoScroll(true);
                   }}
                   className="absolute bottom-4 right-4 p-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full shadow-lg transition-colors"
+                  title="Scroll to bottom"
+                  aria-label="Scroll to bottom"
                 >
                   <ArrowDown size={16} />
                 </button>
@@ -514,17 +601,24 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   const prompt = continuePrompt.trim();
                   if (!prompt && followUpImages.length === 0) return;
                   const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
-                  setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
+                  const optimistic = { content: prompt || 'Image attachment', timestamp: Date.now() };
+                  setSentMessages(prev => [...prev, optimistic]);
                   continueTask.mutate({
                     taskId: task.id,
                     prompt,
                     images: imageBase64s,
                     runner: followUpRunner,
-                    model: followUpModel || undefined,
+                    model: followUpModel,
+                  }, {
+                    onSuccess: () => {
+                      setContinuePrompt('');
+                      setFollowUpImages([]);
+                      if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
+                    },
+                    onError: () => {
+                      setSentMessages((prev) => prev.filter((message) => message !== optimistic));
+                    },
                   });
-                  setContinuePrompt('');
-                  setFollowUpImages([]);
-                  if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
                 }}
               >
                 {stream.followUpQueueSize > 0 && (
@@ -586,7 +680,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                         <button
                           type="button"
                           onClick={() => removeFollowUpImage(img.id)}
-                          className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                          className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-300 hover:text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
+                          aria-label={`Remove ${img.name}`}
                         >
                           <X size={10} />
                         </button>
@@ -598,6 +693,11 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   </div>
                 )}
               </form>
+              {continueTask.isError && (
+                <p className="text-red-400 text-xs mt-2" role="alert">
+                  {continueTask.error instanceof Error ? continueTask.error.message : 'Failed to send follow-up'}
+                </p>
+              )}
             </div>
           )}
 

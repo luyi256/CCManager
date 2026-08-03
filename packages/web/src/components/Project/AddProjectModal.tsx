@@ -36,7 +36,12 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
   const [formData, setFormData] = useState<FormData>(initialFormData);
   const [submitError, setSubmitError] = useState('');
   const { agents: socketAgents, isConnected } = useWebSocket();
-  const { data: apiAgents = [], isLoading: isLoadingAgents } = useAgents();
+  const {
+    data: apiAgents = [],
+    isLoading: isLoadingAgents,
+    isError: agentsError,
+    refetch: refetchAgents,
+  } = useAgents();
   const agents = socketAgents.length > 0 ? socketAgents : apiAgents;
 
   const createProject = useCreateProject();
@@ -119,6 +124,13 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
             <div className="card p-4 text-center">
               <Loader2 size={24} className="mx-auto text-dark-500 mb-2 animate-spin" />
               <p className="text-dark-400 text-sm">Loading agents...</p>
+            </div>
+          ) : agentsError && agents.length === 0 ? (
+            <div className="card p-4 text-center border-red-500/30">
+              <p className="text-red-400 text-sm mb-3">Could not load agents</p>
+              <button type="button" onClick={() => refetchAgents()} className="btn btn-secondary text-sm">
+                Try again
+              </button>
             </div>
           ) : agents.length === 0 ? (
             <div className="card p-4 text-center">
@@ -211,7 +223,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           <label className="block text-sm font-medium text-dark-300 mb-1.5">
             Security Mode
           </label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label
               className={`card p-3 cursor-pointer transition-colors ${
                 formData.securityMode === 'auto'
@@ -263,7 +275,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           <label className="block text-sm font-medium text-dark-300 mb-1.5">
             Executor
           </label>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label
               className={`card p-3 cursor-pointer transition-colors ${
                 formData.executor === 'local'
@@ -358,7 +370,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
           </label>
           <div className="space-y-2">
             {formData.extraMounts.map((mount, index) => (
-              <div key={index} className="flex items-center gap-2">
+              <div key={index} className="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto_auto] items-center gap-2">
                 <input
                   type="text"
                   className="input flex-1"
@@ -401,6 +413,7 @@ export default function AddProjectModal({ isOpen, onClose }: AddProjectModalProp
                     setFormData({ ...formData, extraMounts: mounts });
                   }}
                   className="text-dark-400 hover:text-red-400 transition-colors"
+                  aria-label={`Remove mount ${index + 1}`}
                 >
                   <X size={16} />
                 </button>

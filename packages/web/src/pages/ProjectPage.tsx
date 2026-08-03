@@ -1,7 +1,8 @@
 import { useState, useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Settings, RefreshCw, History } from 'lucide-react';
+import { Settings, RefreshCw, History, ArrowLeft } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import TaskInput from '../components/Task/TaskInput';
 import SessionBrowser from '../components/Session/SessionBrowser';
 import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
@@ -21,8 +22,18 @@ export default function ProjectPage() {
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
   const [initialSession, setInitialSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
 
-  const { data: project, isLoading: projectLoading } = useProject(projectId!);
-  const { data: tasks = [], isLoading: tasksLoading, refetch } = useTasks(projectId!);
+  const {
+    data: project,
+    isLoading: projectLoading,
+    isError: projectError,
+    refetch: refetchProject,
+  } = useProject(projectId!);
+  const {
+    data: tasks = [],
+    isLoading: tasksLoading,
+    isError: tasksError,
+    refetch,
+  } = useTasks(projectId!);
   const createTask = useCreateTask(projectId!);
   const { data: activeSessions } = useActiveSessions(projectId!);
 
@@ -31,15 +42,12 @@ export default function ProjectPage() {
     return tasks.find((task) => task.id === selectedTaskId) ?? null;
   }, [selectedTaskId, tasks]);
 
-  const lastRunner = useMemo<Runner | undefined>(() => {
-    const latest = [...tasks]
-      .filter((task) => task.runner)
-      .sort((a, b) => {
-        const aTime = new Date(a.startedAt || a.createdAt).getTime();
-        const bTime = new Date(b.startedAt || b.createdAt).getTime();
-        return bTime - aTime;
-      })[0];
-    return latest?.runner;
+  const lastTaskSelection = useMemo(() => {
+    return [...tasks].sort((a, b) => {
+      const aTime = new Date(a.startedAt || a.createdAt).getTime();
+      const bTime = new Date(b.startedAt || b.createdAt).getTime();
+      return bTime - aTime;
+    })[0];
   }, [tasks]);
 
   // Filter out active sessions that are linked to any CCManager task
@@ -76,16 +84,28 @@ export default function ProjectPage() {
     );
   }
 
-  if (!project) {
+  if (projectError || !project) {
     return (
       <div className="max-w-7xl mx-auto px-4 py-6">
         <div className="card p-8 text-center">
           <h2 className="text-xl font-semibold text-dark-200 mb-2">
-            Project not found
+            {projectError ? 'Could not load project' : 'Project not found'}
           </h2>
           <p className="text-dark-400">
-            The project you're looking for doesn't exist or has been deleted.
+            {projectError
+              ? 'The project request failed. Check the connection and try again.'
+              : "The project you're looking for doesn't exist or has been deleted."}
           </p>
+          <div className="mt-5 flex items-center justify-center gap-3">
+            <Link to="/" className="btn btn-secondary inline-flex items-center gap-2">
+              <ArrowLeft size={16} /> Projects
+            </Link>
+            {projectError && (
+              <button onClick={() => refetchProject()} className="btn btn-primary">
+                Try again
+              </button>
+            )}
+          </div>
         </div>
       </div>
     );
@@ -105,6 +125,8 @@ export default function ProjectPage() {
           setIsComposing(true);
         }}
         isLoading={tasksLoading}
+        error={tasksError ? 'Could not load conversations' : undefined}
+        onRetry={() => refetch()}
         isMobileOpen={mobileSidebarOpen}
         onMobileToggle={() => setMobileSidebarOpen((value) => !value)}
       />
@@ -123,6 +145,7 @@ export default function ProjectPage() {
               onClick={() => setSessionBrowserOpen(true)}
               className="btn btn-ghost p-2"
               title="CLI Sessions"
+              aria-label="Open CLI sessions"
             >
               <History size={18} />
             </button>
@@ -130,10 +153,11 @@ export default function ProjectPage() {
               onClick={() => refetch()}
               className="btn btn-ghost p-2"
               title="Refresh"
+              aria-label="Refresh conversations"
             >
               <RefreshCw size={18} />
             </button>
-            <button onClick={() => setSettingsOpen(true)} className="btn btn-ghost p-2" title="Settings">
+            <button onClick={() => setSettingsOpen(true)} className="btn btn-ghost p-2" title="Settings" aria-label="Project settings">
               <Settings size={18} />
             </button>
           </div>
@@ -158,8 +182,8 @@ export default function ProjectPage() {
                 onSubmit={handleCreateTask}
                 isSubmitting={createTask.isPending}
                 tasks={tasks}
-                lastModel={project.lastModel}
-                lastRunner={lastRunner}
+                lastModel={lastTaskSelection?.model}
+                lastRunner={lastTaskSelection?.runner}
                 agentId={project.agentId}
               />
             </div>

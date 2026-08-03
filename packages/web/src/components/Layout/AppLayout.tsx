@@ -21,6 +21,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
               <Link
                 to="/"
                 className="p-2 -ml-2 text-dark-400 hover:text-dark-100 transition-colors"
+                aria-label="Back to projects"
               >
                 <Home size={20} />
               </Link>
@@ -42,6 +43,7 @@ export default function AppLayout({ children }: AppLayoutProps) {
             <Link
               to="/settings"
               className="p-2 text-dark-400 hover:text-dark-100 transition-colors"
+              aria-label="Settings"
             >
               <Settings size={20} />
             </Link>

@@ -25,6 +25,7 @@ import type { Task } from '../../types';
 import {
   type TimelineItem,
   groupTimeline,
+  StreamPhaseIndicator,
   TimelineView,
 } from './TimelineRenderer';
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
@@ -73,6 +74,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const { data: savedLogs, refetch: refetchLogs } = useTaskLogs(task.id);
   // Stream for active tasks
   const stream = useTaskStream(isActive ? task.id : null);
+  const streamReset = stream.reset;
 
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
@@ -155,7 +157,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
 
     // If transitioning from completed/cancelled/failed to running (retry/continuation), reset stream
     if (['completed', 'completed_with_warnings', 'cancelled', 'failed'].includes(prevStatus) && task.status === 'running') {
-      stream.reset();
+      streamReset();
       // Refetch logs to get any newly saved content
       refetchLogs();
     }
@@ -167,7 +169,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
       // Small delay to ensure server has saved all output logs
       setTimeout(() => refetchLogs(), 300);
     }
-  }, [task.status, stream, refetchLogs]);
+  }, [task.status, streamReset, refetchLogs]);
 
   // Clean up optimistic sentMessages once they appear in savedLogs
   useEffect(() => {
@@ -210,10 +212,11 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
 
         if (log.type === 'output') {
           items.push({
-            id: `saved-output-${index}`,
+            id: `saved-output-${log.id}`,
             type: 'output',
             timestamp,
             content: String(log.content),
+            logId: log.id,
           });
         } else if (log.type === 'tool_use') {
           const data = log.content as { id: string; name: string; input: unknown };
@@ -222,6 +225,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
             type: 'tool_use',
             timestamp,
             content: '',
+            toolCallId: data.id,
             toolName: data.name,
             toolInput: data.input,
             toolStatus: 'completed',
@@ -233,6 +237,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
             type: 'tool_result',
             timestamp,
             content: '',
+            toolCallId: data.id,
             toolResult: data.result,
           });
         } else if (log.type === 'user_message') {
@@ -275,33 +280,38 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     });
 
     // Add stream messages (show even after completion to prevent flash before logs refetch)
-    if (stream.messages.length > 0) {
-      // Find the latest saved log timestamp to avoid duplicates
-      const lastSavedTimestamp = items.length > 0
-        ? Math.max(...items.map(i => i.timestamp))
-        : 0;
-
+    if (stream.messages.length > 0 || stream.toolCalls.length > 0) {
       stream.messages.forEach((msg) => {
-        // Only add if newer than saved logs
-        if (msg.timestamp > lastSavedTimestamp) {
-          items.push({
-            id: `stream-${msg.id}`,
-            type: 'output',
-            timestamp: msg.timestamp,
-            content: msg.text,
-          });
-        }
+        const persistedIndex = msg.logId === undefined
+          ? -1
+          : items.findIndex((item) => item.type === 'output' && item.logId === msg.logId);
+        const streamItem: TimelineItem = {
+          id: `stream-${msg.id}`,
+          type: 'output',
+          timestamp: msg.timestamp,
+          content: msg.text,
+          logId: msg.logId,
+        };
+        if (persistedIndex >= 0) items[persistedIndex] = streamItem;
+        else items.push(streamItem);
       });
 
       // Add active tool calls
       stream.toolCalls.forEach((tc) => {
-        const existingTool = items.find(i => i.id.includes(tc.id));
+        const existingTool = items.find(i =>
+          i.type === 'tool_use' && (i.toolCallId === tc.id || i.id.includes(tc.id))
+        );
+        if (existingTool) {
+          existingTool.toolStatus = tc.status;
+          if (tc.result !== undefined) existingTool.toolResult = tc.result;
+        }
         if (!existingTool) {
           items.push({
             id: `stream-tool-${tc.id}`,
             type: 'tool_use',
-            timestamp: Date.now(),
+            timestamp: tc.timestamp,
             content: '',
+            toolCallId: tc.id,
             toolName: tc.name,
             toolInput: tc.input,
             toolResult: tc.result,
@@ -340,7 +350,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
         container.scrollTop = container.scrollHeight;
       }
     });
-  }, [autoScroll, timeline.length]);
+  }, [autoScroll, timeline.length, stream.messages, stream.toolCalls]);
 
   // Cleanup rAF on unmount
   useEffect(() => {
@@ -378,13 +388,14 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
           <div className="flex items-center gap-3">
             <span className="text-dark-500 font-mono">#{task.id}</span>
             <StatusBadge status={task.status} />
+            {isActive && <StreamPhaseIndicator phase={stream.phase} />}
             {task.isPlanMode && (
               <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">
                 Plan Mode
               </span>
             )}
           </div>
-          <button onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100">
+          <button onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100" aria-label="Close task details">
             <X size={20} />
           </button>
         </div>
@@ -446,7 +457,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                   >
                     {timeline.length === 0 ? (
                       <div className="p-3 text-dark-500 text-sm">
-                        {isActive ? 'Waiting for output...' : 'No output recorded'}
+                        {isActive ? <StreamPhaseIndicator phase={stream.phase} /> : 'No output recorded'}
                       </div>
                     ) : (
                       <TimelineView grouped={grouped} />
@@ -464,6 +475,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       }}
                       className="absolute bottom-6 right-6 p-2 bg-primary-600 hover:bg-primary-500 text-white rounded-full shadow-lg transition-colors"
                       title="Scroll to bottom"
+                      aria-label="Scroll to bottom"
                     >
                       <ArrowDown size={16} />
                     </button>
@@ -634,11 +646,18 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     if (!prompt && followUpImages.length === 0) return;
                     const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
                     // Always send immediately - server/agent handles interrupting running tasks
-                    setSentMessages(prev => [...prev, { content: prompt, timestamp: Date.now() }]);
-                    continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s });
-                    setContinuePrompt('');
-                    setFollowUpImages([]);
-                    if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
+                    const optimistic = { content: prompt || 'Image attachment', timestamp: Date.now() };
+                    setSentMessages(prev => [...prev, optimistic]);
+                    continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s }, {
+                      onSuccess: () => {
+                        setContinuePrompt('');
+                        setFollowUpImages([]);
+                        if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
+                      },
+                      onError: () => {
+                        setSentMessages((prev) => prev.filter((message) => message !== optimistic));
+                      },
+                    });
                   }}
                 >
                   {stream.followUpQueueSize > 0 && (
@@ -710,7 +729,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                           <button
                             type="button"
                             onClick={() => removeFollowUpImage(img.id)}
-                            className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                            className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-300 hover:text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
+                            aria-label={`Remove ${img.name}`}
                           >
                             <X size={10} />
                           </button>
@@ -723,6 +743,11 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     </div>
                   )}
                 </form>
+                {continueTask.isError && (
+                  <p className="text-red-400 text-xs mt-2" role="alert">
+                    {continueTask.error instanceof Error ? continueTask.error.message : 'Failed to send follow-up'}
+                  </p>
+                )}
               </>
             )}
             <div className="flex gap-2">

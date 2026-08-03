@@ -12,11 +12,13 @@ interface ProjectSettingsModalProps {
 
 export default function ProjectSettingsModal({ isOpen, onClose, project }: ProjectSettingsModalProps) {
   const [allowedPathsText, setAllowedPathsText] = useState('');
+  const [submitError, setSubmitError] = useState('');
   const updateProject = useUpdateProject();
 
   useEffect(() => {
     if (isOpen) {
       setAllowedPathsText(project.allowedPaths?.join('\n') || '');
+      setSubmitError('');
     }
   }, [isOpen, project.allowedPaths]);
 
@@ -28,12 +30,16 @@ export default function ProjectSettingsModal({ isOpen, onClose, project }: Proje
       .map(p => p.trim())
       .filter(Boolean);
 
-    await updateProject.mutateAsync({
-      id: project.id,
-      data: { allowedPaths: paths },
-    });
-
-    onClose();
+    setSubmitError('');
+    try {
+      await updateProject.mutateAsync({
+        id: project.id,
+        data: { allowedPaths: paths },
+      });
+      onClose();
+    } catch (error) {
+      setSubmitError(error instanceof Error ? error.message : 'Failed to save project settings');
+    }
   };
 
   return (
@@ -45,6 +51,10 @@ export default function ProjectSettingsModal({ isOpen, onClose, project }: Proje
           </label>
           <p className="text-dark-400 text-sm">{project.name}</p>
         </div>
+
+        {submitError && (
+          <p className="text-red-400 text-sm" role="alert">{submitError}</p>
+        )}
 
         <div>
           <label className="block text-sm font-medium text-dark-200 mb-1">

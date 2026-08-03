@@ -31,9 +31,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
 
   // Update model when lastModel prop changes (project switch)
   useEffect(() => {
-    if (lastModel !== undefined) {
-      setModel(lastModel || '');
-    }
+    setModel(lastModel || '');
   }, [lastModel]);
 
   useEffect(() => {
@@ -43,7 +41,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
   }, [lastRunner]);
 
   const pendingTasks = tasks.filter((t) =>
-    ['pending', 'running', 'waiting', 'plan_review'].includes(t.status)
+    ['pending', 'running', 'waiting', 'waiting_permission', 'plan_review'].includes(t.status)
   );
 
   const addImagesFromClipboard = useCallback((items: DataTransferItemList) => {
@@ -163,7 +161,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           </button>
         </div>
       )}
-      <div className="flex gap-3">
+      <div className="flex flex-col sm:flex-row gap-3">
         <div className="flex-1 flex flex-col">
           <textarea
             value={prompt}
@@ -197,7 +195,8 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
                   <button
                     type="button"
                     onClick={() => removeImage(img.id)}
-                    className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-400 hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-300 hover:text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
+                    aria-label={`Remove ${img.name}`}
                   >
                     <X size={12} />
                   </button>
@@ -210,7 +209,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex sm:flex-col gap-2">
           <VoiceInput onTranscription={handleVoiceTranscription} />
           <input
             ref={fileInputRef}
@@ -232,7 +231,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           <button
             type="submit"
             disabled={(!prompt.trim() && images.length === 0) || isSubmitting}
-            className="btn btn-primary p-2"
+            className="btn btn-primary p-2 flex-1 sm:flex-none"
           >
             {isSubmitting ? (
               <Loader2 size={20} className="animate-spin" />

@@ -46,6 +46,55 @@ export type TaskStatus =
 
 export type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
+export type TaskStreamPhase =
+  | 'connecting'
+  | 'queued'
+  | 'starting'
+  | 'thinking'
+  | 'tool'
+  | 'waiting'
+  | 'completed'
+  | 'failed'
+  | 'cancelled';
+
+export interface TaskStreamEvent {
+  version: 1;
+  taskId: number;
+  eventId: string;
+  kind: 'phase' | 'text' | 'tool' | 'interaction' | 'error';
+  timestamp: string;
+  logId?: number;
+  runId?: string;
+  blockId?: string;
+  phase?: TaskStreamPhase;
+  mode?: 'delta' | 'snapshot';
+  offset?: number;
+  text?: string;
+  tool?: {
+    id: string;
+    name: string;
+    input?: unknown;
+    result?: unknown;
+    status: 'running' | 'completed' | 'failed';
+  };
+  interaction?: {
+    type: 'plan_question' | 'permission_request';
+    data: unknown;
+  };
+  error?: string;
+  replay?: boolean;
+}
+
+export interface TaskStreamSnapshot {
+  version: 1;
+  taskId: number;
+  cursor: number;
+  phase: TaskStreamPhase;
+  runId?: string;
+  generatedAt: string;
+  events: TaskStreamEvent[];
+}
+
 export interface GitInfo {
   branch: string;
   commits: Array<{
@@ -110,8 +159,16 @@ export interface PlanQuestion {
 }
 
 export interface TaskLogEntry {
+  id: number;
   timestamp: string;
-  type: 'assistant' | 'tool_use' | 'tool_result' | 'user' | 'system';
+  type:
+    | 'output'
+    | 'tool_use'
+    | 'tool_result'
+    | 'plan_question'
+    | 'permission_request'
+    | 'user_message'
+    | 'stream_phase';
   content: unknown;
 }
 

@@ -12,6 +12,7 @@ interface WebSocketMessage {
 
 interface WebSocketContextType {
   isConnected: boolean;
+  connectionGeneration: number;
   agents: Agent[];
   subscribe: (taskId: string) => void;
   unsubscribe: (taskId: string) => void;
@@ -27,6 +28,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
   const queryClient = useQueryClient();
   const socketRef = useRef<Socket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
+  const [connectionGeneration, setConnectionGeneration] = useState(0);
   const [agents, setAgents] = useState<Agent[]>([]);
   const handlersRef = useRef<Set<(msg: WebSocketMessage) => void>>(new Set());
 
@@ -53,6 +55,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     socket.on('connect', () => {
       setIsConnected(true);
+      setConnectionGeneration((value) => value + 1);
       console.log('Socket.IO connected');
     });
 
@@ -62,7 +65,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     });
 
     socket.on('connect_error', (error) => {
-      console.error('Socket.IO connection error:', error);
+      console.warn('Socket.IO connection error:', error.message);
     });
 
     // Agent updates
@@ -84,6 +87,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     // Task events - forward to handlers
     const taskEvents = [
       'task:output',
+      'task:stream',
+      'task:stream_snapshot',
       'task:tool_use',
       'task:tool_result',
       'task:plan_question',
@@ -147,6 +152,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     <WebSocketContext.Provider
       value={{
         isConnected,
+        connectionGeneration,
         agents,
         subscribe,
         unsubscribe,

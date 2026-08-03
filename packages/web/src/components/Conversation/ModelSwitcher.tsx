@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bot, Check, Cpu, Loader2, RefreshCw, Sparkles, X } from 'lucide-react';
+import { Bot, Check, Cpu, Loader2, Sparkles, X } from 'lucide-react';
 import * as api from '../../services/api';
 import type { Runner } from '../../types';
 
@@ -42,19 +42,9 @@ export default function ModelSwitcher({
   const [draftRunner, setDraftRunner] = useState<Runner>(selectedRunner);
   const [models, setModels] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [pending, setPending] = useState(false);
+  const [runnerAvailable, setRunnerAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [modelListMeta, setModelListMeta] = useState<{ cached?: boolean; updatedAt?: string } | null>(null);
-  const pollTimerRef = useRef<number | null>(null);
   const requestedRunnerRef = useRef<Runner>(selectedRunner);
-
-  const clearPoll = () => {
-    if (pollTimerRef.current) {
-      window.clearTimeout(pollTimerRef.current);
-      pollTimerRef.current = null;
-    }
-  };
-  useEffect(() => () => clearPoll(), []);
 
   const currentRunner = useMemo(
     () => RUNNERS.find((runner) => runner.id === selectedRunner) ?? RUNNERS[0],
@@ -67,47 +57,40 @@ export default function ModelSwitcher({
   );
 
   const close = () => {
-    clearPoll();
     setOpen(false);
     setStep('runner');
     setDraftRunner(selectedRunner);
     setError(null);
   };
 
-  const loadModels = async (runner: Runner, force = false, attempt = 0) => {
+  const loadModels = async (runner: Runner) => {
     if (!agentId) {
       setModels([]);
-      setError('Agent is required to run /model');
+      setRunnerAvailable(false);
+      setError('Agent is required to load models');
       return;
     }
-    if (attempt === 0) {
-      clearPoll();
-      requestedRunnerRef.current = runner;
-      setIsLoading(true);
-    }
+    requestedRunnerRef.current = runner;
+    setIsLoading(true);
     setError(null);
     try {
-      const result = await api.getRunnerModels(agentId, runner, force);
+      const result = await api.getRunnerModels(agentId, runner);
       // Drop stale responses if the user switched runner meanwhile.
       if (requestedRunnerRef.current !== runner) return;
       setModels(result.models);
-      setModelListMeta({ cached: result.cached, updatedAt: result.updatedAt });
-      setPending(Boolean(result.pending));
-      if (result.pending && attempt < 4) {
-        // Server is warming the cache in the background — poll for the real list
-        // instead of blocking on the slow `<cli> -p /model` call.
-        pollTimerRef.current = window.setTimeout(() => loadModels(runner, false, attempt + 1), 2000);
-      } else if (!result.pending && result.models.length === 0) {
-        setError('No models returned from /model');
+      setRunnerAvailable(result.available);
+      if (!result.available) {
+        setError(result.message || `This agent has not reported ${runner} models`);
+      } else if (result.models.length === 0) {
+        setError(`${runner} has no named models to select; use its CLI default`);
       }
     } catch (err) {
       if (requestedRunnerRef.current !== runner) return;
       setModels([]);
-      setModelListMeta(null);
-      setPending(false);
+      setRunnerAvailable(false);
       setError(err instanceof Error ? err.message : 'Failed to load models');
     } finally {
-      if (attempt === 0) setIsLoading(false);
+      setIsLoading(false);
     }
   };
 
@@ -118,6 +101,7 @@ export default function ModelSwitcher({
   }, [open, selectedRunner]);
 
   const applyDefault = () => {
+    if (runnerAvailable === false) return;
     onRunnerChange(draftRunner);
     onModelChange('');
     close();
@@ -125,11 +109,9 @@ export default function ModelSwitcher({
 
   const openModelList = (runner: Runner) => {
     setDraftRunner(runner);
-    onRunnerChange(runner);
-    onModelChange('');
     setStep('models');
     setModels([]);
-    setModelListMeta(null);
+    setRunnerAvailable(null);
     void loadModels(runner);
   };
 
@@ -198,39 +180,27 @@ export default function ModelSwitcher({
           {step === 'models' && (
             <div className="p-2">
               <div className="flex items-center justify-between px-1 pb-2">
-                <div>
-                  <span className="block text-xs uppercase text-dark-500">{draftRunnerMeta.label} models</span>
-                  {modelListMeta?.updatedAt && (
-                    <span className="block text-[11px] text-dark-600">
-                      {modelListMeta.cached ? 'Cached' : 'Updated'} {new Date(modelListMeta.updatedAt).toLocaleString()}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={() => loadModels(draftRunner, true)}
-                  disabled={!agentId || isLoading}
-                  className="p-1 text-dark-500 hover:text-dark-200 disabled:text-dark-700"
-                  title="Refresh /model"
-                >
-                  {(isLoading || pending) ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
-                </button>
+                <span className="block text-xs uppercase text-dark-500">{draftRunnerMeta.label} models</span>
+                {isLoading && <Loader2 size={14} className="animate-spin text-dark-500" />}
               </div>
 
               <button
                 type="button"
                 onClick={applyDefault}
-                className="mb-1 w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
+                disabled={runnerAvailable === false}
+                className="mb-1 w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800 disabled:text-dark-600 disabled:hover:bg-transparent"
               >
                 <span className="w-4">{!selectedModel && selectedRunner === draftRunner && <Check size={14} />}</span>
                 <span className="flex-1">Use default model</span>
               </button>
 
               <div className="max-h-64 overflow-y-auto py-1">
-                {(isLoading || pending) && models.length === 0 ? (
+                {isLoading && models.length === 0 ? (
                   <div className="px-2 py-4 text-center text-sm text-dark-500">Fetching models…</div>
                 ) : models.length === 0 ? (
-                  <div className="px-2 py-4 text-center text-sm text-dark-500">No models — use default</div>
+                  <div className="px-2 py-4 text-center text-sm text-dark-500">
+                    {runnerAvailable === false ? 'Runner unavailable' : 'No verified named models — use default'}
+                  </div>
                 ) : (
                   models.map((model) => (
                     <button

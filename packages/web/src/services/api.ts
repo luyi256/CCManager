@@ -115,16 +115,13 @@ export async function getOnlineAgents(): Promise<Agent[]> {
 export interface RunnerModelsResponse {
   runner: Runner;
   models: string[];
-  raw?: string;
-  cached?: boolean;
-  updatedAt?: string;
-  /** True when the list is stale/empty and the server is refreshing it in the background. */
-  pending?: boolean;
+  available: boolean;
+  source?: 'agent';
+  message?: string;
 }
 
-export async function getRunnerModels(agentId: string, runner: Runner, force = false): Promise<RunnerModelsResponse> {
+export async function getRunnerModels(agentId: string, runner: Runner): Promise<RunnerModelsResponse> {
   const params = new URLSearchParams({ runner });
-  if (force) params.set('force', '1');
   return request(`/agents/${agentId}/models?${params.toString()}`);
 }
 
@@ -197,8 +194,9 @@ export async function cleanupWorktree(taskId: number): Promise<{ message: string
 }
 
 export interface TaskLog {
+  id: number;
   timestamp: string;
-  type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request' | 'user_message';
+  type: 'output' | 'tool_use' | 'tool_result' | 'plan_question' | 'permission_request' | 'user_message' | 'stream_phase';
   content: unknown;
 }
 

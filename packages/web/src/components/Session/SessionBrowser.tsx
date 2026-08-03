@@ -1,4 +1,4 @@
-import { useState, useMemo, useRef, useCallback, useEffect } from 'react';
+import { useState, useMemo, useRef, useCallback, useEffect, type RefObject } from 'react';
 import { motion } from 'framer-motion';
 import {
   X,
@@ -20,6 +20,8 @@ import type { SessionSearchMatch } from '../../services/api';
 import { groupTimeline, TimelineView } from '../Task/TimelineRenderer';
 import type { TimelineItem } from '../Task/TimelineRenderer';
 import type { Task } from '../../types';
+import { formatRelativeTime } from '../../utils/dateTime';
+import { useWebSocket } from '../../contexts/WebSocketContext';
 
 /** Flattened search result: one entry per matched message */
 interface FlatSearchResult {
@@ -31,20 +33,6 @@ interface FlatSearchResult {
   linkedTaskId?: number;
   relatedSessionIds?: string[];
   match: SessionSearchMatch;
-}
-
-function formatRelativeTime(dateStr: string): string {
-  const now = Date.now();
-  const date = new Date(dateStr).getTime();
-  const diff = now - date;
-  const mins = Math.floor(diff / 60000);
-  if (mins < 1) return 'just now';
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days}d ago`;
-  return new Date(dateStr).toLocaleDateString();
 }
 
 function formatFileSize(bytes: number): string {
@@ -105,6 +93,23 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
     scrollToEntryId?: string;
   } | null>(initialSession ? { id: initialSession.id, relatedIds: initialSession.relatedIds } : null);
   const [searchQuery, setSearchQuery] = useState('');
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const previouslyFocusedRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    previouslyFocusedRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    document.addEventListener('keydown', handleEscape);
+    window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+    return () => {
+      document.removeEventListener('keydown', handleEscape);
+      previouslyFocusedRef.current?.focus();
+    };
+  }, [onClose]);
 
   return (
     <>
@@ -123,6 +128,9 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
         exit={{ x: '100%' }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
         className="fixed right-0 top-14 bottom-0 w-full max-w-xl bg-dark-900 border-l border-dark-700 overflow-hidden flex flex-col z-40 shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-label="CLI sessions"
       >
         {selectedSession ? (
           <SessionDetailView
@@ -132,6 +140,7 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
             scrollToEntryId={selectedSession.scrollToEntryId}
             onBack={() => setSelectedSession(null)}
             onClose={onClose}
+            closeButtonRef={closeButtonRef}
             onNavigateToTask={onNavigateToTask}
             onTaskCreated={onTaskCreated}
           />
@@ -144,6 +153,7 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
               setSelectedSession({ id, relatedIds, scrollToEntryId })
             }
             onClose={onClose}
+            closeButtonRef={closeButtonRef}
             onNavigateToTask={onNavigateToTask}
           />
         )}
@@ -154,19 +164,42 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
 
 // --- Session List View ---
 
-function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSession, onClose, onNavigateToTask }: {
+function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSession, onClose, closeButtonRef, onNavigateToTask }: {
   projectId: string;
   searchQuery: string;
   onSearchChange: (q: string) => void;
   onSelectSession: (id: string, relatedIds?: string[], scrollToEntryId?: string) => void;
   onClose: () => void;
+  closeButtonRef: RefObject<HTMLButtonElement>;
   onNavigateToTask?: (taskId: number) => void;
 }) {
   const [showAll, setShowAll] = useState(false);
   const [debouncedQuery, setDebouncedQuery] = useState('');
-  const { data: activeSessions, isLoading: activeLoading } = useActiveSessions(projectId);
-  const { data: allSessions, isLoading: allLoading } = useSessions(projectId, showAll);
-  const { data: searchResults, isLoading: searchLoading } = useSessionSearch(projectId, debouncedQuery);
+  const {
+    data: activeSessions,
+    isLoading: activeLoading,
+    isError: activeError,
+    refetch: refetchActive,
+  } = useActiveSessions(projectId);
+  const {
+    data: allSessions,
+    isLoading: allLoading,
+    isError: allError,
+    refetch: refetchAll,
+  } = useSessions(projectId, showAll);
+  const {
+    data: searchResults,
+    isLoading: searchLoading,
+    isError: searchError,
+    refetch: refetchSearch,
+  } = useSessionSearch(projectId, debouncedQuery);
+  const { isConnected } = useWebSocket();
+
+  useEffect(() => {
+    if (!isConnected) return;
+    refetchActive();
+    if (showAll) refetchAll();
+  }, [isConnected, showAll, refetchActive, refetchAll]);
 
   // Debounce search query
   useEffect(() => {
@@ -238,7 +271,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
         <h2 className="text-lg font-semibold text-dark-100">CLI Sessions</h2>
-        <button onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100">
+        <button ref={closeButtonRef} onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100" aria-label="Close CLI sessions">
           <X size={20} />
         </button>
       </div>
@@ -273,6 +306,11 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                 </div>
               ))}
             </div>
+          ) : searchError ? (
+            <div className="p-8 text-center">
+              <p className="text-red-400 text-sm mb-3">Could not search sessions</p>
+              <button onClick={() => refetchSearch()} className="btn btn-secondary text-sm">Try again</button>
+            </div>
           ) : flatResults.length === 0 ? (
             <div className="p-8 text-center text-dark-500">
               No messages match "{debouncedQuery}"
@@ -304,6 +342,16 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                   <div className="h-3 bg-dark-700 rounded w-1/2" />
                 </div>
               ))}
+            </div>
+          ) : (showAll ? allError : activeError) ? (
+            <div className="p-8 text-center">
+              <p className="text-red-400 text-sm mb-3">Could not load sessions</p>
+              <button
+                onClick={() => showAll ? refetchAll() : refetchActive()}
+                className="btn btn-secondary text-sm"
+              >
+                Try again
+              </button>
             </div>
           ) : !showAll && activeCount === 0 ? (
             <div className="p-6">
@@ -341,7 +389,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                       <p className="text-dark-200 text-sm line-clamp-2 mb-2">
                         {session.firstPrompt}
                       </p>
-                      <div className="flex items-center gap-3 text-xs text-dark-500">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-500">
                         <CopySessionId sessionId={session.sessionId} short />
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
@@ -465,7 +513,7 @@ function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
           )}
         </div>
 
-        <div className="flex items-center gap-3 text-xs text-dark-500">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-500">
           <span className="flex items-center gap-1">
             <Clock size={12} />
             {formatRelativeTime(result.lastModified)}
@@ -497,17 +545,23 @@ function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
 
 // --- Session Detail View ---
 
-function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEntryId, onBack, onClose, onNavigateToTask, onTaskCreated }: {
+function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEntryId, onBack, onClose, closeButtonRef, onNavigateToTask, onTaskCreated }: {
   projectId: string;
   sessionId: string;
   relatedSessionIds?: string[];
   scrollToEntryId?: string;
   onBack: () => void;
   onClose: () => void;
+  closeButtonRef: RefObject<HTMLButtonElement>;
   onNavigateToTask?: (taskId: number) => void;
   onTaskCreated?: (task: Task) => void;
 }) {
-  const { data: detail, isLoading } = useSessionDetail(projectId, sessionId, relatedSessionIds);
+  const {
+    data: detail,
+    isLoading,
+    isError: detailError,
+    refetch: refetchDetail,
+  } = useSessionDetail(projectId, sessionId, relatedSessionIds);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(false);
   const [adopting, setAdopting] = useState(false);
@@ -589,7 +643,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-dark-700">
         <div className="flex items-center gap-2 min-w-0">
-          <button onClick={onBack} className="p-1 text-dark-400 hover:text-dark-100 shrink-0">
+          <button onClick={onBack} className="p-1 text-dark-400 hover:text-dark-100 shrink-0" aria-label="Back to session list">
             <ArrowLeft size={18} />
           </button>
           <CopySessionId sessionId={sessionId} short />
@@ -605,7 +659,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
             </button>
           )}
         </div>
-        <button onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100">
+        <button ref={closeButtonRef} onClick={onClose} className="p-1 text-dark-400 hover:text-dark-100" aria-label="Close CLI sessions">
           <X size={20} />
         </button>
       </div>
@@ -621,6 +675,11 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
                 <div className="h-3 bg-dark-700 rounded w-2/3" />
               </div>
             ))}
+          </div>
+        ) : detailError ? (
+          <div className="p-8 text-center">
+            <p className="text-red-400 text-sm mb-3">Could not load this session</p>
+            <button onClick={() => refetchDetail()} className="btn btn-secondary text-sm">Try again</button>
           </div>
         ) : timeline.length === 0 ? (
           <div className="p-8 text-center text-dark-500">

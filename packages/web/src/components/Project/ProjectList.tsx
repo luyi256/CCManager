@@ -6,9 +6,11 @@ import type { Project } from '../../types';
 interface ProjectListProps {
   projects: Project[];
   isLoading: boolean;
+  error?: string;
+  onRetry?: () => void;
 }
 
-export default function ProjectList({ projects, isLoading }: ProjectListProps) {
+export default function ProjectList({ projects, isLoading, error, onRetry }: ProjectListProps) {
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -22,6 +24,18 @@ export default function ProjectList({ projects, isLoading }: ProjectListProps) {
             <div className="h-4 bg-dark-700 rounded w-1/4" />
           </div>
         ))}
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="card p-8 text-center border-red-500/30">
+        <h3 className="text-lg font-medium text-red-300 mb-2">Could not load projects</h3>
+        <p className="text-dark-400 text-sm mb-4">{error}</p>
+        <button type="button" onClick={onRetry} className="btn btn-secondary">
+          Try again
+        </button>
       </div>
     );
   }

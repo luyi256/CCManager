@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { Plus, MessageSquare, Menu } from 'lucide-react';
 import type { Task, TaskStatus } from '../../types';
+import { formatRelativeTime, getTimestamp } from '../../utils/dateTime';
 
 const statusColors: Record<TaskStatus, string> = {
   pending: 'bg-dark-500',
@@ -13,17 +14,6 @@ const statusColors: Record<TaskStatus, string> = {
   failed: 'bg-red-500',
   cancelled: 'bg-dark-500',
 };
-
-function relativeTime(dateStr: string): string {
-  const now = Date.now();
-  const d = new Date(dateStr).getTime();
-  const diff = now - d;
-  if (diff < 60000) return 'just now';
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-  return new Date(dateStr).toLocaleDateString();
-}
 
 function getActivityTime(task: Task): string {
   return task.completedAt || task.startedAt || task.createdAt;
@@ -56,6 +46,8 @@ interface ConversationSidebarProps {
   onSelectTask: (task: Task) => void;
   onNewConversation: () => void;
   isLoading: boolean;
+  error?: string;
+  onRetry?: () => void;
   isMobileOpen?: boolean;
   onMobileToggle?: () => void;
 }
@@ -66,6 +58,8 @@ export default function ConversationSidebar({
   onSelectTask,
   onNewConversation,
   isLoading,
+  error,
+  onRetry,
   isMobileOpen,
   onMobileToggle,
 }: ConversationSidebarProps) {
@@ -77,8 +71,8 @@ export default function ConversationSidebar({
       !['running', 'waiting', 'waiting_permission', 'plan_review'].includes(t.status)
     );
 
-    active.sort((a, b) => new Date(getActivityTime(b)).getTime() - new Date(getActivityTime(a)).getTime());
-    rest.sort((a, b) => new Date(getActivityTime(b)).getTime() - new Date(getActivityTime(a)).getTime());
+    active.sort((a, b) => getTimestamp(getActivityTime(b)) - getTimestamp(getActivityTime(a)));
+    rest.sort((a, b) => getTimestamp(getActivityTime(b)) - getTimestamp(getActivityTime(a)));
 
     return [...active, ...rest];
   }, [tasks]);
@@ -90,6 +84,8 @@ export default function ConversationSidebar({
         onClick={onMobileToggle}
         className="md:hidden fixed top-[env(safe-area-inset-top)] left-2 z-50 p-2 mt-2 text-dark-400 hover:text-dark-100"
         style={{ top: 'calc(env(safe-area-inset-top, 0px) + 0.5rem)' }}
+        aria-label="Open conversations"
+        aria-expanded={isMobileOpen}
       >
         <Menu size={20} />
       </button>
@@ -134,6 +130,13 @@ export default function ConversationSidebar({
               {[1, 2, 3].map(i => (
                 <div key={i} className="h-16 bg-dark-800 rounded-lg animate-pulse" />
               ))}
+            </div>
+          ) : error ? (
+            <div className="p-6 text-center">
+              <p className="text-red-400 text-sm mb-3">{error}</p>
+              <button type="button" onClick={onRetry} className="btn btn-secondary text-sm">
+                Try again
+              </button>
             </div>
           ) : sortedTasks.length === 0 ? (
             <div className="p-6 text-center">
@@ -188,7 +191,7 @@ export default function ConversationSidebar({
                             </span>
                           )}
                           <span className="text-xs text-dark-500 ml-auto flex-shrink-0">
-                            {relativeTime(getActivityTime(task))}
+                            {formatRelativeTime(getActivityTime(task))}
                           </span>
                         </div>
                       </div>
