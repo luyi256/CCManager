@@ -38,14 +38,17 @@ coverage/
 deploy.sh
 start.sh
 tunnel-monitor.sh
+ccm-guardian.sh
 
 # Old build artifacts
 dist.old/
+.dist-root-owned-backup-*/
 
 # Internal docs
 PLAN.md
 plan.md
 todo.md
+agentdocs/
 
 # Temp files
 *.tmp

@@ -1,5 +1,9 @@
 # CC Manager
 
+## Repository-specific agent rules
+
+- Do not use `curl` against any remote server. Remote service checks and operations must use another explicitly permitted mechanism. `curl` is allowed only for local loopback services such as `127.0.0.1` or `localhost`.
+
 Multi-device task management system for Claude Code — manage Claude Code task execution across multiple devices via Web UI.
 
 ## Tech Stack
