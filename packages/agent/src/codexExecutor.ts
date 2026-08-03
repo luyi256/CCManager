@@ -16,6 +16,7 @@ export class CodexExecutor extends EventEmitter {
   private tempImageFiles: string[] = [];
   private collectedOutput = ''; // Track output for auth-failure detection
   private fatalError: Error | null = null;
+  private streamedItemText = new Map<string, string>();
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'codex') {
     super();
@@ -30,6 +31,7 @@ export class CodexExecutor extends EventEmitter {
     this.tempImageFiles = [];
     this.collectedOutput = '';
     this.fatalError = null;
+    this.streamedItemText.clear();
 
     // Save base64 images to temp files
     const imageArgs: string[] = [];
@@ -189,6 +191,16 @@ export class CodexExecutor extends EventEmitter {
     });
   }
 
+  private emitItemTextDelta(item: { id?: string; text?: string }): void {
+    if (!item.id || !item.text) return;
+    const previous = this.streamedItemText.get(item.id) || '';
+    if (!item.text.startsWith(previous)) return;
+    const delta = item.text.slice(previous.length);
+    if (!delta) return;
+    this.streamedItemText.set(item.id, item.text);
+    this.emit('output', delta);
+  }
+
   private parseLine(line: string): void {
     try {
       const event = JSON.parse(line);
@@ -214,14 +226,20 @@ export class CodexExecutor extends EventEmitter {
           }
           break;
 
+        case 'item.updated':
+          if (event.item?.type === 'agent_message') {
+            this.emitItemTextDelta(event.item);
+          }
+          break;
+
         case 'item.completed':
           if (event.item) {
             if (event.item.type === 'agent_message' && event.item.text) {
-              this.emit('output', event.item.text);
+              this.emitItemTextDelta(event.item);
             } else if (event.item.type === 'command_execution') {
               this.emit('tool_result', {
                 id: event.item.id || `codex-${Date.now()}`,
-                result: event.item.output || event.item.exit_code?.toString() || '',
+                result: event.item.aggregated_output || event.item.output || event.item.exit_code?.toString() || '',
               });
             }
           }

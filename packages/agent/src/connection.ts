@@ -14,6 +14,25 @@ const execAsync = promisify(exec);
 type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
 type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
+interface BufferedEvent {
+  event: string;
+  args: unknown[];
+}
+
+const HEARTBEAT_INTERVAL_MS = 20000;
+const URL_DISCOVERY_COOLDOWN_MS = 5000;
+const URL_DISCOVERY_TIMEOUT_MS = 10000;
+
+function normalizeManagerUrl(value: string): string {
+  const parsed = new URL(value.trim());
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Unsupported manager URL protocol: ${parsed.protocol}`);
+  }
+  parsed.hash = '';
+  parsed.pathname = parsed.pathname.replace(/\/+$/, '') || '/';
+  return parsed.origin + (parsed.pathname === '/' ? '' : parsed.pathname) + parsed.search;
+}
+
 function parseModelOutput(output: string, runner: Runner): string[] {
   const models = new Set<string>();
   const patterns = [
@@ -83,23 +102,38 @@ export class AgentConnection {
   private consecutiveErrors = 0;
   private maxReconnectAttempts = Infinity;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  private discoveryInFlight: Promise<void> | null = null;
+  private lastDiscoveryAt = 0;
+  private shuttingDown = false;
   private worktreeManager = new WorktreeManager();
   // Monotonic sequence per task to detect superseded follow-ups
   private followUpSeq: Map<number, number> = new Map();
 
   constructor(config: AgentConfig) {
     this.config = config;
-    this.currentUrl = config.managerUrl!;
+    this.currentUrl = normalizeManagerUrl(config.managerUrl!);
+    this.config.managerUrl = this.currentUrl;
   }
 
   connect(): void {
+    this.shuttingDown = false;
+    if (this.socket) {
+      if (!this.socket.connected) {
+        this.socket.connect();
+      }
+      return;
+    }
+    this.openSocket();
+  }
+
+  private openSocket(bufferedEvents: BufferedEvent[] = []): void {
     console.log(`Connecting to manager: ${this.currentUrl}`);
 
     // Parse base path from URL (e.g. https://example.com/ccm → basePath="/ccm")
     const parsedUrl = new URL(this.currentUrl);
     const basePath = parsedUrl.pathname.replace(/\/$/, '');
 
-    this.socket = io(`${parsedUrl.origin}/agent`, {
+    const socket = io(`${parsedUrl.origin}/agent`, {
       path: `${basePath}/socket.io`,
       auth: {
         token: this.config.authToken,
@@ -109,45 +143,60 @@ export class AgentConnection {
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: 1000,
       reconnectionDelayMax: 30000,
+      autoConnect: false,
     });
+    this.socket = socket;
 
-    this.socket.on('connect', () => {
+    socket.on('connect', () => {
+      if (this.socket !== socket || this.shuttingDown) return;
       console.log('Connected to manager');
       this.reconnectAttempts = 0;
       this.consecutiveErrors = 0;
-      this.register();
+      this.lastDiscoveryAt = 0;
+      this.register(socket);
     });
 
-    this.socket.on('disconnect', (reason) => {
+    socket.on('disconnect', (reason) => {
+      if (this.socket !== socket) return;
       console.log(`Disconnected from manager: ${reason}`);
+      this.stopHeartbeat();
+
+      if (this.shuttingDown) return;
+
+      // Socket.IO intentionally disables automatic reconnection after a
+      // server-initiated namespace disconnect. The server uses this path when
+      // its application heartbeat expires, so explicitly reopen the socket.
+      if (reason === 'io server disconnect') {
+        socket.connect();
+        void this.reconnectWithDiscovery();
+      }
     });
 
-    this.socket.on('connect_error', (error) => {
+    socket.on('connect_error', (error) => {
+      if (this.socket !== socket || this.shuttingDown) return;
       console.error(`Connection error: ${error.message}`);
       this.reconnectAttempts++;
       this.consecutiveErrors++;
 
-      if (this.consecutiveErrors >= 3) {
-        this.reconnectWithDiscovery().catch((e) => {
-          console.error('URL discovery failed:', e instanceof Error ? e.message : e);
-        });
-      }
+      // Re-read server-url.txt on the first failed connection. Native
+      // Socket.IO reconnection continues in parallel when the URL is unchanged.
+      void this.reconnectWithDiscovery();
     });
 
-    this.socket.on('task:execute', (task: TaskRequest) => {
+    socket.on('task:execute', (task: TaskRequest) => {
       this.handleTask(task).catch((error) => {
         console.error(`Task ${task.taskId} execution error:`, error);
       });
     });
 
-    this.socket.on('task:input', (data: { taskId: number; input: string }) => {
+    socket.on('task:input', (data: { taskId: number; input: string }) => {
       const executor = this.executors.get(data.taskId);
       if (executor) {
         executor.sendInput(data.input);
       }
     });
 
-    this.socket.on('task:cancel', (data: { taskId: number }) => {
+    socket.on('task:cancel', (data: { taskId: number }) => {
       const executor = this.executors.get(data.taskId);
       if (executor) {
         executor.cancel();
@@ -155,7 +204,7 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('task:merge', async (data: { taskId: number; projectPath: string; branch: string; deleteBranch?: boolean }) => {
+    socket.on('task:merge', async (data: { taskId: number; projectPath: string; branch: string; deleteBranch?: boolean }) => {
       try {
         console.log(`Merging worktree branch ${data.branch} for task ${data.taskId}`);
         const result = await this.worktreeManager.merge(data.projectPath, data.branch, data.deleteBranch || false);
@@ -173,7 +222,7 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('task:cleanup-worktree', async (data: { taskId: number; projectPath: string; branch: string }) => {
+    socket.on('task:cleanup-worktree', async (data: { taskId: number; projectPath: string; branch: string }) => {
       try {
         console.log(`Cleaning up worktree branch ${data.branch} for task ${data.taskId}`);
         await this.worktreeManager.cleanup(data.projectPath, data.branch);
@@ -188,7 +237,7 @@ export class AgentConnection {
     });
 
     // Session browsing — server requests session data via callback
-    this.socket.on('sessions:list', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:list', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] list requested for projectPath: ${data.projectPath}`);
         const sessions = await listSessions(data.projectPath);
@@ -200,7 +249,7 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('sessions:active', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:active', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] active requested for projectPath: ${data.projectPath}`);
         const sessions = await listActiveSessions(data.projectPath);
@@ -212,7 +261,7 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('sessions:detail', async (data: { projectPath: string; sessionId: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:detail', async (data: { projectPath: string; sessionId: string }, callback: (result: unknown) => void) => {
       try {
         const entries = await getSessionDetail(data.projectPath, data.sessionId);
         callback({ ok: true, entries });
@@ -221,7 +270,7 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('sessions:search', async (data: { projectPath: string; query: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:search', async (data: { projectPath: string; query: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] search requested for projectPath: ${data.projectPath}, query: "${data.query}"`);
         const results = await searchSessions(data.projectPath, data.query);
@@ -233,16 +282,24 @@ export class AgentConnection {
       }
     });
 
-    this.socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
+    socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
       if (data.runner !== 'claude' && data.runner !== 'codex' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
         callback({ ok: false, error: 'Invalid runner' });
         return;
       }
       callback(await listRunnerModels(data.runner));
     });
+
+    // Preserve events produced by running executors while the old URL was
+    // offline. Socket.IO normally buffers these, but replacing the Socket
+    // instance for a newly discovered URL would otherwise discard them.
+    for (const { event, args } of bufferedEvents) {
+      socket.emit(event, ...args);
+    }
+    socket.connect();
   }
 
-  private register(): void {
+  private register(socket: Socket): void {
     const info: AgentInfo = {
       agentId: this.config.agentId,
       agentName: this.config.agentName,
@@ -250,11 +307,23 @@ export class AgentConnection {
       status: 'online',
     };
 
-    this.socket?.emit('register', info);
+    socket.emit('register', info);
     console.log(`Registered as: ${this.config.agentName}`);
 
-    // Start heartbeat
+    // Publish active executors immediately, then keep a comfortable margin
+    // below the server's 60-second application heartbeat timeout.
+    this.sendStatus(socket);
     this.startHeartbeat();
+  }
+
+  private sendStatus(socket = this.socket): void {
+    if (!socket?.connected || socket !== this.socket) return;
+    const runningTasks = Array.from(this.executors.keys());
+    socket.emit('status', {
+      status: 'online',
+      runningTasks,
+      taskCount: runningTasks.length,
+    });
   }
 
   private startHeartbeat(): void {
@@ -262,18 +331,10 @@ export class AgentConnection {
       clearInterval(this.heartbeatInterval);
     }
 
-    // Send heartbeat every 30 seconds
+    // Send heartbeat every 20 seconds
     this.heartbeatInterval = setInterval(() => {
-      const socket = this.socket;
-      if (socket?.connected) {
-        const runningTasks = Array.from(this.executors.keys());
-        socket.emit('status', {
-          status: 'online',
-          runningTasks,
-          taskCount: runningTasks.length
-        });
-      }
-    }, 30000);
+      this.sendStatus();
+    }, HEARTBEAT_INTERVAL_MS);
   }
 
   private stopHeartbeat(): void {
@@ -485,20 +546,17 @@ export class AgentConnection {
       let text: string;
       if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
         const url = `${dataPath.replace(/\/$/, '')}/server-url.txt`;
-        const res = await fetch(url);
+        const separator = url.includes('?') ? '&' : '?';
+        const res = await fetch(`${url}${separator}t=${Date.now()}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(URL_DISCOVERY_TIMEOUT_MS),
+        });
         if (!res.ok) {
           console.error(`URL discovery HTTP ${res.status}`);
           return null;
         }
         text = (await res.text()).trim();
       } else {
-        // Local dataPath: try localhost first
-        const localhostUrl = 'http://localhost:3001';
-        try {
-          const res = await fetch(`${localhostUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
-          if (res.ok) return localhostUrl;
-        } catch { /* not reachable */ }
-
         // git pull to get latest server URL
         try {
           const { existsSync: gitExists } = await import('fs');
@@ -518,38 +576,80 @@ export class AgentConnection {
         if (!existsSync(filePath)) return null;
         text = readFileSync(filePath, 'utf-8').trim();
       }
-      new URL(text); // Validate
-      return text;
+      return normalizeManagerUrl(text);
     } catch (e) {
       console.error('URL discovery error:', e instanceof Error ? e.message : e);
       return null;
     }
   }
 
-  private async reconnectWithDiscovery(): Promise<void> {
-    this.consecutiveErrors = 0; // Reset to avoid re-triggering while discovering
-    const newUrl = await this.discoverUrl();
-    if (!newUrl || newUrl === this.currentUrl) {
-      console.log('URL discovery: no change, continuing default reconnect');
-      return;
+  private reconnectWithDiscovery(): Promise<void> {
+    if (this.shuttingDown) return Promise.resolve();
+    if (this.discoveryInFlight) return this.discoveryInFlight;
+
+    const now = Date.now();
+    if (now - this.lastDiscoveryAt < URL_DISCOVERY_COOLDOWN_MS) {
+      return Promise.resolve();
     }
-    console.log(`URL discovery: new URL found: ${newUrl}`);
-    this.currentUrl = newUrl;
-    // Tear down old socket and reconnect with new URL
-    this.stopHeartbeat();
-    this.socket?.removeAllListeners();
-    this.socket?.disconnect();
-    this.socket = null;
-    this.connect();
+    this.lastDiscoveryAt = now;
+
+    const discovery = (async () => {
+      const newUrl = await this.discoverUrl();
+      if (this.shuttingDown) return;
+      if (!newUrl || newUrl === this.currentUrl) {
+        console.log('URL discovery: no change, continuing default reconnect');
+        return;
+      }
+
+      console.log(`URL discovery: new URL found: ${newUrl}`);
+      const oldSocket = this.socket;
+      const bufferedEvents = this.getBufferedEvents(oldSocket);
+
+      this.currentUrl = newUrl;
+      this.config.managerUrl = newUrl;
+      this.stopHeartbeat();
+      if (oldSocket) {
+        oldSocket.removeAllListeners();
+        oldSocket.disconnect();
+      }
+      this.socket = null;
+      this.openSocket(bufferedEvents);
+    })().catch((e) => {
+      console.error('URL discovery failed:', e instanceof Error ? e.message : e);
+    });
+
+    this.discoveryInFlight = discovery;
+    void discovery.finally(() => {
+      if (this.discoveryInFlight === discovery) {
+        this.discoveryInFlight = null;
+      }
+    });
+    return discovery;
+  }
+
+  private getBufferedEvents(socket: Socket | null): BufferedEvent[] {
+    if (!socket) return [];
+    const events: BufferedEvent[] = [];
+    for (const packet of socket.sendBuffer) {
+      if (Array.isArray(packet.data) && typeof packet.data[0] === 'string') {
+        events.push({
+          event: packet.data[0],
+          args: packet.data.slice(1),
+        });
+      }
+    }
+    return events;
   }
 
   disconnect(): void {
+    this.shuttingDown = true;
     this.stopHeartbeat();
     // Cancel all running tasks
     for (const executor of this.executors.values()) {
       executor.cancel();
     }
     this.executors.clear();
+    this.socket?.removeAllListeners();
     this.socket?.disconnect();
     this.socket = null;
   }

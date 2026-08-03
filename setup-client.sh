@@ -221,9 +221,9 @@ if pm2 describe ccm-agent &>/dev/null 2>&1; then
   pm2 delete ccm-agent 2>/dev/null || true
 fi
 
-QWEN_CODE_SUPPRESS_YOLO_WARNING=1 pm2 start npm --name ccm-agent \
-  --cwd "$SCRIPT_DIR/packages/agent" \
-  -- run dev
+QWEN_CODE_SUPPRESS_YOLO_WARNING=1 pm2 start "$SCRIPT_DIR/packages/agent/dist/index.js" \
+  --name ccm-agent \
+  --cwd "$SCRIPT_DIR/packages/agent"
 
 pm2 save
 
@@ -245,7 +245,15 @@ fi
 
 if [ -n "$DATA_PATH" ] && [ -f "$DATA_PATH/server-url.txt" ]; then
   SERVER_URL=$(cat "$DATA_PATH/server-url.txt" | tr -d '[:space:]')
-  if curl -sf "${SERVER_URL}/api/health" &>/dev/null; then
+  if python3 - "$SERVER_URL" <<'PY' &>/dev/null
+import sys
+import urllib.request
+
+with urllib.request.urlopen(sys.argv[1].rstrip("/") + "/api/health", timeout=5) as response:
+    if response.status != 200:
+        raise SystemExit(1)
+PY
+  then
     ok "Manager server reachable at $SERVER_URL"
   else
     warn "Cannot reach manager at $SERVER_URL — agent will retry automatically"

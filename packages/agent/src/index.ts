@@ -3,8 +3,8 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
-import { execSync } from 'child_process';
 import { AgentConnection } from './connection.js';
+import { discoverRunnerModelCapabilities } from './runnerModels.js';
 import type { AgentConfig } from './types.js';
 
 const CONFIG_PATH = path.join(process.env.HOME || '', '.ccm-agent.json');
@@ -68,21 +68,8 @@ function saveTokenToConfig(configPath: string, token: string): void {
   }
 }
 
-/** git pull the dataPath repo to get latest server-url.txt */
-function gitPullDataPath(dataPath: string): void {
-  try {
-    const gitDir = path.join(dataPath, '.git');
-    if (!fs.existsSync(gitDir)) return; // not a git repo
-    execSync('git pull --ff-only', { cwd: dataPath, timeout: 15000, stdio: 'pipe' });
-    console.log('git pull dataPath: updated');
-  } catch (e) {
-    console.warn('git pull dataPath failed (non-fatal):', e instanceof Error ? e.message : e);
-  }
-}
-
 /** Read server URL from dataPath/server-url.txt (local file or remote URL).
- *  For local agents (dataPath is a filesystem path): try localhost first,
- *  then fall back to server-url.txt. */
+ *  Always use the remote server URL from server-url.txt — never connect to localhost. */
 async function resolveServerUrl(dataPath: string): Promise<string> {
   // Remote: dataPath is a URL base (e.g. https://raw.githubusercontent.com/.../main)
   if (dataPath.startsWith('http://') || dataPath.startsWith('https://')) {
@@ -93,25 +80,11 @@ async function resolveServerUrl(dataPath: string): Promise<string> {
     return (await res.text()).trim();
   }
 
-  // Local: dataPath is a filesystem path — try localhost first
-  const localhostUrl = 'http://localhost:3001';
-  try {
-    const res = await fetch(`${localhostUrl}/api/health`, { signal: AbortSignal.timeout(2000) });
-    if (res.ok) {
-      console.log('Local server detected at localhost:3001');
-      return localhostUrl;
-    }
-  } catch {
-    // localhost not reachable, fall back to server-url.txt
-  }
-
-  // git pull to get latest server URL before reading
-  gitPullDataPath(dataPath);
-
-  // Fall back to server-url.txt
+  // Local: read the last known URL immediately. Reconnection discovery can
+  // refresh git-backed dataPath later without delaying every agent startup.
   const filePath = path.join(dataPath, 'server-url.txt');
   if (!fs.existsSync(filePath)) {
-    throw new Error(`Local server not reachable and ${filePath} not found`);
+    throw new Error(`server-url.txt not found at ${filePath}`);
   }
   return fs.readFileSync(filePath, 'utf-8').trim();
 }
@@ -192,6 +165,13 @@ async function main(): Promise<void> {
   console.log(`Agent Name: ${config.agentName}`);
   console.log(`Data Path: ${config.dataPath}`);
   console.log(`Allowed Paths: ${config.allowedPaths.join(', ')}`);
+
+  const configuredCapabilities = config.capabilities || [];
+  const modelCapabilities = await discoverRunnerModelCapabilities();
+  config.capabilities = [
+    ...configuredCapabilities.filter((capability) => !capability.startsWith('models:')),
+    ...modelCapabilities,
+  ];
 
   // Docker setup: verify Docker availability and ensure image exists if dockerConfig present
   if (config.dockerConfig) {
