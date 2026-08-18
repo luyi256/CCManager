@@ -33,17 +33,17 @@ test('accepts a supported runner default without inventing a model name', () => 
   assert.deepEqual(validateRunnerSelection(capabilities, 'tclaude', undefined), {});
 });
 
-test('preserves provider setup guidance for unavailable Claude Grok', () => {
+test('preserves local wrapper setup guidance for unavailable Claude Grok', () => {
   const capabilities = [
-    'models:claude-grok:{"installed":false,"models":[],"message":"Set XAI_API_KEY"}',
+    'models:claude-grok:{"installed":false,"models":[],"message":"Install claude-grok"}',
   ];
   assert.deepEqual(getRunnerModelCatalog(capabilities, 'claude-grok'), {
     installed: false,
     models: [],
-    message: 'Set XAI_API_KEY',
+    message: 'Install claude-grok',
   });
   assert.match(
-    validateRunnerSelection(capabilities, 'claude-grok', 'grok-4.6').error || '',
-    /Set XAI_API_KEY/
+    validateRunnerSelection(capabilities, 'claude-grok', 'claude-opus-5').error || '',
+    /Install claude-grok/
   );
 });

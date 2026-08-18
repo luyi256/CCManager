@@ -141,16 +141,6 @@ function validateConfig(config: AgentConfig): void {
     }
   }
 
-  for (const [key, value] of Object.entries({
-    xaiApiKey: config.xaiApiKey,
-    xaiBaseUrl: config.xaiBaseUrl,
-    xaiDefaultModel: config.xaiDefaultModel,
-  })) {
-    if (value !== undefined && (typeof value !== 'string' || !value.trim())) {
-      console.error(`${key} must be a non-empty string when configured`);
-      process.exit(1);
-    }
-  }
 }
 
 async function main(): Promise<void> {
@@ -176,13 +166,6 @@ async function main(): Promise<void> {
   console.log(`Agent Name: ${config.agentName}`);
   console.log(`Data Path: ${config.dataPath}`);
   console.log(`Allowed Paths: ${config.allowedPaths.join(', ')}`);
-
-  const xaiApiKey = config.xaiApiKey || process.env.XAI_API_KEY;
-  const xaiBaseUrl = config.xaiBaseUrl || process.env.XAI_ANTHROPIC_BASE_URL;
-  const xaiDefaultModel = config.xaiDefaultModel || process.env.XAI_DEFAULT_MODEL;
-  if (xaiApiKey) process.env.XAI_API_KEY = xaiApiKey;
-  if (xaiBaseUrl) process.env.XAI_ANTHROPIC_BASE_URL = xaiBaseUrl;
-  if (xaiDefaultModel) process.env.XAI_DEFAULT_MODEL = xaiDefaultModel;
 
   const configuredCapabilities = config.capabilities || [];
   const modelCapabilities = await discoverRunnerModelCapabilities();

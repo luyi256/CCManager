@@ -91,12 +91,7 @@ export function sanitizeEnv(): NodeJS.ProcessEnv {
     'NODE_ENV',
     // Claude Code authentication
     'ANTHROPIC_API_KEY',
-    'ANTHROPIC_AUTH_TOKEN',
-    'ANTHROPIC_BASE_URL',
     'CLAUDE_CODE_OAUTH_TOKEN',
-    'XAI_API_KEY',
-    'XAI_ANTHROPIC_BASE_URL',
-    'XAI_DEFAULT_MODEL',
     // XDG directories (for config/cache)
     'XDG_CONFIG_HOME',
     'XDG_DATA_HOME',

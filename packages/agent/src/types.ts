@@ -18,9 +18,6 @@ export interface AgentConfig {
   dataPath: string; // Path to CCManagerData (local path or GitHub raw URL base)
   managerUrl?: string; // Resolved at runtime from dataPath/server-url.txt
   authToken?: string;
-  xaiApiKey?: string;
-  xaiBaseUrl?: string;
-  xaiDefaultModel?: string;
   executor?: 'local' | 'docker'; // Legacy: now per-project, kept for backward compat
   dockerConfig?: DockerConfig;
   allowedPaths: string[];

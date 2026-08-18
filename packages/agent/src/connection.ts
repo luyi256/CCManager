@@ -69,7 +69,7 @@ function parseModelOutput(output: string, runner: Runner): string[] {
 async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: Runner; models?: string[]; raw?: string; error?: string }> {
   const commandByRunner: Record<Runner, string> = {
     claude: 'claude',
-    'claude-grok': 'claude',
+    'claude-grok': 'claude-grok',
     codex: 'codex',
     qwen: 'qwen',
     tclaude: 'tclaude',
@@ -77,7 +77,27 @@ async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: 
   };
   const command = commandByRunner[runner];
   if (runner === 'claude-grok') {
-    return { ok: true, runner, models: [] };
+    try {
+      const { existsSync, readFileSync } = await import('fs');
+      const { join } = await import('path');
+      const settingsPath = process.env.CLAUDE_GROK_SETTINGS ||
+        join(process.env.HOME || '', '.config', 'distill-grok', 'claude-settings.json');
+      if (!existsSync(settingsPath)) return { ok: true, runner, models: [] };
+      const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as {
+        modelOverrides?: Record<string, unknown>;
+      };
+      return {
+        ok: true,
+        runner,
+        models: settings.modelOverrides ? Object.keys(settings.modelOverrides) : [],
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        runner,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
   }
   const cmd = runner === 'codex' || runner === 'tcodex'
     ? `${command} exec "/model" --json`
@@ -416,19 +436,9 @@ export class AgentConnection {
       if (task.runner === 'codex' || task.runner === 'tcodex') {
         executor = new CodexExecutor(undefined, task.runner === 'tcodex' ? 'tcodex' : 'codex');
       } else if (task.runner === 'claude-grok') {
-        const grokConfig = this.config.xaiApiKey
-          ? {
-              apiKey: this.config.xaiApiKey,
-              baseUrl: this.config.xaiBaseUrl,
-              defaultModel: this.config.xaiDefaultModel,
-            }
-          : undefined;
-        const dockerConfig = task.dockerImage && this.config.dockerConfig
-          ? { ...this.config.dockerConfig, image: task.dockerImage }
-          : this.config.dockerConfig;
-        executor = taskExecutor === 'docker' && dockerConfig
-          ? new DockerExecutor(dockerConfig, 'grok', grokConfig)
-          : new ClaudeExecutor(undefined, 'claude', 'grok', grokConfig);
+        // claude-grok is a host-side Claude Code wrapper with its own local
+        // router/config, so it must not be replaced by the plain Docker image.
+        executor = new ClaudeExecutor(undefined, 'claude-grok');
       } else if (task.runner === 'qwen') {
         executor = new ClaudeExecutor(undefined, 'qwen');
       } else if (task.runner === 'tclaude') {

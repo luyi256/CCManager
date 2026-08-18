@@ -9,7 +9,7 @@ export type Runner = 'claude' | 'claude-grok' | 'codex' | 'qwen' | 'tclaude' | '
 const execFileAsync = promisify(execFile);
 const RUNNER_COMMANDS: Record<Runner, string> = {
   claude: 'claude',
-  'claude-grok': 'claude',
+  'claude-grok': 'claude-grok',
   codex: 'codex',
   qwen: 'qwen',
   tclaude: 'tclaude',
@@ -174,36 +174,21 @@ async function listQwenModels(): Promise<string[]> {
   return [];
 }
 
-export function parseXaiModels(payload: unknown): string[] {
+export function parseClaudeGrokSettings(payload: unknown): string[] {
   if (!payload || typeof payload !== 'object') return [];
-  const data = (payload as { data?: unknown }).data;
-  if (!Array.isArray(data)) return [];
-  return normalizeModels(data
-    .map((model) =>
-      model && typeof model === 'object' && typeof (model as { id?: unknown }).id === 'string'
-        ? (model as { id: string }).id
-        : ''
-    )
-    .filter((model) => model.startsWith('grok-')));
+  const overrides = (payload as { modelOverrides?: unknown }).modelOverrides;
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return [];
+  return normalizeModels(Object.keys(overrides));
 }
 
 async function listClaudeGrokModels(): Promise<string[]> {
   await runCli('claude-grok', ['--version']);
-  const apiKey = process.env.XAI_API_KEY;
-  const fallback = process.env.XAI_DEFAULT_MODEL || 'grok-4.6';
-  if (!apiKey) return [];
-
-  const baseUrl = (process.env.XAI_ANTHROPIC_BASE_URL || 'https://api.x.ai').replace(/\/+$/, '');
+  const settingsPath = process.env.CLAUDE_GROK_SETTINGS ||
+    path.join(os.homedir(), '.config', 'distill-grok', 'claude-settings.json');
   try {
-    const response = await fetch(`${baseUrl}/v1/language-models`, {
-      headers: { Authorization: `Bearer ${apiKey}` },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) return [fallback];
-    const models = parseXaiModels(await response.json());
-    return normalizeModels([fallback, ...models]);
+    return parseClaudeGrokSettings(JSON.parse(fs.readFileSync(settingsPath, 'utf8')));
   } catch {
-    return [fallback];
+    return [];
   }
 }
 
@@ -227,13 +212,6 @@ export async function discoverRunnerModelCapabilities(): Promise<string[]> {
   const runners = Object.keys(RUNNER_COMMANDS) as Runner[];
   const entries = await Promise.all(runners.map(async (runner) => {
     let catalog: RunnerModelCatalog;
-    if (runner === 'claude-grok' && !process.env.XAI_API_KEY) {
-      return `models:${runner}:${JSON.stringify({
-        installed: false,
-        models: [],
-        message: 'Set XAI_API_KEY or xaiApiKey on this agent to enable Claude Grok',
-      })}`;
-    }
     try {
       catalog = {
         installed: true,
@@ -252,6 +230,9 @@ export async function discoverRunnerModelCapabilities(): Promise<string[]> {
       catalog = {
         installed: code !== 'ENOENT',
         models: [],
+        ...(code === 'ENOENT' ? {
+          message: 'Install or expose the local claude-grok command on this agent',
+        } : {}),
       };
     }
     return `models:${runner}:${JSON.stringify(catalog)}`;

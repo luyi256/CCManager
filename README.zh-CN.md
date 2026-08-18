@@ -187,10 +187,7 @@ WHISPER_MODEL=whisper-large-v3-turbo
   "dataPath": "/path/to/data",
   "allowedPaths": ["/home/me/projects/*"],
   "blockedPaths": ["/home/me/.ssh"],
-  "capabilities": ["linux", "gpu"],
-  "xaiApiKey": "xai-your-api-key",
-  "xaiBaseUrl": "https://api.x.ai",
-  "xaiDefaultModel": "grok-4.6"
+  "capabilities": ["linux", "gpu"]
 }
 ```
 
@@ -203,14 +200,11 @@ WHISPER_MODEL=whisper-large-v3-turbo
 | `allowedPaths` | string[] | 是 | 允许操作的路径 glob |
 | `blockedPaths` | string[] | 否 | 禁止访问的路径 |
 | `capabilities` | string[] | 否 | 能力标签，用于任务路由（如 `gpu`、`linux`）|
-| `xaiApiKey` | string | 否 | `claude-grok` runner 使用的 xAI API Key |
-| `xaiBaseUrl` | string | 否 | xAI Anthropic 兼容接口地址（默认 `https://api.x.ai`）|
-| `xaiDefaultModel` | string | 否 | 默认 Grok 模型（默认 `grok-4.6`）|
 | `dockerConfig` | object | 否 | Docker 容器配置（见下方）|
 
 Agent 从 `<dataPath>/server-url.txt` 读取服务器 URL。远程 Agent 可使用 GitHub raw URL 作为 `dataPath`（如 `https://raw.githubusercontent.com/user/data-repo/main`）。连接失败时自动重新读取，支持隧道 URL 动态变更。
 
-`Claude Grok` 继续使用已安装的 Claude Code CLI，但请求通过 xAI 的 Anthropic Messages 兼容接口发送。可在 agent 配置中设置 `xaiApiKey`，或使用 `XAI_API_KEY` 环境变量；凭据只保存在对应 agent，不会发送到 server 或浏览器。xAI 已将 Anthropic 兼容接口标记为 deprecated，因此该 runner 与普通 Claude 隔离；如果 xAI 未来移除 `/v1/messages`，需要迁移实现。
+`Claude Grok` 会直接启动本机的 `claude-grok` 命令。每台 agent 需要自行安装并配置该 wrapper，并确保 PM2 进程的 `PATH` 能找到它；CCManager 不需要也不管理 xAI API Key。模型列表读取 `~/.config/distill-grok/claude-settings.json`。即使项目选择 Docker，该 runner 也会在宿主机执行，因为 wrapper 和本地路由服务属于宿主环境。
 
 ### Docker 执行模式
 

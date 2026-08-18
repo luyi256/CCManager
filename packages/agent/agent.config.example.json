@@ -5,9 +5,6 @@
   "allowedPaths": ["/Users/me/projects/*"],
   "blockedPaths": ["/Users/me/.ssh"],
   "capabilities": ["no-gpu"],
-  "xaiApiKey": "xai-your-api-key",
-  "xaiBaseUrl": "https://api.x.ai",
-  "xaiDefaultModel": "grok-4.6",
   "dockerConfig": {
     "image": "ccmanager-runner:latest",
     "memory": "8g",
