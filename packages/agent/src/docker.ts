@@ -96,7 +96,7 @@ export class DockerExecutor extends EventEmitter {
 
     // Copy host credentials so Claude CLI can authenticate inside the container
     const hostCredentials = path.join(os.homedir(), '.claude', '.credentials.json');
-    if (fs.existsSync(hostCredentials)) {
+    if (this.provider !== 'grok' && fs.existsSync(hostCredentials)) {
       fs.copyFileSync(hostCredentials, path.join(claudeSubdir, '.credentials.json'));
     }
 

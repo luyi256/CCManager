@@ -195,7 +195,7 @@ async function listClaudeGrokModels(): Promise<string[]> {
 
   const baseUrl = (process.env.XAI_ANTHROPIC_BASE_URL || 'https://api.x.ai').replace(/\/+$/, '');
   try {
-    const response = await fetch(`${baseUrl}/v1/models`, {
+    const response = await fetch(`${baseUrl}/v1/language-models`, {
       headers: { Authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(10_000),
     });
