@@ -6,6 +6,7 @@ import { CodexExecutor } from './codexExecutor.js';
 import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
+import { parseClaudeGrokSettings } from './runnerModels.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
 
@@ -89,7 +90,7 @@ async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: 
       return {
         ok: true,
         runner,
-        models: settings.modelOverrides ? Object.keys(settings.modelOverrides) : [],
+        models: parseClaudeGrokSettings(settings),
       };
     } catch (error) {
       return {

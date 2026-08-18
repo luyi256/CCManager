@@ -204,7 +204,7 @@ WHISPER_MODEL=whisper-large-v3-turbo
 
 Agent 从 `<dataPath>/server-url.txt` 读取服务器 URL。远程 Agent 可使用 GitHub raw URL 作为 `dataPath`（如 `https://raw.githubusercontent.com/user/data-repo/main`）。连接失败时自动重新读取，支持隧道 URL 动态变更。
 
-`Claude Grok` 会直接启动本机的 `claude-grok` 命令。每台 agent 需要自行安装并配置该 wrapper，并确保 PM2 进程的 `PATH` 能找到它；CCManager 不需要也不管理 xAI API Key。模型列表读取 `~/.config/distill-grok/claude-settings.json`。即使项目选择 Docker，该 runner 也会在宿主机执行，因为 wrapper 和本地路由服务属于宿主环境。
+`Claude Grok` 会直接启动本机的 `claude-grok` 命令。每台 agent 需要自行安装并配置该 wrapper，并确保 PM2 进程的 `PATH` 能找到它；CCManager 不需要也不管理 xAI API Key。模型列表读取 `~/.config/distill-grok/claude-settings.json` 的映射目标，因此界面只显示一次真实模型名（例如 `grok-4.6`），不会暴露多个 Opus/Sonnet 别名；执行前 agent 会把展示名解析回 wrapper 的完整路由名。即使项目选择 Docker，该 runner 也会在宿主机执行，因为 wrapper 和本地路由服务属于宿主环境。
 
 ### Docker 执行模式
 

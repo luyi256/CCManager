@@ -26,6 +26,7 @@ interface ModelSwitcherProps {
 function shortModelName(model: string): string {
   return model
     .replace(/^claude-/, '')
+    .replace(/^distill-grok\/(?:api_xai_|xai\/)/, '')
     .replace(/^openai\//, '')
     .replace(/^qwen\//, '');
 }

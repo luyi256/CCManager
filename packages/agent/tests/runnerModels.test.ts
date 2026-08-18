@@ -5,6 +5,7 @@ import {
   parseClaudeGrokSettings,
   parseCodexCatalog,
   parseTClaudeAvailableModels,
+  resolveClaudeGrokModel,
 } from '../src/runnerModels.js';
 
 test('filters Codex catalog entries to selectable API-supported models', () => {
@@ -20,12 +21,25 @@ test('filters Codex catalog entries to selectable API-supported models', () => {
 });
 
 test('reads selectable Claude aliases from the local Grok router settings', () => {
-  assert.deepEqual(parseClaudeGrokSettings({
+  const settings = {
     modelOverrides: {
       'claude-opus-5': 'distill-grok/api_xai_grok-4.6',
       'claude-sonnet-5': 'distill-grok/api_xai_grok-4.6',
+      'claude-haiku-5': 'distill-grok/xai/grok-code-fast-1',
     },
-  }), ['claude-opus-5', 'claude-sonnet-5']);
+  };
+  assert.deepEqual(parseClaudeGrokSettings(settings), [
+    'grok-4.6',
+    'grok-code-fast-1',
+  ]);
+  assert.equal(
+    resolveClaudeGrokModel('grok-4.6', settings),
+    'distill-grok/api_xai_grok-4.6'
+  );
+  assert.equal(
+    resolveClaudeGrokModel('claude-opus-5', settings),
+    'claude-opus-5'
+  );
 });
 
 test('extracts only aliases documented in the Claude --model help block', () => {

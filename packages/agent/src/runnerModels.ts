@@ -178,7 +178,44 @@ export function parseClaudeGrokSettings(payload: unknown): string[] {
   if (!payload || typeof payload !== 'object') return [];
   const overrides = (payload as { modelOverrides?: unknown }).modelOverrides;
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return [];
-  return normalizeModels(Object.keys(overrides));
+  return normalizeModels(Object.values(overrides)
+    .filter((model): model is string => typeof model === 'string')
+    .map(toGrokDisplayModel)
+    .filter(Boolean));
+}
+
+export function toGrokDisplayModel(model: string): string {
+  return model.match(/(grok(?:-[A-Za-z0-9.]+)+)$/i)?.[1] || model;
+}
+
+export function resolveClaudeGrokModel(
+  requestedModel: string,
+  payload: unknown
+): string {
+  if (!payload || typeof payload !== 'object') return requestedModel;
+  const overrides = (payload as { modelOverrides?: unknown }).modelOverrides;
+  if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) return requestedModel;
+
+  const entries = Object.entries(overrides)
+    .filter((entry): entry is [string, string] => typeof entry[1] === 'string');
+  if (entries.some(([alias]) => alias === requestedModel)) return requestedModel;
+  const target = entries.find(([, model]) =>
+    model === requestedModel || toGrokDisplayModel(model) === requestedModel
+  )?.[1];
+  return target || requestedModel;
+}
+
+export function resolveConfiguredClaudeGrokModel(requestedModel: string): string {
+  const settingsPath = process.env.CLAUDE_GROK_SETTINGS ||
+    path.join(os.homedir(), '.config', 'distill-grok', 'claude-settings.json');
+  try {
+    return resolveClaudeGrokModel(
+      requestedModel,
+      JSON.parse(fs.readFileSync(settingsPath, 'utf8'))
+    );
+  } catch {
+    return requestedModel;
+  }
 }
 
 async function listClaudeGrokModels(): Promise<string[]> {

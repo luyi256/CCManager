@@ -204,7 +204,7 @@ See `packages/agent/agent.config.example.json` for a full example.
 
 The agent reads the server URL from `<dataPath>/server-url.txt`. Remote agents can use a GitHub raw URL as `dataPath` (e.g., `https://raw.githubusercontent.com/user/data-repo/main`). The agent automatically re-reads the server URL on connection failure, supporting dynamic tunnel URLs.
 
-`Claude Grok` directly launches the local `claude-grok` command. Install/configure that wrapper on each agent and make sure it is available on the PM2 process `PATH`; CCManager does not require or manage an xAI API key. The model list comes from `~/.config/distill-grok/claude-settings.json`. Docker projects still run this runner on the host because the wrapper and its local router are host services.
+`Claude Grok` directly launches the local `claude-grok` command. Install/configure that wrapper on each agent and make sure it is available on the PM2 process `PATH`; CCManager does not require or manage an xAI API key. The model list comes from the mapped targets in `~/.config/distill-grok/claude-settings.json`, so the UI shows the real model name (for example `grok-4.6`) once instead of exposing multiple Opus/Sonnet aliases. The agent resolves that display name back to the wrapper's full route before execution. Docker projects still run this runner on the host because the wrapper and its local router are host services.
 
 ### Docker Executor Mode
 

@@ -4,6 +4,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { sanitizeEnv } from './security.js';
+import { resolveConfiguredClaudeGrokModel } from './runnerModels.js';
 import type { TaskRequest } from './types.js';
 
 /**
@@ -123,7 +124,10 @@ export class ClaudeExecutor extends EventEmitter {
     }
 
     if (task.model) {
-      args.push('--model', task.model);
+      const model = this.command === 'claude-grok'
+        ? resolveConfiguredClaudeGrokModel(task.model)
+        : task.model;
+      args.push('--model', model);
     }
 
     if (!isQwen && task.isPlanMode) {
