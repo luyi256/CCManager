@@ -7,6 +7,7 @@ const RUNNERS: Array<{ id: Runner; label: string; accent: string }> = [
   { id: 'codex', label: 'Codex', accent: 'text-emerald-400' },
   { id: 'tcodex', label: 'tCodex', accent: 'text-teal-400' },
   { id: 'claude', label: 'Claude', accent: 'text-primary-400' },
+  { id: 'claude-grok', label: 'Claude Grok', accent: 'text-orange-400' },
   { id: 'tclaude', label: 'tClaude', accent: 'text-sky-400' },
   { id: 'qwen', label: 'Qwen', accent: 'text-amber-400' },
 ];
@@ -138,7 +139,9 @@ export default function ModelSwitcher({
       </button>
 
       {open && (
-        <div className="absolute bottom-full right-0 mb-2 w-80 max-w-[calc(100vw-1rem)] rounded-lg border border-dark-700 bg-dark-850 shadow-xl z-50 overflow-hidden">
+        <div className={`absolute bottom-full mb-2 w-80 max-w-[calc(100vw-1rem)] rounded-lg border border-dark-700 bg-dark-850 shadow-xl z-50 overflow-hidden ${
+          compact ? 'right-0' : 'left-0'
+        }`}>
           <div className="flex items-center justify-between px-3 py-2 border-b border-dark-700">
             <div className="flex items-center gap-2 text-sm font-medium text-dark-200">
               <Bot size={15} />

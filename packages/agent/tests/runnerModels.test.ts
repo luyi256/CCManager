@@ -4,6 +4,7 @@ import {
   parseClaudeHelpModels,
   parseCodexCatalog,
   parseTClaudeAvailableModels,
+  parseXaiModels,
 } from '../src/runnerModels.js';
 
 test('filters Codex catalog entries to selectable API-supported models', () => {
@@ -16,6 +17,17 @@ test('filters Codex catalog entries to selectable API-supported models', () => {
   });
 
   assert.deepEqual(parseCodexCatalog(raw), ['gpt-visible']);
+});
+
+test('filters xAI model catalog to Grok model ids', () => {
+  assert.deepEqual(parseXaiModels({
+    data: [
+      { id: 'grok-4.6' },
+      { id: 'grok-code-fast-1' },
+      { id: 'not-grok' },
+      { missing: true },
+    ],
+  }), ['grok-4.6', 'grok-code-fast-1']);
 });
 
 test('extracts only aliases documented in the Claude --model help block', () => {

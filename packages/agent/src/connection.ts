@@ -12,7 +12,7 @@ import { listSessions, listActiveSessions, getSessionDetail, searchSessions } fr
 const execAsync = promisify(exec);
 
 type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
-type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
+type Runner = 'claude' | 'claude-grok' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
 interface BufferedEvent {
   event: string;
@@ -69,12 +69,16 @@ function parseModelOutput(output: string, runner: Runner): string[] {
 async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: Runner; models?: string[]; raw?: string; error?: string }> {
   const commandByRunner: Record<Runner, string> = {
     claude: 'claude',
+    'claude-grok': 'claude',
     codex: 'codex',
     qwen: 'qwen',
     tclaude: 'tclaude',
     tcodex: 'tcodex',
   };
   const command = commandByRunner[runner];
+  if (runner === 'claude-grok') {
+    return { ok: true, runner, models: [] };
+  }
   const cmd = runner === 'codex' || runner === 'tcodex'
     ? `${command} exec "/model" --json`
     : `${command} -p "/model"`;
@@ -283,7 +287,7 @@ export class AgentConnection {
     });
 
     socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
-      if (data.runner !== 'claude' && data.runner !== 'codex' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
+      if (data.runner !== 'claude' && data.runner !== 'claude-grok' && data.runner !== 'codex' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
         callback({ ok: false, error: 'Invalid runner' });
         return;
       }
@@ -411,6 +415,20 @@ export class AgentConnection {
       const taskExecutor = task.executor ?? this.config.executor ?? 'local';
       if (task.runner === 'codex' || task.runner === 'tcodex') {
         executor = new CodexExecutor(undefined, task.runner === 'tcodex' ? 'tcodex' : 'codex');
+      } else if (task.runner === 'claude-grok') {
+        const grokConfig = this.config.xaiApiKey
+          ? {
+              apiKey: this.config.xaiApiKey,
+              baseUrl: this.config.xaiBaseUrl,
+              defaultModel: this.config.xaiDefaultModel,
+            }
+          : undefined;
+        const dockerConfig = task.dockerImage && this.config.dockerConfig
+          ? { ...this.config.dockerConfig, image: task.dockerImage }
+          : this.config.dockerConfig;
+        executor = taskExecutor === 'docker' && dockerConfig
+          ? new DockerExecutor(dockerConfig, 'grok', grokConfig)
+          : new ClaudeExecutor(undefined, 'claude', 'grok', grokConfig);
       } else if (task.runner === 'qwen') {
         executor = new ClaudeExecutor(undefined, 'qwen');
       } else if (task.runner === 'tclaude') {

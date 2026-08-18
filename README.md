@@ -187,7 +187,10 @@ See `packages/agent/agent.config.example.json` for a full example.
   "dataPath": "/path/to/data",
   "allowedPaths": ["/home/me/projects/*"],
   "blockedPaths": ["/home/me/.ssh"],
-  "capabilities": ["linux", "gpu"]
+  "capabilities": ["linux", "gpu"],
+  "xaiApiKey": "xai-your-api-key",
+  "xaiBaseUrl": "https://api.x.ai",
+  "xaiDefaultModel": "grok-4.6"
 }
 ```
 
@@ -200,9 +203,14 @@ See `packages/agent/agent.config.example.json` for a full example.
 | `allowedPaths` | string[] | Yes | Glob patterns for allowed project paths |
 | `blockedPaths` | string[] | No | Paths to block access to |
 | `capabilities` | string[] | No | Tags for task routing (e.g., `gpu`, `linux`) |
+| `xaiApiKey` | string | No | xAI API key for the `claude-grok` runner |
+| `xaiBaseUrl` | string | No | xAI Anthropic-compatible base URL (default: `https://api.x.ai`) |
+| `xaiDefaultModel` | string | No | Default Grok model (default: `grok-4.6`) |
 | `dockerConfig` | object | No | Docker container settings (see below) |
 
 The agent reads the server URL from `<dataPath>/server-url.txt`. Remote agents can use a GitHub raw URL as `dataPath` (e.g., `https://raw.githubusercontent.com/user/data-repo/main`). The agent automatically re-reads the server URL on connection failure, supporting dynamic tunnel URLs.
+
+`Claude Grok` uses the installed Claude Code CLI with xAI's Anthropic-compatible Messages API. Configure `xaiApiKey` in the agent config or set `XAI_API_KEY`; the credential stays on that agent and is never sent to the server or browser. xAI marks Anthropic compatibility as deprecated, so this runner is isolated from normal Claude and may require future migration if xAI removes `/v1/messages`.
 
 ### Docker Executor Mode
 

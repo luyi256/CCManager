@@ -20,7 +20,15 @@ export class DockerExecutor extends EventEmitter {
   private sessionId: string | null = null;
   private hasStreamedDelta = false;
 
-  constructor(private config: DockerConfig) {
+  constructor(
+    private config: DockerConfig,
+    private provider?: 'grok',
+    private grokConfig?: {
+      apiKey: string;
+      baseUrl?: string;
+      defaultModel?: string;
+    }
+  ) {
     super();
     this.taskTimeout = config.timeout || DEFAULT_TASK_TIMEOUT;
   }
@@ -109,11 +117,19 @@ export class DockerExecutor extends EventEmitter {
     }
 
     // Credential injection via environment variables (fallback)
-    if (process.env.ANTHROPIC_API_KEY) {
-      args.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
-    }
-    if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-      args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${process.env.CLAUDE_CODE_OAUTH_TOKEN}`);
+    if (this.provider === 'grok') {
+      const apiKey = this.grokConfig?.apiKey || process.env.XAI_API_KEY;
+      if (!apiKey) throw new Error('claude-grok requires XAI_API_KEY on the agent');
+      args.push('-e', `ANTHROPIC_BASE_URL=${this.grokConfig?.baseUrl || process.env.XAI_ANTHROPIC_BASE_URL || 'https://api.x.ai'}`);
+      args.push('-e', `ANTHROPIC_AUTH_TOKEN=${apiKey}`);
+      args.push('-e', 'ANTHROPIC_API_KEY=');
+    } else {
+      if (process.env.ANTHROPIC_API_KEY) {
+        args.push('-e', `ANTHROPIC_API_KEY=${process.env.ANTHROPIC_API_KEY}`);
+      }
+      if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
+        args.push('-e', `CLAUDE_CODE_OAUTH_TOKEN=${process.env.CLAUDE_CODE_OAUTH_TOKEN}`);
+      }
     }
 
     // Image
@@ -124,8 +140,12 @@ export class DockerExecutor extends EventEmitter {
     args.push('-p', task.prompt);
     args.push('--output-format', 'stream-json', '--verbose');
 
-    if (task.model) {
-      args.push('--model', task.model);
+    const selectedModel = task.model ||
+      (this.provider === 'grok'
+        ? this.grokConfig?.defaultModel || process.env.XAI_DEFAULT_MODEL || 'grok-4.6'
+        : undefined);
+    if (selectedModel) {
+      args.push('--model', selectedModel);
     }
 
     if (task.isPlanMode) {

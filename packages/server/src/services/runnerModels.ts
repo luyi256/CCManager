@@ -5,6 +5,7 @@ const MODEL_CAPABILITY_PREFIX = 'models:';
 export interface RunnerModelCatalog {
   installed: boolean;
   models: string[];
+  message?: string;
 }
 
 export function getRunnerModelCatalog(
@@ -30,16 +31,19 @@ export function getRunnerModelCatalog(
       parsed === null ||
       typeof parsed.installed !== 'boolean' ||
       !Array.isArray(parsed.models) ||
-      parsed.models.some((model: unknown) => typeof model !== 'string')
+      parsed.models.some((model: unknown) => typeof model !== 'string') ||
+      (parsed.message !== undefined && typeof parsed.message !== 'string')
     ) {
       return null;
     }
-    return {
+    const catalog: RunnerModelCatalog = {
       installed: parsed.installed,
       models: Array.from(new Set(
         parsed.models.map((model: string) => model.trim()).filter(Boolean)
       )),
     };
+    if (parsed.message !== undefined) catalog.message = parsed.message;
+    return catalog;
   } catch {
     return null;
   }
@@ -53,7 +57,7 @@ export function validateRunnerSelection(
   const catalog = getRunnerModelCatalog(capabilities, runner);
   if (catalog === null) return {};
   if (!catalog.installed) {
-    return { error: `${runner} CLI is not installed on this agent` };
+    return { error: catalog.message || `${runner} CLI is not installed on this agent` };
   }
   if (value === undefined || value === null || value === '') return {};
   if (typeof value !== 'string' || !value.trim()) {

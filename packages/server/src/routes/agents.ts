@@ -7,7 +7,7 @@ import { getRunnerModelCatalog } from '../services/runnerModels.js';
 import type { Runner } from '../types/index.js';
 
 const router = Router();
-const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
 
 // Get all agents (both connected and offline)
 router.get('/', async (req, res) => {
@@ -56,7 +56,9 @@ router.get('/:id/models', async (req, res) => {
     models: catalog?.models ?? [],
     available: catalog?.installed ?? false,
     source: 'agent',
-    ...(catalog === null ? {
+    ...(catalog?.message ? {
+      message: catalog.message,
+    } : catalog === null ? {
       message: `Agent has not reported whether ${typedRunner} is available. Reconnect it after updating the agent.`,
     } : !catalog.installed ? {
       message: `${typedRunner} CLI is not installed on this agent`,

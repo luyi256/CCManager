@@ -44,7 +44,7 @@ export type TaskStatus =
   | 'failed'
   | 'cancelled';
 
-export type Runner = 'claude' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
+export type Runner = 'claude' | 'claude-grok' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
 
 export type TaskStreamPhase =
   | 'connecting'

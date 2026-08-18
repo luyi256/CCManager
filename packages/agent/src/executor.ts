@@ -48,6 +48,42 @@ export interface ExecutorEvents {
 // Default timeout: 4 hours (in milliseconds)
 const DEFAULT_TASK_TIMEOUT = 4 * 60 * 60 * 1000;
 
+export interface GrokProviderConfig {
+  apiKey?: string;
+  baseUrl?: string;
+  defaultModel?: string;
+}
+
+export function resolveClaudeModel(
+  requestedModel: string | undefined,
+  provider?: 'grok',
+  grokConfig?: GrokProviderConfig
+): string | undefined {
+  return requestedModel ||
+    (provider === 'grok'
+      ? grokConfig?.defaultModel || process.env.XAI_DEFAULT_MODEL || 'grok-4.6'
+      : undefined);
+}
+
+export function buildClaudeEnvironment(
+  baseEnv: NodeJS.ProcessEnv,
+  provider?: 'grok',
+  grokConfig?: GrokProviderConfig
+): NodeJS.ProcessEnv {
+  const env = { ...baseEnv };
+  if (provider === 'grok') {
+    const apiKey = grokConfig?.apiKey || baseEnv.XAI_API_KEY;
+    if (!apiKey) throw new Error('claude-grok requires XAI_API_KEY on the agent');
+    env.ANTHROPIC_BASE_URL =
+      grokConfig?.baseUrl || baseEnv.XAI_ANTHROPIC_BASE_URL || 'https://api.x.ai';
+    env.ANTHROPIC_AUTH_TOKEN = apiKey;
+    env.ANTHROPIC_API_KEY = '';
+    delete env.CLAUDE_CODE_OAUTH_TOKEN;
+  }
+  delete env.CLAUDECODE;
+  return env;
+}
+
 export class ClaudeExecutor extends EventEmitter {
   private process: ChildProcess | null = null;
   private currentTaskId: number | null = null;
@@ -59,9 +95,16 @@ export class ClaudeExecutor extends EventEmitter {
   private fatalError: Error | null = null;
   private outputBuffer = '';
   private outputFlushTimer: NodeJS.Timeout | null = null;
+  private grokConfig?: GrokProviderConfig;
 
-  constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'claude') {
+  constructor(
+    private taskTimeout: number = DEFAULT_TASK_TIMEOUT,
+    private command = 'claude',
+    private provider?: 'grok',
+    grokConfig?: GrokProviderConfig
+  ) {
     super();
+    this.grokConfig = grokConfig;
   }
 
   getSessionId(): string | null {
@@ -105,6 +148,7 @@ export class ClaudeExecutor extends EventEmitter {
     prompt = resolveSkillPrompt(prompt);
 
     const isContinue = !!(task.continueSession && task.sessionId);
+    const selectedModel = resolveClaudeModel(task.model, this.provider, this.grokConfig);
 
     const args: string[] = [];
     const isQwen = this.command === 'qwen';
@@ -122,8 +166,8 @@ export class ClaudeExecutor extends EventEmitter {
       args.push('--verbose');
     }
 
-    if (task.model) {
-      args.push('--model', task.model);
+    if (selectedModel) {
+      args.push('--model', selectedModel);
     }
 
     if (!isQwen && task.isPlanMode) {
@@ -163,13 +207,16 @@ export class ClaudeExecutor extends EventEmitter {
   private async runClaudeCode(args: string[], cwd: string): Promise<void> {
     return new Promise((resolve, reject) => {
       // Use full environment to ensure Claude Code can access credentials
-      const env = { ...process.env };
+      let env: NodeJS.ProcessEnv;
+      try {
+        env = buildClaudeEnvironment(process.env, this.provider, this.grokConfig);
+      } catch (error) {
+        reject(error);
+        return;
+      }
       if (this.command === 'qwen') {
         env.QWEN_CODE_SUPPRESS_YOLO_WARNING = '1';
       }
-
-      // Remove CLAUDECODE to prevent "nested session" detection
-      delete env.CLAUDECODE;
 
       // If running as root via sudo, drop privileges to the original user
       // so claude doesn't reject --dangerously-skip-permissions
@@ -256,10 +303,13 @@ export class ClaudeExecutor extends EventEmitter {
 
         // Detect auth failure: CLI exited without establishing a session
         // and output contains "Not logged in" indicator
-        if (!this.sessionId && /not logged in|please run \/login/i.test(this.collectedOutput)) {
+        if (!this.sessionId && /not logged in|please run \/login|unauthorized|authentication (failed|error)|401/i.test(this.collectedOutput)) {
+          const runnerName = this.provider === 'grok' ? 'claude-grok' : this.command;
+          const authHint = this.provider === 'grok'
+            ? 'Set XAI_API_KEY on the agent and verify the xAI API key is active.'
+            : 'Run "claude login" on the agent machine, or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN environment variable.';
           const authError = new Error(
-            'Claude CLI is not logged in on this agent. ' +
-            'Run "claude login" on the agent machine, or set ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN environment variable.'
+            `${runnerName} authentication failed. ${authHint}`
           );
           this.emit('error', authError);
           this.process = null;

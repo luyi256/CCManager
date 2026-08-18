@@ -12,7 +12,7 @@ import { taskLogToStreamEvent } from '../services/taskStream.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
-const VALID_RUNNERS = new Set<Runner>(['claude', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
 
 async function broadcastStreamPhase(
   task: Task,

@@ -146,8 +146,14 @@ if [ "$NEED_CONFIG" = true ]; then
   ALLOWED_PATHS="${ALLOWED_PATHS:-$DEFAULT_PATH}"
 
   EXISTING_TOKEN=""
+  EXISTING_XAI_KEY=""
+  EXISTING_XAI_BASE=""
+  EXISTING_XAI_MODEL=""
   if [ -f "$CONFIG_FILE" ]; then
     EXISTING_TOKEN=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('authToken',''))" 2>/dev/null || echo "")
+    EXISTING_XAI_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('xaiApiKey',''))" 2>/dev/null || echo "")
+    EXISTING_XAI_BASE=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('xaiBaseUrl',''))" 2>/dev/null || echo "")
+    EXISTING_XAI_MODEL=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('xaiDefaultModel',''))" 2>/dev/null || echo "")
   fi
 
   if [ -n "$EXISTING_TOKEN" ]; then
@@ -166,17 +172,59 @@ if [ "$NEED_CONFIG" = true ]; then
     fi
   fi
 
-  cat > "$CONFIG_FILE" <<CFGEOF
-{
-  "agentId": "$AGENT_ID",
-  "agentName": "$AGENT_NAME",
-  "dataPath": "$DATA_PATH",
-  "authToken": "$AUTH_TOKEN",
-  "allowedPaths": ["$ALLOWED_PATHS"],
-  "blockedPaths": ["$HOME/.ssh", "$HOME/.gnupg"],
-  "capabilities": []
+  echo
+  info "Claude Grok is optional. Leave the API key empty to keep it disabled."
+  if [ -n "$EXISTING_XAI_KEY" ]; then
+    read -rsp "  xAI API Key [keep existing]: " XAI_API_KEY
+    echo
+    XAI_API_KEY="${XAI_API_KEY:-$EXISTING_XAI_KEY}"
+  else
+    read -rsp "  xAI API Key (optional): " XAI_API_KEY
+    echo
+  fi
+  XAI_BASE_DEFAULT="${EXISTING_XAI_BASE:-https://api.x.ai}"
+  XAI_MODEL_DEFAULT="${EXISTING_XAI_MODEL:-grok-4.6}"
+  if [ -n "$XAI_API_KEY" ]; then
+    read -rp "  xAI Base URL [$XAI_BASE_DEFAULT]: " XAI_BASE_URL
+    XAI_BASE_URL="${XAI_BASE_URL:-$XAI_BASE_DEFAULT}"
+    read -rp "  Default Grok model [$XAI_MODEL_DEFAULT]: " XAI_DEFAULT_MODEL
+    XAI_DEFAULT_MODEL="${XAI_DEFAULT_MODEL:-$XAI_MODEL_DEFAULT}"
+  else
+    XAI_BASE_URL=""
+    XAI_DEFAULT_MODEL=""
+  fi
+
+  AGENT_CONFIG_PATH="$CONFIG_FILE" \
+  AGENT_ID="$AGENT_ID" \
+  AGENT_NAME="$AGENT_NAME" \
+  DATA_PATH="$DATA_PATH" \
+  AUTH_TOKEN="$AUTH_TOKEN" \
+  ALLOWED_PATHS="$ALLOWED_PATHS" \
+  XAI_API_KEY="$XAI_API_KEY" \
+  XAI_BASE_URL="$XAI_BASE_URL" \
+  XAI_DEFAULT_MODEL="$XAI_DEFAULT_MODEL" \
+  python3 - <<'PY'
+import json
+import os
+
+config = {
+    "agentId": os.environ["AGENT_ID"],
+    "agentName": os.environ["AGENT_NAME"],
+    "dataPath": os.environ["DATA_PATH"],
+    "authToken": os.environ["AUTH_TOKEN"],
+    "allowedPaths": [os.environ["ALLOWED_PATHS"]],
+    "blockedPaths": [os.path.join(os.path.expanduser("~"), ".ssh"), os.path.join(os.path.expanduser("~"), ".gnupg")],
+    "capabilities": [],
 }
-CFGEOF
+if os.environ.get("XAI_API_KEY"):
+    config["xaiApiKey"] = os.environ["XAI_API_KEY"]
+    config["xaiBaseUrl"] = os.environ["XAI_BASE_URL"]
+    config["xaiDefaultModel"] = os.environ["XAI_DEFAULT_MODEL"]
+
+with open(os.environ["AGENT_CONFIG_PATH"], "w", encoding="utf-8") as handle:
+    json.dump(config, handle, ensure_ascii=False, indent=2)
+    handle.write("\n")
+PY
 
   echo
   ok "Config saved to $CONFIG_FILE"
