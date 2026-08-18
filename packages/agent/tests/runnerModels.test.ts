@@ -24,6 +24,7 @@ test('reads selectable Claude aliases from the local Grok router settings', () =
   const settings = {
     modelOverrides: {
       'claude-opus-5': 'distill-grok/api_xai_grok-4.6',
+      'claude-opus-5[1m]': 'distill-grok/api_xai_grok-4.6',
       'claude-sonnet-5': 'distill-grok/api_xai_grok-4.6',
       'claude-haiku-5': 'distill-grok/xai/grok-code-fast-1',
     },
@@ -34,7 +35,11 @@ test('reads selectable Claude aliases from the local Grok router settings', () =
   ]);
   assert.equal(
     resolveClaudeGrokModel('grok-4.6', settings),
-    'distill-grok/api_xai_grok-4.6'
+    'claude-opus-5[1m]'
+  );
+  assert.equal(
+    resolveClaudeGrokModel('distill-grok/api_xai_grok-4.6', settings),
+    'claude-opus-5[1m]'
   );
   assert.equal(
     resolveClaudeGrokModel('claude-opus-5', settings),

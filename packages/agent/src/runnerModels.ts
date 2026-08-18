@@ -202,7 +202,18 @@ export function resolveClaudeGrokModel(
   const target = entries.find(([, model]) =>
     model === requestedModel || toGrokDisplayModel(model) === requestedModel
   )?.[1];
-  return target || requestedModel;
+  if (!target) return requestedModel;
+
+  // Claude Code derives its local context window from the selected Claude
+  // role, not from third-party model metadata or CLAUDE_CODE_MAX_CONTEXT_TOKENS.
+  // Prefer a configured [1m] alias so Grok's 500K window can use the wrapper's
+  // 450K autocompact threshold instead of being blocked at the 200K default.
+  const aliases = entries
+    .filter(([, model]) => model === target)
+    .map(([alias]) => alias);
+  return aliases.find((alias) => /\[1m\]$/i.test(alias))
+    || aliases[0]
+    || target;
 }
 
 export function resolveConfiguredClaudeGrokModel(requestedModel: string): string {
