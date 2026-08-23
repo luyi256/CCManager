@@ -500,7 +500,7 @@ export async function listSessions(projectPath: string, options: SessionQueryOpt
           title: metadata.title,
           firstPrompt: metadata.firstPrompt,
           lastModified: fileStat.mtime.toISOString(),
-          fileSize: fileStat.size,
+          fileSize: Number(fileStat.size),
           gitBranch: metadata.gitBranch,
           isActive: now - fileStat.mtime.getTime() <= ACTIVE_THRESHOLD_MS,
         } satisfies SessionListItem;
@@ -824,26 +824,38 @@ export async function searchSessions(
   const q = query.trim().toLowerCase();
   if (!q) return [];
   const sources = await discoverSessionFiles(projectPath, options);
+  const projectSources: Array<{
+    source: SessionFile;
+    metadata: SessionMetadata;
+    fileStat: Awaited<ReturnType<typeof stat>>;
+  }> = [];
+  const metadataConcurrency = 20;
+  for (let i = 0; i < sources.length; i += metadataConcurrency) {
+    const batch = sources.slice(i, i + metadataConcurrency);
+    const items = await Promise.all(batch.map(async (source) => {
+      try {
+        const [metadata, fileStat] = await Promise.all([
+          loadSessionMetadata(source),
+          stat(source.filePath),
+        ]);
+        return metadata ? { source, metadata, fileStat } : null;
+      } catch {
+        return null;
+      }
+    }));
+    for (const item of items) if (item) projectSources.push(item);
+  }
+
   const results: SessionSearchResult[] = [];
   const concurrency = 8;
 
-  for (let i = 0; i < sources.length; i += concurrency) {
-    const batch = sources.slice(i, i + concurrency);
-    const matches = await Promise.all(batch.map(async (source) => {
+  for (let i = 0; i < projectSources.length; i += concurrency) {
+    const batch = projectSources.slice(i, i + concurrency);
+    const matches = await Promise.all(batch.map(async ({ source, metadata, fileStat }) => {
       try {
-        const [fileStat, content] = await Promise.all([
-          stat(source.filePath),
-          readFile(source.filePath, 'utf8'),
-        ]);
+        const content = await readFile(source.filePath, 'utf8');
+        if (!content.toLowerCase().includes(q)) return null;
         const records = parseJsonLines(content.split('\n'));
-        const metadata = parseMetadata(source.format, records, source.runner);
-        if (
-          !metadata ||
-          !isSafeSessionId(metadata.sessionId) ||
-          !belongsToProject(metadata.cwd, source.acceptedCwds)
-        ) {
-          return null;
-        }
         const entries = source.format === 'claude'
           ? parseClaudeTimeline(records, '')
           : source.format === 'qwen'
@@ -874,7 +886,7 @@ export async function searchSessions(
           title: metadata.title,
           firstPrompt: metadata.firstPrompt,
           lastModified: fileStat.mtime.toISOString(),
-          fileSize: fileStat.size,
+          fileSize: Number(fileStat.size),
           gitBranch: metadata.gitBranch,
           isActive: Date.now() - fileStat.mtime.getTime() <= ACTIVE_THRESHOLD_MS,
           matches: found,
