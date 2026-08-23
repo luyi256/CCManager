@@ -16,7 +16,7 @@
  */
 
 import { execFileSync, spawn } from 'child_process';
-import { mkdirSync, rmSync, existsSync, statSync, writeFileSync } from 'fs';
+import { mkdirSync, rmSync, existsSync, statSync, utimesSync, writeFileSync } from 'fs';
 import { createHash, randomUUID } from 'crypto';
 import { createRequire } from 'module';
 import { fileURLToPath, pathToFileURL } from 'url';
@@ -126,8 +126,7 @@ function writeSession(sessionId, entries, minutesAgo = 3) {
 }
 
 function touchSession(filePath, modified) {
-  const seconds = modified.getTime() / 1000;
-  execFileSync('touch', ['-d', `@${seconds}`, filePath]);
+  utimesSync(filePath, modified, modified);
 }
 
 function setupDemoDatabase() {
