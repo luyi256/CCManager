@@ -21,6 +21,7 @@ interface ModelSwitcherProps {
   onModelChange: (model: string) => void;
   agentId?: string;
   compact?: boolean;
+  lockRunner?: boolean;
 }
 
 function shortModelName(model: string): string {
@@ -38,6 +39,7 @@ export default function ModelSwitcher({
   onModelChange,
   agentId,
   compact = false,
+  lockRunner = false,
 }: ModelSwitcherProps) {
   const [open, setOpen] = useState(false);
   const [step, setStep] = useState<Step>('runner');
@@ -99,8 +101,15 @@ export default function ModelSwitcher({
   useEffect(() => {
     if (!open) return;
     setDraftRunner(selectedRunner);
-    setStep('runner');
-  }, [open, selectedRunner]);
+    if (lockRunner) {
+      setStep('models');
+      setModels([]);
+      setRunnerAvailable(null);
+      void loadModels(selectedRunner);
+    } else {
+      setStep('runner');
+    }
+  }, [open, selectedRunner, lockRunner]);
 
   const applyDefault = () => {
     if (runnerAvailable === false) return;

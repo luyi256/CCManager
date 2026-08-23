@@ -2,41 +2,51 @@
 
 [English](./README.md) | **中文**
 
-多设备 [Claude Code](https://docs.anthropic.com/en/docs/claude-code) 任务管理系统 — 通过集中式 Web UI 管理和执行多台设备上的 Claude Code 任务。
+CCManager 是一个自托管的多设备编程 Agent 控制平台，由对话式 Web UI、Express/Socket.IO 服务端和轻量执行 Agent 组成，可统一管理多台机器上的本地编程 CLI。
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="CCManager 演示" width="960">
+  <img src="docs/screenshots/demo.gif" alt="CCManager 当前界面演示" width="960">
 </p>
 
-## 功能特性
+## 当前能力
 
-- **多 Agent 架构** — 将 Claude Code 任务分发到多台机器（Linux、macOS 等）
-- **实时 Web UI** — 在浏览器中监控任务状态、查看流式输出、管理项目
-- **双执行模式** — 本地执行或在安全加固的 Docker 容器中隔离执行
-- **Plan 模式** — 执行前审查 AI 生成的计划，支持批准/拒绝工作流
-- **继续对话** — 基于已完成任务的会话上下文继续工作
-- **语音输入** — 通过 Groq Whisper 集成实现语音转文字（可选）
-- **安全机制** — 设备 Token 认证（CLI 管理，SHA-256 哈希存储）、CORS、速率限制、路径白名单、符号链接保护
-- **Cloudflare 隧道** — 可选的公网访问，自动通过 Telegram 通知隧道 URL
+- **对话式项目工作区** — 每个项目拥有持久会话侧栏、实时执行时间线、追问输入框、状态操作、摘要和 Runner/模型信息。
+- **多 Runner 支持** — 每个任务或追问均可选择 Claude、Claude Grok、Codex、Qwen、tClaude 或 tCodex。
+- **Agent 自动发现模型** — Agent 启动时探测本机已安装 CLI 和可用模型，服务端在派发前校验模型选择。
+- **可靠实时输出** — 使用带版本的流事件、持久化快照、断线回放和去重；支持工具调用折叠、Markdown/GFM、公式、表格和代码块。
+- **接管已有 CLI 会话** — 浏览 Claude、Claude Grok、Codex、Qwen、tClaude、tCodex 和 Docker Claude 的活跃或历史会话，搜索消息、查看合并链，并用原 Runner 接入或继续。
+- **任务编排** — 支持并行任务、依赖关系、取消、重试、等待状态、Plan Mode、权限确认，以及 Agent 重连后的孤儿任务恢复。
+- **富输入** — 新任务和追问都可粘贴或上传图片，也可通过兼容 OpenAI 的 Whisper 接口进行语音输入。
+- **隔离执行** — 普通 Claude 可在本机或安全加固的 Docker 中运行；也可为每个任务创建 Git worktree，并在界面中合并或清理。
+- **多设备安全** — 浏览器与 Agent 使用独立哈希 Token，并包含同源 CORS、限流、路径白/黑名单和符号链接检查。
+- **支持 `/ccm` 子路径部署** — 生产 SPA、API、WebSocket 和 PWA 资源均支持部署在反向代理的 `/ccm` 路径下。
 
-## 界面截图
+## 最新截图
+
+以下截图由当前生产构建配合虚构演示数据自动生成，不包含真实项目、路径、会话或 Token。
 
 <table>
   <tr>
     <td align="center"><b>项目列表</b></td>
-    <td align="center"><b>任务看板</b></td>
+    <td align="center"><b>新建对话</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/home.png" alt="项目列表" width="500"></td>
-    <td><img src="docs/screenshots/task-board.png" alt="任务看板" width="500"></td>
+    <td><img src="docs/screenshots/projects.png" alt="项目列表" width="500"></td>
+    <td><img src="docs/screenshots/new-conversation.png" alt="新建对话输入区" width="500"></td>
   </tr>
   <tr>
-    <td align="center"><b>任务详情 & 输出</b></td>
-    <td align="center"><b>设置 & Agent 管理</b></td>
+    <td align="center"><b>实时执行对话</b></td>
+    <td align="center"><b>CLI 会话浏览器</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/task-detail.png" alt="任务详情" width="500"></td>
-    <td><img src="docs/screenshots/settings.png" alt="设置" width="500"></td>
+    <td><img src="docs/screenshots/conversation.png" alt="实时编程对话" width="500"></td>
+    <td><img src="docs/screenshots/cli-sessions.png" alt="CLI 会话浏览器" width="500"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>设备与 Agent 管理</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/settings.png" alt="设备与 Agent 管理" width="1000"></td>
   </tr>
 </table>
 
@@ -45,53 +55,73 @@
 <br>
 <table>
   <tr>
-    <td align="center"><b>首页</b></td>
-    <td align="center"><b>任务看板</b></td>
+    <td align="center"><b>项目列表</b></td>
+    <td align="center"><b>对话输入区</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/mobile-home.png" alt="移动端首页" width="280"></td>
-    <td><img src="docs/screenshots/mobile-task-board.png" alt="移动端任务看板" width="280"></td>
+    <td><img src="docs/screenshots/mobile-projects.png" alt="移动端项目列表" width="280"></td>
+    <td><img src="docs/screenshots/mobile-conversation.png" alt="移动端对话输入区" width="280"></td>
   </tr>
 </table>
 </details>
 
 ## 架构
 
-```
-┌──────────────────────────────────┐
-│  Server (Express + Socket.IO)    │    ← 中心服务器
-│  Web UI (React SPA)              │
-│  SQLite Database                 │
-│  Port: 3001                      │
-└────────┬────────────┬────────────┘
-         │ WebSocket  │ WebSocket
-    ┌────┴────┐  ┌────┴────┐
-    │ Agent A │  │ Agent B │           ← 分布式 Agent
-    │ (Linux) │  │ (macOS) │
-    │ Docker  │  │ Local   │
-    └─────────┘  └─────────┘
+```text
+浏览器 / 已安装 PWA
+        │ HTTPS + Socket.IO
+        ▼
+┌───────────────────────────────────────┐
+│ @ccmanager/server                    │
+│ Express API · Socket.IO · SQLite     │
+│ 在 /ccm 下托管 @ccmanager/web        │
+└───────────────┬───────────────────────┘
+                │ 经过认证的 Agent Socket
+        ┌───────┴────────┬──────────────────┐
+        ▼                ▼                  ▼
+   Linux Agent      macOS Agent        更多 Agent
+   本机/Docker      本机执行           并发执行
+        │                │                  │
+        └──── Claude / Claude Grok / Codex / Qwen / tClaude / tCodex
 ```
 
-| 组件 | 说明 |
-|------|------|
-| **Server** (`@ccmanager/server`) | Express API + Socket.IO + SQLite — 管理项目、任务队列和 WebSocket 事件 |
-| **Web UI** (`@ccmanager/web`) | React 18 + Vite + TailwindCSS + TanStack Query — 实时更新的 SPA 前端 |
-| **Agent** (`@ccmanager/agent`) | Socket.IO 客户端 + child_process — 连接服务器，spawn `claude` CLI 执行任务 |
-| **ccmng** | 服务器端 CLI 工具，管理设备 Token |
+| 包 | 作用 |
+|---|---|
+| `@ccmanager/server` | REST API、Socket.IO、任务派发、SQLite、流回放、会话路由和 Token CLI |
+| `@ccmanager/web` | React 18 SPA、对话工作区、会话浏览器、项目/设备/Agent 管理和 PWA |
+| `@ccmanager/agent` | 将机器接入服务端，发现本地 Runner/模型，启动任务、上报事件并读取受支持 CLI 的本机会话 |
+| `ccmng` CLI | 创建/吊销浏览器与 Agent Token，并轮换备份 SQLite |
+
+## Runner 支持
+
+Runner 是否可用取决于每台 Agent 机器。Agent 启动时会探测已安装 CLI，并把模型目录上报到服务端。
+
+| 界面名称 | 本地命令 | 模型来源 | 执行位置 |
+|---|---|---|---|
+| Claude | `claude` | Claude CLI 帮助与配置 | 本机或 Docker |
+| Claude Grok | `claude-grok` | `~/.config/distill-grok/claude-settings.json` | 宿主机 |
+| Codex | `codex` | Codex 模型目录与配置 | 宿主机 |
+| Qwen | `qwen` | 检测 CLI，可使用默认模型 | 宿主机 |
+| tClaude | `tclaude` | CLI/本地 daemon 模型目录 | 宿主机 |
+| tCodex | `tcodex` | tCodex 模型目录与配置 | 宿主机 |
+
+当前 Docker 执行只封装普通 `claude` Runner。即使项目选择 Docker，其余 Runner 仍使用宿主机上的 CLI 与凭证。
 
 ## 前置要求
 
 | 依赖 | 版本 | 用途 |
-|------|------|------|
-| [Node.js](https://nodejs.org/) | >= 18 | 运行时 |
-| [pnpm](https://pnpm.io/) | 9.x | 包管理器 (`npm i -g pnpm@9`) |
-| [PM2](https://pm2.keymetrics.io/) | >= 5 | 进程管理 (`npm i -g pm2`) |
-| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) | latest | 任务执行 (`npm i -g @anthropic-ai/claude-code`) |
-| [Docker](https://www.docker.com/) | (可选) | 仅 Docker 执行模式需要 |
+|---|---:|---|
+| [Node.js](https://nodejs.org/) | `>= 18` | 运行时 |
+| [pnpm](https://pnpm.io/) | `9.x` | Monorepo 包管理 |
+| [PM2](https://pm2.keymetrics.io/) | `>= 5` | 推荐的进程管理器 |
+| 至少一个受支持的编程 CLI | 当前兼容版本 | 每台 Agent 上执行任务 |
+| [Docker](https://www.docker.com/) | 可选 | 普通 Claude 容器执行 |
+
+请在 Agent 所在机器上完成各 Runner 的登录。Docker 模式的 Claude 可复用 `~/.claude/.credentials.json`，也可从 Agent 进程环境读取 `CLAUDE_CODE_OAUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。
 
 ## 快速开始
 
-### 服务器部署
+### 1. 启动服务端
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -99,20 +129,38 @@ cd CCManager
 bash setup-server.sh
 ```
 
-安装脚本会自动安装依赖、构建项目、配置 PM2 并启动服务。
+脚本会安装依赖、构建服务端和 SPA，并创建或重启 `ccm-server` PM2 进程。
 
-部署完成后，生成设备 Token 用于 Web UI 登录：
+创建第一个浏览器 Token：
 
 ```bash
-ccmng token create --name "My Computer"
-# 复制 Token — 仅显示一次
+node packages/server/dist/cli/index.js token create --name "Admin Browser"
 ```
 
-在浏览器中打开 `http://localhost:3001`，粘贴 Token 登录。
+打开 `http://localhost:3001/ccm/` 并粘贴 Token。登录后可以在 **Settings** 中创建更多浏览器 Token 和注册 Agent。
 
-### Agent 部署（客户端）
+### 2. 发布 Agent 使用的服务地址
 
-在每台需要执行任务的机器上：
+Agent 从 `<dataPath>/server-url.txt` 读取地址，URL 必须包含 `/ccm`：
+
+```bash
+mkdir -p ./data
+printf '%s\n' 'http://127.0.0.1:3001/ccm' > ./data/server-url.txt
+```
+
+远程机器应改为外部可访问的 HTTPS 地址，例如 `https://code.example.com/ccm`。`dataPath` 也可以是包含 `server-url.txt` 的 GitHub Raw URL 根路径；连接失败后 Agent 会重新读取地址。
+
+### 3. 注册并启动 Agent
+
+可以在 **Settings → Agent Management** 注册，也可以使用服务端 CLI：
+
+```bash
+node packages/server/dist/cli/index.js agent create \
+  --id studio-linux \
+  --name "Studio Linux"
+```
+
+在实际执行任务的机器上：
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -120,194 +168,199 @@ cd CCManager
 bash setup-client.sh
 ```
 
-安装脚本会引导你完成：
-1. 安装依赖
-2. 配置 Agent ID、名称和允许路径
-3. 输入认证 Token（通过服务器上的 `ccmng agent create` 或 Web UI 设置页面生成）
-4. 构建并通过 PM2 启动 Agent
+客户端脚本会询问 Agent ID/名称、`dataPath`、允许访问的项目路径和一次性 Agent Token，然后构建并通过 PM2 启动 `ccm-agent`。
 
-### 手动安装
+### 4. 添加项目
 
-```bash
-# 1. 安装依赖
-pnpm install
+在 Web UI 中点击 **Add Project**，选择在线 Agent，填写该 Agent 上的绝对项目路径，并配置：
 
-# 2. 配置环境变量
-cp .env.example .env
-# 编辑 .env 填入必要配置
+- 本机或 Docker 执行；
+- Auto 或 Safe 安全模式；
+- 可选 Git worktree 隔离；
+- 可选 Docker 镜像和额外挂载。
 
-# 3. 构建
-pnpm run build
+## Agent 配置
 
-# 4. 启动服务
-pm2 start packages/server/dist/index.js --name ccm-server
-pm2 save
-
-# 5. 生成设备 Token
-ccmng token create --name "My Computer"
-# 使用 Token 在 http://localhost:3001 登录
-```
-
-## 配置
-
-### 环境变量 (`.env`)
-
-复制 `.env.example` 为 `.env` 并配置：
-
-```bash
-# Claude Code 认证（二选一）
-CLAUDE_CODE_OAUTH_TOKEN=clt_xxx    # Pro/Max 订阅 (OAuth)
-ANTHROPIC_API_KEY=sk-ant-xxx       # 按用量付费 (API Key)
-
-# 服务器
-PORT=3001                          # 服务端口（默认 3001）
-HOST=127.0.0.1                     # 监听地址
-DATA_PATH=/path/to/data            # 数据目录（默认 ./data）
-
-# 生产模式
-SERVE_STATIC=true                  # 托管前端静态文件
-STATIC_PATH=/path/to/web/dist     # 前端构建产物路径
-
-# 语音转文字（可选，OpenAI 兼容 Whisper API）
-WHISPER_API_URL=https://api.groq.com/openai/v1   # 默认：Groq
-WHISPER_API_KEY=gsk_xxx            # 从 https://console.groq.com/keys 获取
-WHISPER_MODEL=whisper-large-v3-turbo
-```
-
-### Agent 配置
-
-配置文件：`~/.ccm-agent.json`（或 `--config=<path>` 指定）
-
-参见 `packages/agent/agent.config.example.json` 获取完整示例。
+默认配置文件为 `~/.ccm-agent.json`，也可通过 `--config=/path/to/file.json` 指定。
 
 ```json
 {
-  "agentId": "my-agent",
-  "agentName": "My Agent",
-  "dataPath": "/path/to/data",
-  "allowedPaths": ["/home/me/projects/*"],
-  "blockedPaths": ["/home/me/.ssh"],
-  "capabilities": ["linux", "gpu"]
-}
-```
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `agentId` | string | 是 | 唯一标识（仅限字母数字、`-`、`_`）|
-| `agentName` | string | 是 | 显示名称 |
-| `dataPath` | string | 是 | 数据目录路径（本地路径或 GitHub raw URL）|
-| `authToken` | string | 自动 | 首次运行时交互输入，自动保存到配置 |
-| `allowedPaths` | string[] | 是 | 允许操作的路径 glob |
-| `blockedPaths` | string[] | 否 | 禁止访问的路径 |
-| `capabilities` | string[] | 否 | 能力标签，用于任务路由（如 `gpu`、`linux`）|
-| `dockerConfig` | object | 否 | Docker 容器配置（见下方）|
-
-Agent 从 `<dataPath>/server-url.txt` 读取服务器 URL。远程 Agent 可使用 GitHub raw URL 作为 `dataPath`（如 `https://raw.githubusercontent.com/user/data-repo/main`）。连接失败时自动重新读取，支持隧道 URL 动态变更。
-
-`Claude Grok` 会直接启动本机的 `claude-grok` 命令。每台 agent 需要自行安装并配置该 wrapper，并确保 PM2 进程的 `PATH` 能找到它；CCManager 不需要也不管理 xAI API Key。模型列表读取 `~/.config/distill-grok/claude-settings.json` 的映射目标，因此界面只显示一次真实模型名（例如 `grok-4.6`），不会暴露多个 Opus/Sonnet 别名；执行前 agent 会把展示名解析回 wrapper 的完整路由名。即使项目选择 Docker，该 runner 也会在宿主机执行，因为 wrapper 和本地路由服务属于宿主环境。
-
-### Docker 执行模式
-
-在 Web UI 中按项目配置，或在 Agent 配置中设置：
-
-```json
-{
+  "agentId": "studio-linux",
+  "agentName": "Studio Linux",
+  "dataPath": "/srv/CCManagerData",
+  "authToken": "one-time-generated-agent-token",
+  "allowedPaths": ["/srv/projects/**"],
+  "blockedPaths": ["/home/user/.ssh", "/home/user/.gnupg"],
+  "capabilities": ["linux", "docker"],
   "dockerConfig": {
     "image": "ccmanager-runner:latest",
     "memory": "8g",
     "cpus": "4",
+    "network": "bridge",
+    "sessionsDir": "/home/user/.ccm-sessions",
     "extraMounts": [
-      { "source": "/data", "target": "/data", "readonly": true }
+      {
+        "source": "/srv/datasets",
+        "target": "/datasets",
+        "readonly": true
+      }
     ]
   }
 }
 ```
 
-每个任务在隔离容器中运行：
-- 项目目录挂载到 `/workspace`
-- Claude CLI 凭证自动注入
-- 安全加固：`--cap-drop=ALL` + 最小权限 + `--no-new-privileges`
+| 字段 | 必填 | 说明 |
+|---|---|---|
+| `agentId`、`agentName` | 是 | 稳定的机器标识与显示名称 |
+| `dataPath` | 是 | 包含 `server-url.txt` 的本地目录或远程 URL 根路径 |
+| `authToken` | 首次连接需要 | 与当前 Agent ID 严格绑定的 Token |
+| `allowedPaths` | 是 | Agent 可访问的路径，支持 `/*` 与 `/**` |
+| `blockedPaths` | 否 | 显式禁止路径，优先于允许规则 |
+| `capabilities` | 否 | 用户自定义路由标签；Runner 模型能力会自动补充 |
+| `dockerConfig` | Docker 项目需要 | 默认镜像、资源限制、会话目录、网络和挂载 |
 
-构建运行镜像：`docker build -t ccmanager-runner:latest packages/agent/docker/`
+## 项目与执行选项
 
-## 设备 Token 管理
+- **逐任务选择 Runner/模型** — 新建任务和追问都能切换 Runner 与模型，项目会记住最近使用的选择。
+- **任务依赖** — 可让任务等待另一个活跃任务结束后再派发。
+- **Plan Mode** — 对支持的 Runner 启用计划模式，并在对话中处理问题与确认。
+- **图片与语音** — 初始任务和追问均支持截图；语音输入需要配置可选 Whisper 服务。
+- **Git worktree** — 为任务创建独立分支/工作区，执行后可在界面合并或清理。
+- **Runner 感知的会话连续性** — 追问会用原 Runner 恢复已保存的 Session ID；也可把受支持 CLI 的现有会话接入 CCManager，Docker Claude 会话从配置的会话目录读取。
+- **任务后 Hook** — 服务端/Agent 协议支持成功后执行项目 Hook，需要时可通过项目 API 配置。
 
-设备 Token 通过服务器端 `ccmng` CLI 管理，无公开注册端点。
+### Docker 目录
 
-```bash
-# 创建 Token（仅显示一次，请立即复制）
-ccmng token create --name "MacBook Pro"
-
-# 查看已注册设备
-ccmng token list
-
-# 吊销设备 Token
-ccmng token revoke <id>
+```text
+/workspace                 项目目录，可读写
+/home/ccm                  每个项目持久化的 HOME
+└── .claude/
+    └── .credentials.json  存在时从宿主机复制
 ```
 
-所有 API 和 WebSocket 连接都需要 Token 认证：
-- **REST API**：`Authorization: Bearer <TOKEN>` 请求头
-- **WebSocket（UI）**：`auth: { token }` 连接参数
-- **WebSocket（Agent）**：使用 `agentAuthToken`（在设置页面配置）
-- **例外**：`GET /api/health` 免认证
+容器使用宿主 UID/GID，启用 `--cap-drop=ALL`，仅补回必要 capability，并设置 `--no-new-privileges`。
+
+## 服务端配置
+
+服务端会读取仓库根目录 `.env`；设置 `DATA_PATH` 后还会读取 `<DATA_PATH>/secrets.env`。
+
+```bash
+PORT=3001
+HOST=127.0.0.1
+NODE_ENV=production
+DATA_PATH=/srv/CCManagerData
+SERVE_STATIC=true
+STATIC_PATH=/opt/CCManager/packages/web/dist
+SOCKET_IO_PATH=/ccm/socket.io
+
+# 可选：兼容 OpenAI 的语音转文字接口
+WHISPER_API_URL=https://api.groq.com/openai/v1
+WHISPER_API_KEY=gsk_xxx
+WHISPER_MODEL=whisper-large-v3-turbo
+```
+
+通过反向代理对外提供服务时建议保留 `HOST=127.0.0.1`。浏览器 SPA 使用 `/ccm/api` 和 `/ccm/socket.io`，服务端也保留无前缀 `/api` 路由供直接集成。
+
+## Token 与备份 CLI
+
+可以直接执行构建后的 CLI，也可以自行将其暴露为 `ccmng`：
+
+```bash
+# 浏览器/设备 Token
+node packages/server/dist/cli/index.js token create --name "MacBook Pro"
+node packages/server/dist/cli/index.js token list
+node packages/server/dist/cli/index.js token revoke <device-id>
+
+# Agent Token
+node packages/server/dist/cli/index.js agent create --id macbook --name "MacBook"
+node packages/server/dist/cli/index.js agent list
+node packages/server/dist/cli/index.js agent token macbook
+node packages/server/dist/cli/index.js agent revoke macbook
+
+# SQLite 热备份，默认保留最新 7 份
+node packages/server/dist/cli/index.js backup --keep 7
+```
+
+明文 Token 仅显示一次，数据库中只保存 SHA-256 哈希。
 
 ## 任务生命周期
 
-```
-pending → running → completed / completed_with_warnings / failed / cancelled
-
-运行中可进入：
-  running → waiting              (等待外部条件)
-  running → waiting_permission   (等待用户授权)
-  running → plan_review          (等待计划确认)
+```text
+pending → running → completed | completed_with_warnings | failed | cancelled
+              ├── waiting
+              ├── waiting_permission
+              └── plan_review
 ```
 
-## 开发
+同一 Agent 可并行执行多个任务 ID。重复派发会被忽略，Agent 会在心跳中上报运行任务，重连时服务端会重新派发遗留在 `running` 状态的任务。
+
+## 开发与部署
 
 ```bash
-pnpm install                  # 安装依赖
+pnpm install
 
-pnpm run dev                  # 启动 server (3001) + web (5173)，支持 HMR
-pnpm run dev:server           # 仅 server
-pnpm run dev:web              # 仅 web
+pnpm run dev:server            # API 与 Socket.IO：:3001
+pnpm run dev:web               # Vite：http://localhost:5173/ccm/
 
-pnpm run build                # 构建所有包
-pnpm run build:server         # 仅构建 server
-pnpm run build:web            # 仅构建 web
+pnpm run typecheck
+pnpm --filter @ccmanager/server test
+pnpm --filter @ccmanager/agent test
 
-pnpm run lint                 # 代码检查
-pnpm run typecheck            # 类型检查
+pnpm run build
+pnpm exec pm2 restart ccm-server --update-env
+curl http://localhost:3001/api/health
 ```
 
-### 部署
+仓库中的 `docs/generate-showcase.mjs` 会创建临时虚构数据库，并通过真实浏览器界面重新生成 README 的全部截图与演示动画。
 
-```bash
-pnpm run build && pm2 restart ccm-server
+## API 概览
+
+除健康检查外，所有接口都需要 `Authorization: Bearer <DEVICE_TOKEN>`。同一组接口同时挂载在 `/api` 和 `/ccm/api` 下。
+
+| 模块 | 路由 |
+|---|---|
+| 健康检查 | `GET /api/health` 或 `GET /ccm/api/health` |
+| 设备 | `GET /auth/me`、`GET/POST /auth/devices`、`DELETE /auth/devices/:id` |
+| 项目 | `GET/POST /projects`、`GET/PUT/DELETE /projects/:id` |
+| 任务 | 项目任务列表/创建；任务详情/更新、取消、重试、追问、日志、计划回答/确认、worktree 合并/清理 |
+| 会话 | `/projects/:projectId/sessions` 下的多 Runner 列表、活跃列表、搜索、详情、继续和接入 |
+| Agent | 列表、在线列表、Runner 模型、注册、独立 Token 创建/状态/吊销 |
+| 其他 | 全局设置与可选 `/transcribe` |
+
+## 仓库结构
+
+```text
+packages/
+├── server/src/
+│   ├── routes/       auth、project、task、session、agent REST 接口
+│   ├── services/     SQLite、派发、流快照、会话读取、等待任务
+│   ├── websocket/    经过认证的用户与 Agent Socket.IO namespace
+│   └── cli/          Token、Agent 和备份命令
+├── web/src/
+│   ├── components/Conversation/  对话侧栏、主面板、模型选择器
+│   ├── components/Session/       CLI 会话浏览器
+│   ├── components/Task/          时间线与旧任务组件
+│   ├── pages/                    项目、项目工作区、设置、登录
+│   └── hooks/                    查询、会话、语音、可靠任务流
+└── agent/src/
+    ├── connection.ts             重连、心跳、并行任务派发
+    ├── executor.ts               Claude 系与 Qwen 执行
+    ├── codexExecutor.ts          Codex 与 tCodex 执行
+    ├── runnerModels.ts           已安装 Runner/模型发现
+    ├── sessions.ts               多 Runner 本机/Docker 会话发现
+    ├── docker.ts                 加固后的普通 Claude 容器
+    └── worktree.ts               逐任务 Git worktree
 ```
 
-### Cloudflare 隧道（可选）
+## 安全说明
 
-无需端口转发即可远程访问，使用内置隧道脚本：
-
-1. 安装 [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
-2. 在 `<DATA_PATH>/secrets.env` 中配置 Telegram 通知：
-   ```bash
-   TELEGRAM_BOT_TOKEN="your-bot-token"
-   TELEGRAM_CHAT_ID="your-chat-id"
-   ```
-3. 通过 PM2 启动：`pm2 start ecosystem.config.cjs`
-
-隧道 URL 自动写入 `<DATA_PATH>/server-url.txt`，供远程 Agent 发现。
-
-## 安全
-
-- **设备 Token 认证**：CLI 管理，SHA-256 哈希存储，无公开注册
-- **Agent Token 认证**：在 Web UI 设置页面管理，每个 Agent 独立 Token
-- **CORS**：仅同源请求（`origin: false`）
-- **速率限制**：100 请求/分钟/IP
-- **路径白名单**：Agent 仅可操作 `allowedPaths` 内的路径，含符号链接检查
-- **Docker 沙箱**：`--cap-drop=ALL` + 最小权限 + `--no-new-privileges`
-- **Plan 模式**：任务可设为计划模式，需用户确认后执行
+- 浏览器与 Agent 凭证相互独立，均可单独吊销。
+- REST API 和两个 Socket.IO namespace 均要求认证。
+- CORS 仅允许同源，API 带请求限流。
+- Agent Token 与具体 Agent ID 绑定。
+- 项目路径会经过允许/禁止列表和真实符号链接目标检查。
+- 图片以 data URL 提交，JSON 请求体上限为 50 MB。
+- Docker 可以增加隔离，但宿主机 Runner 仍继承 Agent 系统账户权限；建议使用独立 OS 用户并收紧允许路径。
 
 ## 许可证
 

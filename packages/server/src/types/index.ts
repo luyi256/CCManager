@@ -223,7 +223,7 @@ export interface AgentToServerEvents {
   'task:tool_result': (data: { taskId: number; id: string; result: unknown }) => void;
   'task:plan_question': (data: { taskId: number; question: unknown }) => void;
   'task:permission_request': (data: { taskId: number; request: unknown }) => void;
-  'task:session_id': (data: { taskId: number; sessionId: string }) => void;
+  'task:session_id': (data: { taskId: number; sessionId: string; runner?: Runner }) => void;
   'task:completed': (data: { taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }) => void;
   'task:failed': (data: { taskId: number; error: string; startedAt?: string }) => void;
   'task:error': (data: { taskId: number; error: string }) => void;

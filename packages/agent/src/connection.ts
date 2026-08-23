@@ -262,10 +262,13 @@ export class AgentConnection {
     });
 
     // Session browsing — server requests session data via callback
-    socket.on('sessions:list', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:list', async (data: { projectPath: string; projectId?: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] list requested for projectPath: ${data.projectPath}`);
-        const sessions = await listSessions(data.projectPath);
+        const sessions = await listSessions(data.projectPath, {
+          projectId: data.projectId,
+          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+        });
         console.log(`[sessions] list result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
@@ -274,10 +277,13 @@ export class AgentConnection {
       }
     });
 
-    socket.on('sessions:active', async (data: { projectPath: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:active', async (data: { projectPath: string; projectId?: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] active requested for projectPath: ${data.projectPath}`);
-        const sessions = await listActiveSessions(data.projectPath);
+        const sessions = await listActiveSessions(data.projectPath, {
+          projectId: data.projectId,
+          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+        });
         console.log(`[sessions] active result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
@@ -286,19 +292,45 @@ export class AgentConnection {
       }
     });
 
-    socket.on('sessions:detail', async (data: { projectPath: string; sessionId: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:detail', async (data: {
+      projectPath: string;
+      projectId?: string;
+      runner: Runner;
+      sessionId: string;
+      relatedSessionIds?: string[];
+    }, callback: (result: unknown) => void) => {
       try {
-        const entries = await getSessionDetail(data.projectPath, data.sessionId);
-        callback({ ok: true, entries });
+        const runner = data.runner ?? 'claude';
+        const sessions = await listSessions(data.projectPath, {
+          projectId: data.projectId,
+          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+        });
+        const session = sessions.find((item) =>
+          item.runner === runner && item.sessionId === data.sessionId
+        );
+        const entries = await getSessionDetail(
+          data.projectPath,
+          runner,
+          data.sessionId,
+          data.relatedSessionIds,
+          {
+            projectId: data.projectId,
+            dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+          },
+        );
+        callback({ ok: true, entries, model: session?.model });
       } catch (error) {
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
     });
 
-    socket.on('sessions:search', async (data: { projectPath: string; query: string }, callback: (result: unknown) => void) => {
+    socket.on('sessions:search', async (data: { projectPath: string; projectId?: string; query: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] search requested for projectPath: ${data.projectPath}, query: "${data.query}"`);
-        const results = await searchSessions(data.projectPath, data.query);
+        const results = await searchSessions(data.projectPath, data.query, {
+          projectId: data.projectId,
+          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+        });
         console.log(`[sessions] search result: ${results.length} sessions matched`);
         callback({ ok: true, results });
       } catch (error) {
@@ -489,7 +521,11 @@ export class AgentConnection {
       });
 
       executor.on('session_id', (sessionId: string) => {
-        this.socket?.emit('task:session_id', { taskId: task.taskId, sessionId });
+        this.socket?.emit('task:session_id', {
+          taskId: task.taskId,
+          sessionId,
+          runner: task.runner ?? 'claude',
+        });
       });
 
       // Execute task (use worktree path if available)

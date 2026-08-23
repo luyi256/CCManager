@@ -4,8 +4,21 @@ import { agentPool } from '../services/agentPool.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions, searchSessions, cleanUserMessage, isCommandMessage, isContinuationMessage } from '../services/sessionBrowser.js';
 import type { SessionListItem, SessionDetail, SessionTimelineEntry } from '../services/sessionBrowser.js';
+import type { Runner } from '../types/index.js';
 
 const router = Router();
+const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+
+function parseRunner(value: unknown): Runner | undefined {
+  return typeof value === 'string' && VALID_RUNNERS.has(value as Runner)
+    ? value as Runner
+    : undefined;
+}
+
+function normalizeAgentSessions(sessions: SessionListItem[]): SessionListItem[] {
+  return sessions
+    .map((session) => ({ ...session, runner: parseRunner(session.runner) ?? 'claude' }));
+}
 
 /**
  * Server-side safety net: re-clean agent-returned session data.
@@ -43,58 +56,84 @@ function cleanSessionEntries(entries: SessionTimelineEntry[]): SessionTimelineEn
   return cleaned;
 }
 
+function attachLinkedTasks(projectId: string, sessions: SessionListItem[]): SessionListItem[] {
+  const linked = getLinkedTaskIds(projectId);
+  for (const session of sessions) {
+    session.linkedTaskId = linked.get(`${session.runner}:${session.sessionId}`)
+      ?? linked.get(session.sessionId)
+      ?? session.linkedTaskId;
+  }
+  return sessions;
+}
+
+function combineSessions(...groups: SessionListItem[][]): SessionListItem[] {
+  const unique = new Map<string, SessionListItem>();
+  for (const session of groups.flat()) {
+    const key = `${session.runner}:${session.sessionId}`;
+    const previous = unique.get(key);
+    if (!previous || new Date(session.lastModified).getTime() > new Date(previous.lastModified).getTime()) {
+      unique.set(key, session);
+    }
+  }
+  return mergeSessions(Array.from(unique.values()));
+}
+
 /**
- * Try local filesystem first, then ask the agent via WebSocket.
- * Local is fast (no network hop); agent is fallback for remote projects.
+ * Read locally available Claude sessions and combine them with the agent's
+ * complete multi-runner catalog. The agent is authoritative for remote hosts
+ * and for runner-specific stores such as Codex, tClaude, tCodex, and Qwen.
  */
 async function fetchSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
-  // 1. Try local
   const local = await listSessions(project.projectPath, project.id);
   console.log(`[sessions] local list for ${project.id}: ${local.length} sessions`);
-  if (local.length > 0) return mergeSessions(local);
-
-  // 2. Fall back to agent
   const agent = agentPool.getAgent(project.agentId);
-  if (!agent) { console.log(`[sessions] agent ${project.agentId} not connected`); return []; }
+  if (!agent) {
+    console.log(`[sessions] agent ${project.agentId} not connected`);
+    return combineSessions(attachLinkedTasks(project.id, local));
+  }
 
   console.log(`[sessions] requesting sessions from agent ${project.agentId} for path ${project.projectPath}`);
   let result: { ok: boolean; sessions?: SessionListItem[]; error?: string };
   try {
-    result = await agentPool.requestSessions(project.agentId, project.projectPath) as typeof result;
+    result = await agentPool.requestSessions(project.agentId, project.projectPath, project.id) as typeof result;
   } catch (err) {
     console.error(`[sessions] agent request failed:`, err);
-    return [];
+    return combineSessions(attachLinkedTasks(project.id, local));
   }
   console.log(`[sessions] agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
-  if (!result.ok || !result.sessions) return [];
+  if (!result.ok || !result.sessions) return combineSessions(attachLinkedTasks(project.id, local));
+  result.sessions = normalizeAgentSessions(result.sessions);
 
   // Clean agent-returned data (safety net for older agent versions)
   cleanSessionList(result.sessions);
-
-  // Merge linkedTaskIds from server DB
-  const linked = getLinkedTaskIds(project.id);
-  for (const s of result.sessions) {
-    s.linkedTaskId = linked.get(s.sessionId);
-  }
-  return mergeSessions(result.sessions);
+  return combineSessions(attachLinkedTasks(project.id, local), attachLinkedTasks(project.id, result.sessions));
 }
 
 async function fetchSessionDetail(
   project: { id: string; projectPath: string; agentId: string },
+  runner: Runner,
   sessionId: string,
   relatedSessionIds?: string[],
 ): Promise<SessionDetail | null> {
   // 1. Try local (supports merging related sessions)
-  const local = await getSessionDetail(project.projectPath, sessionId, project.id, relatedSessionIds);
+  const local = await getSessionDetail(project.projectPath, sessionId, project.id, relatedSessionIds, runner);
   if (local) return local;
 
   // 2. Fall back to agent
   const agent = agentPool.getAgent(project.agentId);
   if (!agent) return null;
 
-  const result = await agentPool.requestSessionDetail(project.agentId, project.projectPath, sessionId) as {
+  const result = await agentPool.requestSessionDetail(
+    project.agentId,
+    project.projectPath,
+    runner,
+    sessionId,
+    relatedSessionIds,
+    project.id,
+  ) as {
     ok: boolean;
     entries?: SessionDetail['entries'];
+    model?: string;
     error?: string;
   };
   if (!result.ok || !result.entries) return null;
@@ -102,41 +141,41 @@ async function fetchSessionDetail(
   const linked = getLinkedTaskIds(project.id);
   return {
     sessionId,
-    entries: cleanSessionEntries(result.entries),
-    linkedTaskId: linked.get(sessionId),
+    runner,
+    model: result.model,
+    entries: runner === 'claude' || runner === 'claude-grok'
+      ? cleanSessionEntries(result.entries)
+      : result.entries,
+    linkedTaskId: linked.get(`${runner}:${sessionId}`) ?? linked.get(sessionId),
   };
 }
 
 async function fetchActiveSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
-  // 1. Try local
   const local = await listActiveSessions(project.projectPath, project.id);
   console.log(`[sessions] local active for ${project.id}: ${local.length} sessions`);
-  if (local.length > 0) return mergeSessions(local);
-
-  // 2. Fall back to agent (remote project)
   const agent = agentPool.getAgent(project.agentId);
-  if (!agent) { console.log(`[sessions] agent ${project.agentId} not connected for active`); return []; }
+  if (!agent) {
+    console.log(`[sessions] agent ${project.agentId} not connected for active`);
+    return combineSessions(attachLinkedTasks(project.id, local));
+  }
 
   try {
     console.log(`[sessions] requesting active sessions from agent ${project.agentId}`);
-    const result = await agentPool.requestActiveSessions(project.agentId, project.projectPath) as {
+    const result = await agentPool.requestActiveSessions(project.agentId, project.projectPath, project.id) as {
       ok: boolean;
       sessions?: SessionListItem[];
       error?: string;
     };
     console.log(`[sessions] active agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
-    if (!result.ok || !result.sessions) return [];
+    if (!result.ok || !result.sessions) return combineSessions(attachLinkedTasks(project.id, local));
+    result.sessions = normalizeAgentSessions(result.sessions);
 
     // Clean agent-returned data (safety net)
     cleanSessionList(result.sessions);
 
-    const linked = getLinkedTaskIds(project.id);
-    for (const s of result.sessions) {
-      s.linkedTaskId = linked.get(s.sessionId);
-    }
-    return mergeSessions(result.sessions);
+    return combineSessions(attachLinkedTasks(project.id, local), attachLinkedTasks(project.id, result.sessions));
   } catch {
-    return [];
+    return combineSessions(attachLinkedTasks(project.id, local));
   }
 }
 
@@ -153,54 +192,46 @@ router.get('/projects/:projectId/sessions/search', async (req, res) => {
       return res.json([]);
     }
 
-    // Try local first
+    // Search local Claude sessions, then combine with the agent's multi-runner search.
     const localResults = await searchSessions(project.projectPath, project.id, query);
-    if (localResults.length > 0) {
-      return res.json(localResults);
-    }
-
-    // Fall back to agent for remote projects
     const agentConn = agentPool.getAgent(project.agentId);
     if (agentConn) {
       const linked = getLinkedTaskIds(project.id);
 
-      // Fast path: list-based search (filter firstPrompt, works with any agent)
       try {
-        const listResult = await agentPool.requestSessions(project.agentId, project.projectPath) as {
+        const searchResult = await agentPool.requestSessionSearch(
+          project.agentId,
+          project.projectPath,
+          query,
+          project.id,
+        ) as {
           ok: boolean;
-          sessions?: SessionListItem[];
+          results?: Array<SessionListItem & {
+            matches: Array<{ message: string; entryId: string; context: Array<{ type: string; content: string }> }>;
+            matchedMessage: string;
+            matchedEntryIndex: number;
+            matchedEntryId: string;
+          }>;
         };
-        if (listResult.ok && listResult.sessions) {
-          cleanSessionList(listResult.sessions);
-          const q = query.toLowerCase();
-          const matches = listResult.sessions
-            .filter(s => s.firstPrompt?.toLowerCase().includes(q))
-            .map(s => ({
-              sessionId: s.sessionId,
-              firstPrompt: s.firstPrompt,
-              lastModified: s.lastModified,
-              fileSize: s.fileSize,
-              gitBranch: s.gitBranch,
-              linkedTaskId: linked.get(s.sessionId) ?? s.linkedTaskId,
-              matches: [{
-                message: s.firstPrompt?.slice(0, 300) ?? '',
-                entryId: 'user-0',
-                context: [],
-              }],
-              matchedMessage: s.firstPrompt?.slice(0, 300) ?? '',
-              matchedEntryIndex: 0,
-              matchedEntryId: 'user-0',
-            }));
-          if (matches.length > 0) {
-            return res.json(matches);
+        if (searchResult.ok && searchResult.results) {
+          const remote = searchResult.results
+            .map((result) => ({ ...result, runner: parseRunner(result.runner) ?? 'claude' }));
+          for (const result of remote) {
+            result.linkedTaskId = linked.get(`${result.runner}:${result.sessionId}`)
+              ?? linked.get(result.sessionId)
+              ?? result.linkedTaskId;
           }
+          const combined = new Map(localResults.map((result) => [`${result.runner}:${result.sessionId}`, result]));
+          for (const result of remote) combined.set(`${result.runner}:${result.sessionId}`, result);
+          return res.json(Array.from(combined.values())
+            .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime()));
         }
       } catch (err) {
-        console.error('[sessions] list-based search fallback failed:', err);
+        console.error('[sessions] agent search failed:', err);
       }
     }
 
-    res.json([]);
+    res.json(localResults);
   } catch (error) {
     console.error('Failed to search sessions:', error);
     res.status(500).json({ message: 'Failed to search sessions' });
@@ -249,8 +280,9 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
 
     const relatedParam = req.query.related as string | undefined;
     const relatedSessionIds = relatedParam ? relatedParam.split(',').filter(Boolean) : undefined;
+    const runner = parseRunner(req.query.runner) ?? 'claude';
 
-    const detail = await fetchSessionDetail(project, req.params.sessionId, relatedSessionIds);
+    const detail = await fetchSessionDetail(project, runner, req.params.sessionId, relatedSessionIds);
     if (!detail) {
       return res.status(404).json({ message: 'Session not found' });
     }
@@ -265,7 +297,7 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
 // Resume a CLI session as a new task
 router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res) => {
   try {
-    const { prompt, images } = req.body;
+    const { prompt, images, runner, model } = req.body;
     if (!prompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt required' });
     }
@@ -276,6 +308,7 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
     }
 
     const sessionId = req.params.sessionId;
+    const selectedRunner = parseRunner(runner) ?? 'claude';
 
     // Check agent
     const agent = agentPool.getAgent(project.agentId);
@@ -289,11 +322,13 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       prompt,
       status: 'pending',
       isPlanMode: false,
+      runner: selectedRunner,
+      model: typeof model === 'string' && model.trim() ? model.trim() : undefined,
       createdAt: new Date().toISOString(),
     });
 
     // Set the sessionId in gitInfo so the agent knows to --resume
-    task.gitInfo = JSON.stringify({ sessionId });
+    task.gitInfo = JSON.stringify({ sessionId, sessionRunner: selectedRunner });
     task.status = 'running';
     task.startedAt = new Date().toISOString();
     await storage.saveTask(project.id, task);
@@ -305,6 +340,8 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       projectPath: project.projectPath,
       prompt,
       isPlanMode: false,
+      runner: selectedRunner,
+      model: task.model,
       executor: project.executor,
       dockerImage: project.dockerImage,
       continueSession: true,
@@ -341,19 +378,24 @@ router.post('/projects/:projectId/sessions/:sessionId/adopt', async (req, res) =
     }
 
     const sessionId = req.params.sessionId;
+    const runner = parseRunner(req.body?.runner) ?? 'claude';
+    const model = typeof req.body?.model === 'string' && req.body.model.trim()
+      ? req.body.model.trim()
+      : undefined;
     const relatedRaw = req.body?.relatedSessionIds;
     const relatedSessionIds = Array.isArray(relatedRaw)
       ? relatedRaw.filter((s: unknown): s is string => typeof s === 'string' && s.length > 0)
       : undefined;
 
     // Idempotent: if a task already represents this session, just return it.
-    const existingId = getLinkedTaskIds(project.id).get(sessionId);
+    const linkedTasks = getLinkedTaskIds(project.id);
+    const existingId = linkedTasks.get(`${runner}:${sessionId}`) ?? linkedTasks.get(sessionId);
     if (existingId) {
       const existing = await storage.getTaskById(existingId);
       if (existing) return res.json(existing);
     }
 
-    const detail = await fetchSessionDetail(project, sessionId, relatedSessionIds);
+    const detail = await fetchSessionDetail(project, runner, sessionId, relatedSessionIds);
     if (!detail || detail.entries.length === 0) {
       return res.status(404).json({ message: 'Session not found or has no content' });
     }
@@ -369,9 +411,11 @@ router.post('/projects/:projectId/sessions/:sessionId/adopt', async (req, res) =
       prompt: promptText,
       status: 'completed',
       isPlanMode: false,
+      runner,
+      model: model || detail.model,
       createdAt,
     });
-    task.gitInfo = JSON.stringify({ sessionId });
+    task.gitInfo = JSON.stringify({ sessionId, sessionRunner: runner });
     task.completedAt = new Date().toISOString();
     await storage.saveTask(project.id, task);
 

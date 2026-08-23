@@ -23,7 +23,13 @@ export default function ActiveSessionCard({ session, onClick }: ActiveSessionCar
       <div className="flex items-start justify-between gap-2 mb-2">
         <span className="flex items-center gap-1 text-xs text-dark-500">
           <Terminal size={12} />
-          CLI Session
+          {session.runner === 'claude-grok'
+            ? 'Grok'
+            : session.runner === 'tclaude'
+              ? 'tClaude'
+              : session.runner === 'tcodex'
+                ? 'tCodex'
+                : session.runner.charAt(0).toUpperCase() + session.runner.slice(1)}
         </span>
         <span className="relative flex h-2.5 w-2.5 shrink-0 mt-0.5">
           <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />

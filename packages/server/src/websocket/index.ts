@@ -323,6 +323,7 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
           // Store session_id in gitInfo field (reusing existing field)
           const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
           gitInfo.sessionId = data.sessionId;
+          gitInfo.sessionRunner = data.runner ?? task.runner ?? 'claude';
           task.gitInfo = JSON.stringify(gitInfo);
           await saveTask(task.projectId, task);
         }
@@ -341,8 +342,11 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
           task.completedAt = new Date().toISOString();
           if (data.summary) task.summary = data.summary;
           // Preserve session_id if it exists
-          if (data.sessionId && !task.gitInfo) {
-            task.gitInfo = JSON.stringify({ sessionId: data.sessionId });
+          if (data.sessionId) {
+            const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
+            gitInfo.sessionId = data.sessionId;
+            gitInfo.sessionRunner = task.runner ?? 'claude';
+            task.gitInfo = JSON.stringify(gitInfo);
           }
           await saveTask(task.projectId, task);
         }
@@ -364,15 +368,23 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
 
           const mergedPrompt = prompts.join('\n\n');
           let sessionId: string | undefined;
+          let sessionRunner: string | undefined;
           if (task.gitInfo) {
             try {
-              sessionId = JSON.parse(task.gitInfo).sessionId;
+              const gitInfo = JSON.parse(task.gitInfo);
+              sessionId = gitInfo.sessionId;
+              sessionRunner = gitInfo.sessionRunner;
             } catch { /* ignore */ }
           }
 
           if (sessionId) {
             const project = await getProject(task.projectId);
             if (project) {
+              if (sessionRunner && queuedRunner !== sessionRunner) {
+                console.log(`Task ${data.taskId}: keeping queued follow-up on original ${sessionRunner} session runner`);
+                queuedRunner = sessionRunner as typeof queuedRunner;
+                queuedModel = task.model;
+              }
               const startedAt = new Date().toISOString();
               task.status = 'running';
               task.continuePrompt = mergedPrompt;

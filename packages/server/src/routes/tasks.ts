@@ -354,14 +354,22 @@ router.post('/tasks/:id/continue', async (req, res) => {
         message: `Agent ${project.agentId} is not connected`,
       });
     }
-    const nextRunner = parseRunner(runner) ?? task.runner ?? 'claude';
+    let sessionRunner: Runner | undefined;
+    if (task.gitInfo) {
+      try {
+        sessionRunner = parseRunner(JSON.parse(task.gitInfo).sessionRunner);
+      } catch {
+        // Ignore malformed legacy metadata.
+      }
+    }
+    const nextRunner = sessionRunner ?? parseRunner(runner) ?? task.runner ?? 'claude';
     const modelWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'model');
     const selectedModel = validateRunnerSelection(agent.capabilities, nextRunner, model);
     if (selectedModel.error) {
       return res.status(400).json({ message: selectedModel.error });
     }
     const runnerChanged = nextRunner !== (task.runner ?? 'claude');
-    const nextModel = modelWasProvided
+    let nextModel = modelWasProvided
       ? selectedModel.model
       : runnerChanged ? undefined : task.model;
 
@@ -389,6 +397,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       try {
         const gitInfo = JSON.parse(task.gitInfo);
         sessionId = gitInfo.sessionId;
+        sessionRunner = parseRunner(gitInfo.sessionRunner);
       } catch {
         // Ignore parse errors
       }
@@ -397,6 +406,15 @@ router.post('/tasks/:id/continue', async (req, res) => {
     if (!sessionId) {
       return res.status(400).json({ message: 'No session ID found for this task' });
     }
+    // Historical rows created before runner-aware session metadata were
+    // introduced still bind to the task's original runner.
+    const boundRunner = sessionRunner ?? task.runner ?? 'claude';
+    if (nextRunner !== boundRunner) {
+      return res.status(400).json({
+        message: `This session belongs to ${boundRunner}. Resume it with the same coding agent.`,
+      });
+    }
+    if (modelWasProvided && !nextModel) nextModel = task.model;
 
     // Task is completed/failed — dispatch immediately as a continue session
     // Update task status BEFORE dispatching to avoid race condition

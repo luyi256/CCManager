@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import * as api from '../services/api';
+import type { Runner } from '../types';
 
 export function useSessions(projectId: string, enabled = true) {
   return useQuery({
@@ -29,11 +30,16 @@ export function useSessionSearch(projectId: string, query: string) {
   });
 }
 
-export function useSessionDetail(projectId: string, sessionId: string | null, relatedSessionIds?: string[]) {
+export function useSessionDetail(
+  projectId: string,
+  runner: Runner | null,
+  sessionId: string | null,
+  relatedSessionIds?: string[],
+) {
   return useQuery({
-    queryKey: ['sessionDetail', projectId, sessionId, relatedSessionIds],
-    queryFn: () => api.getSessionDetail(projectId, sessionId!, relatedSessionIds),
-    enabled: !!projectId && !!sessionId,
+    queryKey: ['sessionDetail', projectId, runner, sessionId, relatedSessionIds],
+    queryFn: () => api.getSessionDetail(projectId, runner!, sessionId!, relatedSessionIds),
+    enabled: !!projectId && !!runner && !!sessionId,
     staleTime: Infinity, // Session content is immutable
   });
 }

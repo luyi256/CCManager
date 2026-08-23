@@ -317,6 +317,8 @@ export async function revokeAgentToken(agentId: string): Promise<void> {
 // Sessions (CLI conversation history)
 export interface SessionListItem {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -338,6 +340,8 @@ export interface SessionTimelineEntry {
 
 export interface SessionDetail {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   entries: SessionTimelineEntry[];
   linkedTaskId?: number;
 }
@@ -350,6 +354,8 @@ export interface SessionSearchMatch {
 
 export interface SessionSearchResult {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -375,17 +381,30 @@ export async function getActiveSessions(projectId: string): Promise<SessionListI
   return request(`/projects/${projectId}/sessions/active`);
 }
 
-export async function getSessionDetail(projectId: string, sessionId: string, relatedSessionIds?: string[]): Promise<SessionDetail> {
-  const params = relatedSessionIds && relatedSessionIds.length > 1
-    ? `?related=${relatedSessionIds.join(',')}`
-    : '';
-  return request(`/projects/${projectId}/sessions/${sessionId}${params}`);
+export async function getSessionDetail(
+  projectId: string,
+  runner: Runner,
+  sessionId: string,
+  relatedSessionIds?: string[],
+): Promise<SessionDetail> {
+  const params = new URLSearchParams({ runner });
+  if (relatedSessionIds && relatedSessionIds.length > 1) {
+    params.set('related', relatedSessionIds.join(','));
+  }
+  return request(`/projects/${projectId}/sessions/${sessionId}?${params.toString()}`);
 }
 
-export async function continueSession(projectId: string, sessionId: string, prompt: string, images?: string[]): Promise<Task> {
+export async function continueSession(
+  projectId: string,
+  runner: Runner,
+  sessionId: string,
+  prompt: string,
+  images?: string[],
+  model?: string,
+): Promise<Task> {
   return request(`/projects/${projectId}/sessions/${sessionId}/continue`, {
     method: 'POST',
-    body: JSON.stringify({ prompt, images }),
+    body: JSON.stringify({ prompt, images, runner, model }),
   });
 }
 
@@ -393,10 +412,16 @@ export async function continueSession(projectId: string, sessionId: string, prom
  * Adopt a CLI session as a conversation: creates a task linked to the session
  * with its history imported, without running it. Opens in the sidebar + center.
  */
-export async function adoptSession(projectId: string, sessionId: string, relatedSessionIds?: string[]): Promise<Task> {
+export async function adoptSession(
+  projectId: string,
+  runner: Runner,
+  sessionId: string,
+  relatedSessionIds?: string[],
+  model?: string,
+): Promise<Task> {
   return request(`/projects/${projectId}/sessions/${sessionId}/adopt`, {
     method: 'POST',
-    body: JSON.stringify({ relatedSessionIds }),
+    body: JSON.stringify({ relatedSessionIds, runner, model }),
   });
 }
 

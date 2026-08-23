@@ -75,6 +75,7 @@ export class ClaudeExecutor extends EventEmitter {
     this.collectedOutput = '';
     this.hasStreamedDelta = false;
     this.fatalError = null;
+    this.sessionId = null;
     this.outputBuffer = '';
     if (this.outputFlushTimer) {
       clearTimeout(this.outputFlushTimer);

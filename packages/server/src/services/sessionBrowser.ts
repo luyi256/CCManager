@@ -4,9 +4,12 @@ import { createInterface } from 'readline';
 import { join } from 'path';
 import { homedir } from 'os';
 import { db } from './database.js';
+import type { Runner } from '../types/index.js';
 
 export interface SessionListItem {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   title?: string;
   firstPrompt: string;
   lastModified: string;
@@ -32,8 +35,23 @@ export interface SessionTimelineEntry {
 
 export interface SessionDetail {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   entries: SessionTimelineEntry[];
   linkedTaskId?: number;
+}
+
+function inferClaudeRunner(model: string | undefined): Runner {
+  return model && /(?:^|[/_-])(grok|xai)(?:[/_.-]|$)/i.test(model)
+    ? 'claude-grok'
+    : 'claude';
+}
+
+function normalizeSessionModel(runner: Runner, model: string | undefined): string | undefined {
+  if (!model) return undefined;
+  return runner === 'claude-grok'
+    ? model.match(/(grok(?:-[A-Za-z0-9.]+)+)$/i)?.[1] || model
+    : model;
 }
 
 export interface SessionSearchMatch {
@@ -47,6 +65,8 @@ export interface SessionSearchMatch {
 
 export interface SessionSearchResult {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   title?: string;
   firstPrompt: string;
   lastModified: string;
@@ -175,17 +195,43 @@ function getSessionDir(projectPath: string): string {
  * Read the first meaningful user prompt from a JSONL session file (efficient - stops early).
  * Skips internal system messages (caveats, command output), CLI commands, and continuation summaries.
  */
-async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; title: string; gitBranch?: string; timestamp?: string } | null> {
+async function getFirstUserPrompt(filePath: string): Promise<{
+  prompt: string;
+  title: string;
+  gitBranch?: string;
+  timestamp?: string;
+  model?: string;
+} | null> {
   return new Promise((resolve) => {
     const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
     let resolved = false;
     let gitBranch: string | undefined;
     let timestamp: string | undefined;
+    let model: string | undefined;
     let fallbackPrompt: string | undefined; // keep first command/continuation as fallback
+    let firstPrompt: string | undefined;
 
     rl.on('line', (line) => {
       try {
         const obj = JSON.parse(line);
+        if (obj.type === 'assistant') {
+          const assistantModel = obj.message?.model ?? obj.model;
+          if (!model && typeof assistantModel === 'string' && assistantModel !== '<synthetic>') {
+            model = assistantModel;
+            if (firstPrompt) {
+              resolved = true;
+              rl.close();
+              resolve({
+                prompt: firstPrompt.slice(0, 200),
+                title: buildSessionTitle(firstPrompt),
+                gitBranch,
+                timestamp,
+                model,
+              });
+              return;
+            }
+          }
+        }
         if (obj.type === 'user' && typeof obj.message?.content === 'string') {
           // Capture gitBranch/timestamp from first user line we see
           if (!gitBranch && obj.gitBranch) gitBranch = obj.gitBranch;
@@ -201,14 +247,20 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; t
             return;
           }
 
-          resolved = true;
-          rl.close();
-          resolve({
-            prompt: cleaned.slice(0, 200),
-            title: buildSessionTitle(cleaned),
-            gitBranch: gitBranch ?? obj.gitBranch,
-            timestamp: timestamp ?? obj.timestamp,
-          });
+          firstPrompt ||= cleaned;
+          gitBranch ||= obj.gitBranch;
+          timestamp ||= obj.timestamp;
+          if (model) {
+            resolved = true;
+            rl.close();
+            resolve({
+              prompt: firstPrompt.slice(0, 200),
+              title: buildSessionTitle(firstPrompt),
+              gitBranch,
+              timestamp,
+              model,
+            });
+          }
         }
       } catch { /* skip malformed lines */ }
     });
@@ -216,8 +268,10 @@ async function getFirstUserPrompt(filePath: string): Promise<{ prompt: string; t
     rl.on('close', () => {
       if (!resolved) {
         // If no real prompt found, use fallback (command name or continuation marker)
-        if (fallbackPrompt) {
-          resolve({ prompt: fallbackPrompt.slice(0, 200), title: buildSessionTitle(fallbackPrompt), gitBranch, timestamp });
+        if (firstPrompt) {
+          resolve({ prompt: firstPrompt.slice(0, 200), title: buildSessionTitle(firstPrompt), gitBranch, timestamp, model });
+        } else if (fallbackPrompt) {
+          resolve({ prompt: fallbackPrompt.slice(0, 200), title: buildSessionTitle(fallbackPrompt), gitBranch, timestamp, model });
         } else {
           resolve(null);
         }
@@ -244,7 +298,11 @@ export function getLinkedTaskIds(projectId: string): Map<string, number> {
       try {
         const info = JSON.parse(row.git_info);
         if (info.sessionId) {
-          map.set(info.sessionId, row.id);
+          if (typeof info.sessionRunner === 'string') {
+            map.set(`${info.sessionRunner}:${info.sessionId}`, row.id);
+          } else {
+            map.set(info.sessionId, row.id);
+          }
         }
       } catch { /* skip */ }
     }
@@ -263,11 +321,16 @@ function getLinkedTaskSummaries(projectId: string): Map<string, { taskId: number
       try {
         const info = JSON.parse(row.git_info);
         if (info.sessionId) {
-          map.set(info.sessionId, {
+          const value = {
             taskId: row.id,
             summary: row.summary || undefined,
             prompt: row.prompt || undefined,
-          });
+          };
+          if (typeof info.sessionRunner === 'string') {
+            map.set(`${info.sessionRunner}:${info.sessionId}`, value);
+          } else {
+            map.set(info.sessionId, value);
+          }
         }
       } catch { /* skip */ }
     }
@@ -284,7 +347,7 @@ export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
 
   const groups = new Map<string, SessionListItem[]>();
   for (const s of sessions) {
-    const key = s.title || s.firstPrompt;
+    const key = `${s.runner}:${s.title || s.firstPrompt}`;
     const group = groups.get(key);
     if (group) {
       group.push(s);
@@ -306,6 +369,8 @@ export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
 
     merged.push({
       sessionId: latest.sessionId,
+      runner: latest.runner,
+      model: latest.model,
       title: latest.title,
       firstPrompt: latest.firstPrompt,
       lastModified: latest.lastModified,
@@ -361,9 +426,12 @@ export async function listSessions(projectPath: string, projectId: string): Prom
 
           if (!meta) return null;
 
-          const linkedTask = linkedTasks.get(sessionId);
+          const runner = inferClaudeRunner(meta.model);
+          const linkedTask = linkedTasks.get(`${runner}:${sessionId}`) ?? linkedTasks.get(sessionId);
           return {
             sessionId,
+            runner,
+            model: normalizeSessionModel(runner, meta.model),
             title: buildSessionTitle(meta.prompt, linkedTask?.summary || linkedTask?.prompt),
             firstPrompt: meta.prompt,
             lastModified: fileStat.mtime.toISOString(),
@@ -437,9 +505,12 @@ export async function listActiveSessions(projectPath: string, projectId: string)
     try {
       const meta = await getFirstUserPrompt(join(dir, file));
       if (!meta) continue;
-      const linkedTask = linkedTasks.get(sessionId);
+      const runner = inferClaudeRunner(meta.model);
+      const linkedTask = linkedTasks.get(`${runner}:${sessionId}`) ?? linkedTasks.get(sessionId);
       results.push({
         sessionId,
+        runner,
+        model: normalizeSessionModel(runner, meta.model),
         title: buildSessionTitle(meta.prompt, linkedTask?.summary || linkedTask?.prompt),
         firstPrompt: meta.prompt,
         lastModified: mtime.toISOString(),
@@ -571,7 +642,9 @@ export async function getSessionDetail(
   sessionId: string,
   projectId: string,
   relatedSessionIds?: string[],
+  runner: Runner = 'claude',
 ): Promise<SessionDetail | null> {
+  if (runner !== 'claude' && runner !== 'claude-grok') return null;
   const dir = getSessionDir(projectPath);
   const idsToLoad = relatedSessionIds && relatedSessionIds.length > 1
     ? relatedSessionIds
@@ -584,6 +657,7 @@ export async function getSessionDetail(
 
   // Load and parse all session files
   const allEntries: SessionTimelineEntry[] = [];
+  let model: string | undefined;
 
   for (const id of idsToLoad) {
     const filePath = join(dir, `${id}.jsonl`);
@@ -596,6 +670,9 @@ export async function getSessionDetail(
       continue;
     }
 
+    const metadata = await getFirstUserPrompt(filePath);
+    if (!metadata || inferClaudeRunner(metadata.model) !== runner) continue;
+    if (!model) model = normalizeSessionModel(runner, metadata.model);
     const { entries } = parseSessionFile(content, idsToLoad.length > 1 ? `${id.slice(0, 8)}-` : '');
     allEntries.push(...entries);
   }
@@ -625,8 +702,11 @@ export async function getSessionDetail(
 
   return {
     sessionId,
+    runner,
+    model,
     entries: allEntries,
-    linkedTaskId: linkedTasks.get(sessionId)?.taskId,
+    linkedTaskId: linkedTasks.get(`${runner}:${sessionId}`)?.taskId
+      ?? linkedTasks.get(sessionId)?.taskId,
   };
 }
 
@@ -730,9 +810,13 @@ export async function searchSessions(
             } catch { /* skip */ }
           }
 
-          const linkedTask = linkedTasks.get(sessionId);
+          const metadata = await getFirstUserPrompt(filePath);
+          const runner = inferClaudeRunner(metadata?.model);
+          const linkedTask = linkedTasks.get(`${runner}:${sessionId}`) ?? linkedTasks.get(sessionId);
           return {
             sessionId,
+            runner,
+            model: normalizeSessionModel(runner, metadata?.model),
             title: buildSessionTitle(firstPrompt, linkedTask?.summary || linkedTask?.prompt),
             firstPrompt: firstPrompt.slice(0, 200),
             lastModified: fileStat.mtime.toISOString(),

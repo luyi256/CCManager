@@ -19,13 +19,15 @@ import { adoptSession } from '../../services/api';
 import type { SessionSearchMatch } from '../../services/api';
 import { groupTimeline, TimelineView } from '../Task/TimelineRenderer';
 import type { TimelineItem } from '../Task/TimelineRenderer';
-import type { Task } from '../../types';
+import type { Runner, Task } from '../../types';
 import { formatRelativeTime } from '../../utils/dateTime';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 
 /** Flattened search result: one entry per matched message */
 interface FlatSearchResult {
   sessionId: string;
+  runner: Runner;
+  model?: string;
   firstPrompt: string;
   lastModified: string;
   fileSize: number;
@@ -33,6 +35,23 @@ interface FlatSearchResult {
   linkedTaskId?: number;
   relatedSessionIds?: string[];
   match: SessionSearchMatch;
+}
+
+const RUNNER_LABELS: Record<Runner, string> = {
+  claude: 'Claude',
+  'claude-grok': 'Grok',
+  codex: 'Codex',
+  qwen: 'Qwen',
+  tclaude: 'tClaude',
+  tcodex: 'tCodex',
+};
+
+function RunnerBadge({ runner }: { runner: Runner }) {
+  return (
+    <span className="rounded bg-dark-700 px-1.5 py-0.5 text-[10px] font-medium text-dark-300">
+      {RUNNER_LABELS[runner]}
+    </span>
+  );
 }
 
 function formatFileSize(bytes: number): string {
@@ -80,7 +99,7 @@ function CopySessionId({ sessionId, short }: { sessionId: string; short?: boolea
 
 interface SessionBrowserProps {
   projectId: string;
-  initialSession?: { id: string; relatedIds?: string[] };
+  initialSession?: { id: string; runner: Runner; model?: string; relatedIds?: string[] };
   onClose: () => void;
   onNavigateToTask?: (taskId: number) => void;
   onTaskCreated?: (task: Task) => void;
@@ -89,9 +108,16 @@ interface SessionBrowserProps {
 export default function SessionBrowser({ projectId, initialSession, onClose, onNavigateToTask, onTaskCreated }: SessionBrowserProps) {
   const [selectedSession, setSelectedSession] = useState<{
     id: string;
+    runner: Runner;
+    model?: string;
     relatedIds?: string[];
     scrollToEntryId?: string;
-  } | null>(initialSession ? { id: initialSession.id, relatedIds: initialSession.relatedIds } : null);
+  } | null>(initialSession ? {
+    id: initialSession.id,
+    runner: initialSession.runner,
+    model: initialSession.model,
+    relatedIds: initialSession.relatedIds,
+  } : null);
   const [searchQuery, setSearchQuery] = useState('');
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
@@ -135,6 +161,8 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
         {selectedSession ? (
           <SessionDetailView
             projectId={projectId}
+            runner={selectedSession.runner}
+            model={selectedSession.model}
             sessionId={selectedSession.id}
             relatedSessionIds={selectedSession.relatedIds}
             scrollToEntryId={selectedSession.scrollToEntryId}
@@ -149,8 +177,8 @@ export default function SessionBrowser({ projectId, initialSession, onClose, onN
             projectId={projectId}
             searchQuery={searchQuery}
             onSearchChange={setSearchQuery}
-            onSelectSession={(id, relatedIds, scrollToEntryId) =>
-              setSelectedSession({ id, relatedIds, scrollToEntryId })
+            onSelectSession={(id, runner, model, relatedIds, scrollToEntryId) =>
+              setSelectedSession({ id, runner, model, relatedIds, scrollToEntryId })
             }
             onClose={onClose}
             closeButtonRef={closeButtonRef}
@@ -168,7 +196,13 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
   projectId: string;
   searchQuery: string;
   onSearchChange: (q: string) => void;
-  onSelectSession: (id: string, relatedIds?: string[], scrollToEntryId?: string) => void;
+  onSelectSession: (
+    id: string,
+    runner: Runner,
+    model?: string,
+    relatedIds?: string[],
+    scrollToEntryId?: string,
+  ) => void;
   onClose: () => void;
   closeButtonRef: RefObject<HTMLButtonElement>;
   onNavigateToTask?: (taskId: number) => void;
@@ -220,6 +254,8 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
         // Backward compat: use deprecated single-match fields
         flat.push({
           sessionId: r.sessionId,
+          runner: r.runner,
+          model: r.model,
           firstPrompt: r.firstPrompt,
           lastModified: r.lastModified,
           fileSize: r.fileSize,
@@ -232,6 +268,8 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
         for (const m of matches) {
           flat.push({
             sessionId: r.sessionId,
+            runner: r.runner,
+            model: r.model,
             firstPrompt: r.firstPrompt,
             lastModified: r.lastModified,
             fileSize: r.fileSize,
@@ -249,10 +287,10 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
   // Determine which sessions to display (non-search mode)
   const displaySessions = useMemo(() => {
     if (showAll && allSessions) {
-      const activeIds = new Set(activeSessions?.map(s => s.sessionId) ?? []);
+      const activeIds = new Set(activeSessions?.map(s => `${s.runner}:${s.sessionId}`) ?? []);
       return allSessions.map(s => ({
         ...s,
-        isActive: activeIds.has(s.sessionId) || s.isActive,
+        isActive: activeIds.has(`${s.runner}:${s.sessionId}`) || s.isActive,
       }));
     }
     return activeSessions ?? [];
@@ -319,11 +357,13 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
             <div className="p-2 space-y-1">
               {flatResults.map(result => (
                 <SearchResultItem
-                  key={`${result.sessionId}-${result.match.entryId}`}
+                  key={`${result.runner}:${result.sessionId}-${result.match.entryId}`}
                   result={result}
                   query={debouncedQuery}
                   onSelect={() => onSelectSession(
                     result.sessionId,
+                    result.runner,
+                    result.model,
                     result.relatedSessionIds,
                     result.match.entryId
                   )}
@@ -374,8 +414,13 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
             <div className="p-2 space-y-1">
               {filtered.map(session => (
                 <button
-                  key={session.sessionId}
-                  onClick={() => onSelectSession(session.sessionId, session.relatedSessionIds)}
+                  key={`${session.runner}:${session.sessionId}`}
+                  onClick={() => onSelectSession(
+                    session.sessionId,
+                    session.runner,
+                    session.model,
+                    session.relatedSessionIds,
+                  )}
                   className="w-full text-left p-3 rounded-lg hover:bg-dark-800 transition-colors group"
                 >
                   <div className="flex items-start gap-2">
@@ -391,6 +436,7 @@ function SessionListView({ projectId, searchQuery, onSearchChange, onSelectSessi
                       </p>
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-dark-500">
                         <CopySessionId sessionId={session.sessionId} short />
+                        <RunnerBadge runner={session.runner} />
                         <span className="flex items-center gap-1">
                           <Clock size={12} />
                           {formatRelativeTime(session.lastModified)}
@@ -487,6 +533,7 @@ function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
             {result.firstPrompt}
           </p>
           <CopySessionId sessionId={result.sessionId} short />
+          <RunnerBadge runner={result.runner} />
         </div>
 
         {/* Context block: before → matched message → after */}
@@ -545,8 +592,10 @@ function SearchResultItem({ result, query, onSelect, onNavigateToTask }: {
 
 // --- Session Detail View ---
 
-function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEntryId, onBack, onClose, closeButtonRef, onNavigateToTask, onTaskCreated }: {
+function SessionDetailView({ projectId, runner, model, sessionId, relatedSessionIds, scrollToEntryId, onBack, onClose, closeButtonRef, onNavigateToTask, onTaskCreated }: {
   projectId: string;
+  runner: Runner;
+  model?: string;
   sessionId: string;
   relatedSessionIds?: string[];
   scrollToEntryId?: string;
@@ -561,7 +610,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
     isLoading,
     isError: detailError,
     refetch: refetchDetail,
-  } = useSessionDetail(projectId, sessionId, relatedSessionIds);
+  } = useSessionDetail(projectId, runner, sessionId, relatedSessionIds);
   const containerRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState(false);
   const [adopting, setAdopting] = useState(false);
@@ -627,7 +676,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
     setAdopting(true);
     setError(null);
     try {
-      const task = await adoptSession(projectId, sessionId, relatedSessionIds);
+      const task = await adoptSession(projectId, runner, sessionId, relatedSessionIds, model);
       // Close the browser and open the adopted conversation (sidebar + center).
       onClose();
       onTaskCreated?.(task);
@@ -647,6 +696,7 @@ function SessionDetailView({ projectId, sessionId, relatedSessionIds, scrollToEn
             <ArrowLeft size={18} />
           </button>
           <CopySessionId sessionId={sessionId} short />
+          <RunnerBadge runner={runner} />
           {detail?.linkedTaskId && (
             <button
               onClick={() => {

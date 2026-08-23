@@ -20,7 +20,12 @@ export default function ProjectPage() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
-  const [initialSession, setInitialSession] = useState<{ id: string; relatedIds?: string[] } | null>(null);
+  const [initialSession, setInitialSession] = useState<{
+    id: string;
+    runner: Runner;
+    model?: string;
+    relatedIds?: string[];
+  } | null>(null);
 
   const {
     data: project,

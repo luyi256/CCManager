@@ -244,12 +244,12 @@ class AgentPool {
   }
 
   /** Ask agent to list CLI sessions for a project path (10s timeout). */
-  requestSessions(agentId: string, projectPath: string): Promise<unknown> {
+  requestSessions(agentId: string, projectPath: string, projectId?: string): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 10000);
-      agent.socket.emit('sessions:list', { projectPath }, (result: unknown) => {
+      agent.socket.emit('sessions:list', { projectPath, projectId }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });
@@ -257,12 +257,12 @@ class AgentPool {
   }
 
   /** Ask agent to list active (running) CLI sessions (5s timeout). */
-  requestActiveSessions(agentId: string, projectPath: string): Promise<unknown> {
+  requestActiveSessions(agentId: string, projectPath: string, projectId?: string): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 5000);
-      agent.socket.emit('sessions:active', { projectPath }, (result: unknown) => {
+      agent.socket.emit('sessions:active', { projectPath, projectId }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });
@@ -270,12 +270,12 @@ class AgentPool {
   }
 
   /** Ask agent to search sessions (20s timeout for scanning all files). */
-  requestSessionSearch(agentId: string, projectPath: string, query: string): Promise<unknown> {
+  requestSessionSearch(agentId: string, projectPath: string, query: string, projectId?: string): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 20000);
-      agent.socket.emit('sessions:search', { projectPath, query }, (result: unknown) => {
+      agent.socket.emit('sessions:search', { projectPath, query, projectId }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });
@@ -283,12 +283,25 @@ class AgentPool {
   }
 
   /** Ask agent to get session detail (15s timeout for large files). */
-  requestSessionDetail(agentId: string, projectPath: string, sessionId: string): Promise<unknown> {
+  requestSessionDetail(
+    agentId: string,
+    projectPath: string,
+    runner: Runner,
+    sessionId: string,
+    relatedSessionIds?: string[],
+    projectId?: string,
+  ): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('Agent timeout')), 15000);
-      agent.socket.emit('sessions:detail', { projectPath, sessionId }, (result: unknown) => {
+      agent.socket.emit('sessions:detail', {
+        projectPath,
+        projectId,
+        runner,
+        sessionId,
+        relatedSessionIds,
+      }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
       });

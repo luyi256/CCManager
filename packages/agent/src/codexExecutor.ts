@@ -31,6 +31,7 @@ export class CodexExecutor extends EventEmitter {
     this.tempImageFiles = [];
     this.collectedOutput = '';
     this.fatalError = null;
+    this.sessionId = null;
     this.streamedItemText.clear();
 
     // Save base64 images to temp files

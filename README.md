@@ -2,96 +2,126 @@
 
 **English** | [中文](./README.zh-CN.md)
 
-A multi-device task management system for [Claude Code](https://docs.anthropic.com/en/docs/claude-code). Manage and execute Claude Code tasks across multiple machines through a centralized Web UI.
+CCManager is a self-hosted control plane for running coding-agent tasks across multiple machines. It combines a conversation-oriented Web UI, an Express/Socket.IO server, and lightweight agents that launch locally installed coding CLIs.
 
 <p align="center">
-  <img src="docs/screenshots/demo.gif" alt="CCManager Demo" width="960">
+  <img src="docs/screenshots/demo.gif" alt="CCManager current UI demo" width="960">
 </p>
 
-## Features
+## What It Supports
 
-- **Multi-Agent Architecture** — Distribute Claude Code tasks across multiple machines (Linux, macOS, etc.)
-- **Real-time Web UI** — Monitor task status, view streaming output, and manage projects from your browser
-- **Dual Execution Modes** — Run tasks locally or in isolated Docker containers with security hardening
-- **Plan Mode** — Review AI-generated plans before execution, with approval/rejection workflow
-- **Continue Conversations** — Resume completed tasks with Claude's session context preserved
-- **Voice Input** — Dictate task prompts via Groq Whisper integration (optional)
-- **Security** — Device token auth (CLI-managed, SHA-256 hashed), CORS, rate limiting, path whitelisting, symlink protection
-- **Cloudflare Tunnel** — Optional public access with automatic URL notification via Telegram
+- **Conversation workspace** — Each project has a persistent conversation sidebar, live timeline, follow-up composer, status controls, summaries, and runner/model metadata.
+- **Multiple coding runners** — Claude, Claude Grok, Codex, Qwen, tClaude, and tCodex can be selected per task or follow-up.
+- **Agent-discovered models** — Each agent reports the models actually available on that machine; the server validates named model selections before dispatch.
+- **Reliable live output** — Versioned stream events, persisted snapshots, replay after reconnect, duplicate suppression, tool-call grouping, Markdown/GFM, math, tables, and code blocks.
+- **Existing CLI sessions** — Browse active or historical sessions from Claude, Claude Grok, Codex, Qwen, tClaude, tCodex, and Docker Claude; search messages, inspect merged chains, adopt a session, or continue it with the original runner.
+- **Task orchestration** — Parallel tasks, dependencies, cancellation, retry, waiting states, Plan Mode, permission prompts, and orphan-task recovery after reconnect.
+- **Rich prompts** — Paste or upload images, add images to follow-ups, and optionally dictate prompts through an OpenAI-compatible Whisper endpoint.
+- **Isolation options** — Run plain Claude tasks locally or in hardened Docker containers; optionally create a Git worktree per task and merge or clean it up from the UI.
+- **Multi-device security** — Separate hashed tokens for browsers and agents, same-origin CORS, rate limiting, path allow/block lists, and symlink-aware path validation.
+- **Deployable below `/ccm`** — The production SPA, API, WebSocket path, and PWA assets support reverse-proxy deployment under the `/ccm` base path.
 
-## Screenshots
+## Current Screenshots
+
+The screenshots below are generated from the current production build with fictional data.
 
 <table>
   <tr>
-    <td align="center"><b>Project List</b></td>
-    <td align="center"><b>Task Board</b></td>
+    <td align="center"><b>Projects</b></td>
+    <td align="center"><b>New Conversation</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/home.png" alt="Project List" width="500"></td>
-    <td><img src="docs/screenshots/task-board.png" alt="Task Board" width="500"></td>
+    <td><img src="docs/screenshots/projects.png" alt="Project list" width="500"></td>
+    <td><img src="docs/screenshots/new-conversation.png" alt="New conversation composer" width="500"></td>
   </tr>
   <tr>
-    <td align="center"><b>Task Detail & Output</b></td>
-    <td align="center"><b>Settings & Agent Management</b></td>
+    <td align="center"><b>Live Conversation</b></td>
+    <td align="center"><b>CLI Session Browser</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/task-detail.png" alt="Task Detail" width="500"></td>
-    <td><img src="docs/screenshots/settings.png" alt="Settings" width="500"></td>
+    <td><img src="docs/screenshots/conversation.png" alt="Live coding conversation" width="500"></td>
+    <td><img src="docs/screenshots/cli-sessions.png" alt="CLI session browser" width="500"></td>
+  </tr>
+  <tr>
+    <td align="center" colspan="2"><b>Device and Agent Management</b></td>
+  </tr>
+  <tr>
+    <td colspan="2"><img src="docs/screenshots/settings.png" alt="Device and agent management" width="1000"></td>
   </tr>
 </table>
 
 <details>
-<summary><b>Mobile Views</b></summary>
+<summary><b>Mobile views</b></summary>
 <br>
 <table>
   <tr>
-    <td align="center"><b>Home</b></td>
-    <td align="center"><b>Task Board</b></td>
+    <td align="center"><b>Projects</b></td>
+    <td align="center"><b>Conversation Composer</b></td>
   </tr>
   <tr>
-    <td><img src="docs/screenshots/mobile-home.png" alt="Mobile Home" width="280"></td>
-    <td><img src="docs/screenshots/mobile-task-board.png" alt="Mobile Task Board" width="280"></td>
+    <td><img src="docs/screenshots/mobile-projects.png" alt="Mobile project list" width="280"></td>
+    <td><img src="docs/screenshots/mobile-conversation.png" alt="Mobile conversation composer" width="280"></td>
   </tr>
 </table>
 </details>
 
 ## Architecture
 
-```
-┌──────────────────────────────────┐
-│  Server (Express + Socket.IO)    │    ← Central server
-│  Web UI (React SPA)              │
-│  SQLite Database                 │
-│  Port: 3001                      │
-└────────┬────────────┬────────────┘
-         │ WebSocket  │ WebSocket
-    ┌────┴────┐  ┌────┴────┐
-    │ Agent A │  │ Agent B │           ← Distributed agents
-    │ (Linux) │  │ (macOS) │
-    │ Docker  │  │ Local   │
-    └─────────┘  └─────────┘
+```text
+Browser / installed PWA
+        │ HTTPS + Socket.IO
+        ▼
+┌───────────────────────────────────────┐
+│ @ccmanager/server                    │
+│ Express API · Socket.IO · SQLite     │
+│ serves @ccmanager/web under /ccm     │
+└───────────────┬───────────────────────┘
+                │ authenticated agent sockets
+        ┌───────┴────────┬──────────────────┐
+        ▼                ▼                  ▼
+  Linux agent       macOS agent       additional agents
+  local/Docker      local execution   concurrent execution
+        │                │                  │
+        └──── Claude / Claude Grok / Codex / Qwen / tClaude / tCodex
 ```
 
-| Component | Description |
-|-----------|-------------|
-| **Server** (`@ccmanager/server`) | Express API + Socket.IO + SQLite — manages projects, task queue, and WebSocket events |
-| **Web UI** (`@ccmanager/web`) | React 18 + Vite + TailwindCSS + TanStack Query — SPA frontend with real-time updates |
-| **Agent** (`@ccmanager/agent`) | Socket.IO client + child_process — connects to server, spawns `claude` CLI to execute tasks |
-| **ccmng** | Server-side CLI tool for managing device tokens |
+| Package | Role |
+|---|---|
+| `@ccmanager/server` | REST API, Socket.IO namespaces, task dispatch, SQLite storage, stream replay, session routing, token CLI |
+| `@ccmanager/web` | React 18 SPA, conversation UI, session browser, project/device/agent management, PWA |
+| `@ccmanager/agent` | Connects a machine to the server, discovers local runner models, launches tasks, streams events, and browses local sessions from supported CLIs |
+| `ccmng` CLI | Creates/revokes device and agent tokens and makes rotating SQLite backups |
+
+## Runner Support
+
+Runner availability is machine-specific. At startup, each agent probes its installed CLIs and publishes a model catalog to the server.
+
+| UI runner | Local command | Model discovery | Execution |
+|---|---|---|---|
+| Claude | `claude` | Claude CLI help/settings | Local or Docker |
+| Claude Grok | `claude-grok` | `~/.config/distill-grok/claude-settings.json` | Host |
+| Codex | `codex` | Codex model catalog/config | Host |
+| Qwen | `qwen` | CLI availability; default model | Host |
+| tClaude | `tclaude` | CLI/daemon model catalog | Host |
+| tCodex | `tcodex` | tCodex model catalog/config | Host |
+
+Docker execution currently wraps the plain `claude` runner. The other runners use their host-side CLI and credentials even when the project executor is set to Docker.
 
 ## Prerequisites
 
-| Dependency | Version | Required For |
-|------------|---------|--------------|
-| [Node.js](https://nodejs.org/) | >= 18 | Runtime |
-| [pnpm](https://pnpm.io/) | 9.x | Package manager (`npm i -g pnpm@9`) |
-| [PM2](https://pm2.keymetrics.io/) | >= 5 | Process management (`npm i -g pm2`) |
-| [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) | latest | Task execution (`npm i -g @anthropic-ai/claude-code`) |
-| [Docker](https://www.docker.com/) | (optional) | Docker executor mode only |
+| Dependency | Version | Purpose |
+|---|---:|---|
+| [Node.js](https://nodejs.org/) | `>= 18` | Runtime |
+| [pnpm](https://pnpm.io/) | `9.x` | Workspace package manager |
+| [PM2](https://pm2.keymetrics.io/) | `>= 5` | Recommended process manager |
+| At least one supported coding CLI | Current compatible release | Task execution on each agent |
+| [Docker](https://www.docker.com/) | Optional | Plain Claude container execution |
+
+Authenticate each runner on the machine where its agent runs. Docker-mode Claude can reuse `~/.claude/.credentials.json` or receive `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` from the agent environment.
 
 ## Quick Start
 
-### Server Setup
+### 1. Start the server
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -99,20 +129,38 @@ cd CCManager
 bash setup-server.sh
 ```
 
-The setup script will install dependencies, build the project, configure PM2, and start the server.
+The setup script installs dependencies, builds the server and SPA, and creates or restarts the `ccm-server` PM2 process.
 
-After setup, generate a device token for Web UI login:
+Create the first browser token:
 
 ```bash
-ccmng token create --name "My Computer"
-# Copy the token — it's only shown once
+node packages/server/dist/cli/index.js token create --name "Admin Browser"
 ```
 
-Open `http://localhost:3001` in your browser and paste the token to log in.
+Open `http://localhost:3001/ccm/` and paste the token. The Web UI can create additional browser tokens and register agents from **Settings**.
 
-### Agent Setup (Client)
+### 2. Publish the server address for agents
 
-On each machine that will execute tasks:
+Agents read `<dataPath>/server-url.txt`. The URL must include `/ccm`:
+
+```bash
+mkdir -p ./data
+printf '%s\n' 'http://127.0.0.1:3001/ccm' > ./data/server-url.txt
+```
+
+For remote machines, replace that value with the externally reachable HTTPS URL, for example `https://code.example.com/ccm`. `dataPath` may also be a GitHub raw URL base containing `server-url.txt`; agents re-read it after connection failures.
+
+### 3. Register and start an agent
+
+Register the agent in **Settings → Agent Management**, or use the server CLI:
+
+```bash
+node packages/server/dist/cli/index.js agent create \
+  --id studio-linux \
+  --name "Studio Linux"
+```
+
+On the machine that will run coding tasks:
 
 ```bash
 git clone https://github.com/luyi256/CCManager.git
@@ -120,262 +168,199 @@ cd CCManager
 bash setup-client.sh
 ```
 
-The setup script will guide you through:
-1. Installing dependencies
-2. Configuring agent ID, name, and allowed paths
-3. Entering the auth token (generated via `ccmng agent create` on the server or Web UI Settings)
-4. Building and starting the agent with PM2
+The client setup asks for the agent ID/name, `dataPath`, allowed project paths, and the one-time agent token. It then builds and starts `ccm-agent` with PM2.
 
-### Manual Installation
+### 4. Add a project
 
-```bash
-# 1. Install dependencies
-pnpm install
+In the Web UI, choose **Add Project**, select an online agent, enter the absolute project path on that agent, and configure:
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env with your settings
+- local or Docker execution;
+- Auto or Safe security mode;
+- optional Git worktree isolation;
+- optional Docker image and extra mounts.
 
-# 3. Build
-pnpm run build
+## Agent Configuration
 
-# 4. Start the server
-pm2 start packages/server/dist/index.js --name ccm-server
-pm2 save
-
-# 5. Generate a device token
-ccmng token create --name "My Computer"
-# Use the token to log in at http://localhost:3001
-```
-
-## Configuration
-
-### Environment Variables (`.env`)
-
-Copy `.env.example` to `.env` and configure:
-
-```bash
-# Claude Code Authentication (choose one)
-CLAUDE_CODE_OAUTH_TOKEN=clt_xxx    # Pro/Max subscription (OAuth)
-ANTHROPIC_API_KEY=sk-ant-xxx       # Pay-per-use (API key)
-
-# Server
-PORT=3001                          # Server port (default: 3001)
-HOST=127.0.0.1                     # Listen address
-DATA_PATH=/path/to/data            # Data directory (default: ./data)
-
-# Production mode
-SERVE_STATIC=true                  # Serve frontend static files
-STATIC_PATH=/path/to/web/dist     # Path to built frontend
-
-# Voice transcription (optional, OpenAI-compatible Whisper API)
-WHISPER_API_URL=https://api.groq.com/openai/v1   # Default: Groq
-WHISPER_API_KEY=gsk_xxx            # Get from https://console.groq.com/keys
-WHISPER_MODEL=whisper-large-v3-turbo
-```
-
-### Agent Configuration
-
-Config file: `~/.ccm-agent.json` (or specify with `--config=<path>`)
-
-See `packages/agent/agent.config.example.json` for a full example.
+Default file: `~/.ccm-agent.json`. Use `--config=/path/to/file.json` to override it.
 
 ```json
 {
-  "agentId": "my-agent",
-  "agentName": "My Agent",
-  "dataPath": "/path/to/data",
-  "allowedPaths": ["/home/me/projects/*"],
-  "blockedPaths": ["/home/me/.ssh"],
-  "capabilities": ["linux", "gpu"]
-}
-```
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `agentId` | string | Yes | Unique identifier (alphanumeric, `-`, `_` only) |
-| `agentName` | string | Yes | Display name |
-| `dataPath` | string | Yes | Path to data directory (local path or GitHub raw URL) |
-| `authToken` | string | Auto | Entered interactively on first run, saved to config |
-| `allowedPaths` | string[] | Yes | Glob patterns for allowed project paths |
-| `blockedPaths` | string[] | No | Paths to block access to |
-| `capabilities` | string[] | No | Tags for task routing (e.g., `gpu`, `linux`) |
-| `dockerConfig` | object | No | Docker container settings (see below) |
-
-The agent reads the server URL from `<dataPath>/server-url.txt`. Remote agents can use a GitHub raw URL as `dataPath` (e.g., `https://raw.githubusercontent.com/user/data-repo/main`). The agent automatically re-reads the server URL on connection failure, supporting dynamic tunnel URLs.
-
-`Claude Grok` directly launches the local `claude-grok` command. Install/configure that wrapper on each agent and make sure it is available on the PM2 process `PATH`; CCManager does not require or manage an xAI API key. The model list comes from the mapped targets in `~/.config/distill-grok/claude-settings.json`, so the UI shows the real model name (for example `grok-4.6`) once instead of exposing multiple Opus/Sonnet aliases. The agent resolves that display name back to the wrapper's full route before execution. Docker projects still run this runner on the host because the wrapper and its local router are host services.
-
-### Docker Executor Mode
-
-Configure per-project in the Web UI, or set in agent config:
-
-```json
-{
+  "agentId": "studio-linux",
+  "agentName": "Studio Linux",
+  "dataPath": "/srv/CCManagerData",
+  "authToken": "one-time-generated-agent-token",
+  "allowedPaths": ["/srv/projects/**"],
+  "blockedPaths": ["/home/user/.ssh", "/home/user/.gnupg"],
+  "capabilities": ["linux", "docker"],
   "dockerConfig": {
     "image": "ccmanager-runner:latest",
     "memory": "8g",
     "cpus": "4",
+    "network": "bridge",
+    "sessionsDir": "/home/user/.ccm-sessions",
     "extraMounts": [
-      { "source": "/data", "target": "/data", "readonly": true }
+      {
+        "source": "/srv/datasets",
+        "target": "/datasets",
+        "readonly": true
+      }
     ]
   }
 }
 ```
 
-Each task runs in an isolated container:
-- Project directory mounted at `/workspace`
-- Claude CLI credentials auto-injected
-- Security: `--cap-drop=ALL` + minimal capabilities + `--no-new-privileges`
+| Field | Required | Description |
+|---|---|---|
+| `agentId`, `agentName` | Yes | Stable machine identity and display name |
+| `dataPath` | Yes | Local directory or remote URL base containing `server-url.txt` |
+| `authToken` | On first connection | Token tied to this exact agent ID |
+| `allowedPaths` | Yes | Paths or `/*` / `/**` patterns the agent may access |
+| `blockedPaths` | No | Explicitly denied paths, checked before allow rules |
+| `capabilities` | No | User-defined routing labels; runner-model capabilities are added automatically |
+| `dockerConfig` | For Docker projects | Default image, resource limits, session directory, network, and mounts |
 
-Build the runner image: `docker build -t ccmanager-runner:latest packages/agent/docker/`
+## Project and Execution Options
 
-## Device Token Management
+- **Per-task runner/model** — The composer and follow-up box can switch runner and model. The latest selection is remembered for the project.
+- **Dependencies** — A task can wait for another active task before dispatch.
+- **Plan Mode** — Starts supported runners in plan mode and exposes questions/confirmation in the conversation.
+- **Images and voice** — Initial prompts and follow-ups accept screenshots; voice input requires the optional Whisper configuration.
+- **Git worktrees** — Creates a task branch/worktree, then exposes merge and cleanup actions after execution.
+- **Runner-aware session continuity** — Follow-ups resume the stored session ID with its original runner. Existing sessions from supported CLIs can also be adopted into the CCManager conversation list; Docker Claude sessions are read from the configured session directory.
+- **Post-task hooks** — The server/agent protocol supports project hooks after a successful task; configure them through the project API when needed.
 
-Device tokens are managed via the server-side `ccmng` CLI. There is no public registration endpoint.
+### Docker layout
 
-```bash
-# Create a token (shown once — copy immediately)
-ccmng token create --name "MacBook Pro"
-
-# List registered devices
-ccmng token list
-
-# Revoke a device token
-ccmng token revoke <id>
+```text
+/workspace                 project directory, read/write
+/home/ccm                  persistent per-project HOME
+└── .claude/
+    └── .credentials.json  copied from the host when available
 ```
 
-All API and WebSocket connections require token authentication:
-- **REST API**: `Authorization: Bearer <TOKEN>` header
-- **WebSocket (UI)**: `auth: { token }` connection parameter
-- **WebSocket (Agent)**: Uses `agentAuthToken` (configured in Settings)
-- **Exception**: `GET /api/health` is unauthenticated
+Containers run with the host UID/GID, `--cap-drop=ALL`, only the required capabilities added back, and `--no-new-privileges`.
+
+## Server Configuration
+
+The server loads the repository `.env` and, when `DATA_PATH` is set, `<DATA_PATH>/secrets.env`.
+
+```bash
+PORT=3001
+HOST=127.0.0.1
+NODE_ENV=production
+DATA_PATH=/srv/CCManagerData
+SERVE_STATIC=true
+STATIC_PATH=/opt/CCManager/packages/web/dist
+SOCKET_IO_PATH=/ccm/socket.io
+
+# Optional OpenAI-compatible speech-to-text endpoint
+WHISPER_API_URL=https://api.groq.com/openai/v1
+WHISPER_API_KEY=gsk_xxx
+WHISPER_MODEL=whisper-large-v3-turbo
+```
+
+Keep `HOST=127.0.0.1` when a reverse proxy terminates external traffic. The browser SPA uses `/ccm/api` and `/ccm/socket.io`; the server also exposes unprefixed `/api` routes for direct integrations.
+
+## Token and Backup CLI
+
+Run the built CLI directly, or expose it as `ccmng` in your environment:
+
+```bash
+# Browser/device tokens
+node packages/server/dist/cli/index.js token create --name "MacBook Pro"
+node packages/server/dist/cli/index.js token list
+node packages/server/dist/cli/index.js token revoke <device-id>
+
+# Agent tokens
+node packages/server/dist/cli/index.js agent create --id macbook --name "MacBook"
+node packages/server/dist/cli/index.js agent list
+node packages/server/dist/cli/index.js agent token macbook
+node packages/server/dist/cli/index.js agent revoke macbook
+
+# Hot SQLite backup; keep the newest seven by default
+node packages/server/dist/cli/index.js backup --keep 7
+```
+
+Plain-text tokens are shown once. The database stores SHA-256 hashes.
 
 ## Task Lifecycle
 
-```
-pending → running → completed / completed_with_warnings / failed / cancelled
-
-While running, a task may enter:
-  running → waiting              (waiting for external condition)
-  running → waiting_permission   (waiting for user authorization)
-  running → plan_review          (waiting for plan confirmation)
+```text
+pending → running → completed | completed_with_warnings | failed | cancelled
+              ├── waiting
+              ├── waiting_permission
+              └── plan_review
 ```
 
-## Development
+An agent can execute multiple task IDs concurrently. Duplicate dispatches are ignored, running tasks are reported in heartbeats, and tasks left in `running` state are re-dispatched when their agent reconnects.
+
+## Development and Deployment
 
 ```bash
-pnpm install                  # Install dependencies
+pnpm install
 
-pnpm run dev                  # Start server (3001) + web (5173) with HMR
-pnpm run dev:server           # Server only
-pnpm run dev:web              # Web only
+pnpm run dev:server            # API and Socket.IO on :3001
+pnpm run dev:web               # Vite on http://localhost:5173/ccm/
 
-pnpm run build                # Build all packages
-pnpm run build:server         # Build server only
-pnpm run build:web            # Build web only
+pnpm run typecheck
+pnpm --filter @ccmanager/server test
+pnpm --filter @ccmanager/agent test
 
-pnpm run lint                 # Lint
-pnpm run typecheck            # Type check
+pnpm run build
+pnpm exec pm2 restart ccm-server --update-env
+curl http://localhost:3001/api/health
 ```
 
-### Deployment
+The repository also contains `docs/generate-showcase.mjs`, which builds a private temporary demo database and regenerates all README screenshots and the demo animation from the real browser UI.
 
-```bash
-pnpm run build && pm2 restart ccm-server
-```
+## API Overview
 
-### PM2 Process Management
+All endpoints require `Authorization: Bearer <DEVICE_TOKEN>` except health checks. The same routes are available below `/api` and `/ccm/api`.
 
-The `ecosystem.config.cjs` file manages local processes:
+| Area | Routes |
+|---|---|
+| Health | `GET /api/health` or `GET /ccm/api/health` |
+| Devices | `GET /auth/me`, `GET/POST /auth/devices`, `DELETE /auth/devices/:id` |
+| Projects | `GET/POST /projects`, `GET/PUT/DELETE /projects/:id` |
+| Tasks | Project task list/create; task detail/update, cancel, retry, continue, logs, plan answer/confirm, worktree merge/cleanup |
+| Sessions | Multi-runner list, active list, search, detail, continue, and adopt under `/projects/:projectId/sessions` |
+| Agents | List, online list, runner models, registration, per-agent token create/status/revoke |
+| Other | Global settings and optional `/transcribe` |
 
-| Process | Description |
-|---------|-------------|
-| `ccm-agent` | Agent process (`packages/agent`) |
-| `ccm-tunnel` | Cloudflare tunnel + Telegram notification (optional) |
+## Repository Layout
 
-```bash
-pm2 start ecosystem.config.cjs   # Start all processes
-pm2 status                       # View status
-pm2 logs ccm-server              # View server logs
-pm2 restart ccm-server           # Restart server
-```
-
-### Cloudflare Tunnel (Optional)
-
-For remote access without port forwarding, use the included tunnel scripts:
-
-1. Install [cloudflared](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)
-2. Configure Telegram notifications in `<DATA_PATH>/secrets.env`:
-   ```bash
-   TELEGRAM_BOT_TOKEN="your-bot-token"
-   TELEGRAM_CHAT_ID="your-chat-id"
-   ```
-3. Start via PM2: `pm2 start ecosystem.config.cjs`
-
-The tunnel URL is automatically written to `<DATA_PATH>/server-url.txt` for remote agent discovery.
-
-## API Reference
-
-All endpoints require `Authorization: Bearer <TOKEN>` header (except `/api/health`).
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/api/health` | Health check |
-| GET | `/api/auth/me` | Current device info |
-| GET | `/api/auth/devices` | List registered devices |
-| DELETE | `/api/auth/devices/:id` | Revoke device token |
-| GET/POST | `/api/projects` | List / create projects |
-| GET/PUT/DELETE | `/api/projects/:id` | Project CRUD |
-| GET/POST | `/api/projects/:pid/tasks` | List / create tasks |
-| GET/PUT | `/api/tasks/:id` | Task detail / update |
-| POST | `/api/tasks/:id/cancel` | Cancel task |
-| POST | `/api/tasks/:id/retry` | Retry failed task |
-| POST | `/api/tasks/:id/continue` | Continue conversation |
-| POST | `/api/tasks/:id/plan/answer` | Answer plan question |
-| POST | `/api/tasks/:id/plan/confirm` | Confirm plan |
-| GET | `/api/tasks/:id/logs` | Get task logs |
-| GET | `/api/agents` | List agents |
-| GET | `/api/agents/online` | List online agents |
-| GET | `/api/agents/:id` | Agent detail |
-| GET/PUT | `/api/settings` | Global settings |
-| POST | `/api/transcribe` | Voice-to-text (Whisper) |
-
-## Project Structure
-
-```
+```text
 packages/
-├── server/         Express API + Socket.IO + SQLite
-│   └── src/
-│       ├── index.ts             # Entry point
-│       ├── cli/                 # ccmng CLI (token & agent management)
-│       ├── routes/              # REST API routes
-│       ├── services/            # DB, Agent Pool, Stream Parser
-│       └── websocket/           # WebSocket events
-├── web/            React 18 + Vite + TailwindCSS
-│   └── src/
-│       ├── pages/               # Home, Project, Login, Settings
-│       ├── components/          # UI components
-│       ├── hooks/               # Custom hooks
-│       └── contexts/            # WebSocket context
-└── agent/          Socket.IO Client + child_process
-    └── src/
-        ├── index.ts             # CLI entry
-        ├── connection.ts        # WebSocket connection
-        ├── executor.ts          # Claude CLI executor
-        ├── docker.ts            # Docker container execution
-        └── security.ts          # Path security validation
+├── server/src/
+│   ├── routes/       REST endpoints for auth, projects, tasks, sessions, agents
+│   ├── services/     SQLite, dispatch, stream snapshots, session browsing, waiting tasks
+│   ├── websocket/    authenticated user and agent Socket.IO namespaces
+│   └── cli/          token, agent, and backup commands
+├── web/src/
+│   ├── components/Conversation/  conversation sidebar, panel, model switcher
+│   ├── components/Session/       CLI session browser
+│   ├── components/Task/          timeline and legacy task components
+│   ├── pages/                    projects, project workspace, settings, login
+│   └── hooks/                    queries, sessions, voice, reliable task stream
+└── agent/src/
+    ├── connection.ts             reconnect, heartbeat, parallel task dispatch
+    ├── executor.ts               Claude-family and Qwen execution
+    ├── codexExecutor.ts          Codex and tCodex execution
+    ├── runnerModels.ts           installed-runner/model discovery
+    ├── sessions.ts               multi-runner local/Docker session discovery
+    ├── docker.ts                 hardened plain-Claude containers
+    └── worktree.ts               per-task Git worktrees
 ```
 
-## Security
+## Security Notes
 
-- **Device Token Auth**: CLI-managed tokens, SHA-256 hashed storage, no public registration
-- **Agent Auth Token**: Configured in Web UI Settings, per-agent isolation
-- **CORS**: Same-origin only (`origin: false`)
-- **Rate Limiting**: 100 requests/min/IP
-- **Path Whitelisting**: Agents can only operate within `allowedPaths`, with symlink checking
-- **Docker Sandbox**: `--cap-drop=ALL` + minimal capabilities + `--no-new-privileges`
-- **Plan Mode**: Tasks can require user approval before execution
+- Browser and agent credentials are separate and revocable.
+- REST and both Socket.IO namespaces require authentication.
+- CORS is same-origin only and API traffic is rate-limited.
+- Agent tokens are bound to a specific agent ID.
+- Project paths are checked against allow/block lists and resolved symlink targets.
+- Image uploads are accepted as data URLs and the JSON body limit is 50 MB.
+- Docker adds isolation, but host-executed runners still inherit the security of the agent account. Use a dedicated OS user and conservative allowed paths.
 
 ## License
 

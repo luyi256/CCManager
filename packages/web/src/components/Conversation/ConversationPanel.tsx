@@ -91,6 +91,27 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     task.runner || 'claude'
   );
   const [followUpModel, setFollowUpModel] = useState(task.model || '');
+  const sessionRunner = useMemo<Runner | undefined>(() => {
+    if (!task.gitInfo) return undefined;
+    try {
+      const metadata = JSON.parse(task.gitInfo) as { sessionId?: unknown; sessionRunner?: unknown };
+      if (!metadata.sessionId) return undefined;
+      return typeof metadata.sessionRunner === 'string'
+        ? metadata.sessionRunner as Runner
+        : task.runner || 'claude';
+    } catch {
+      return undefined;
+    }
+  }, [task.gitInfo, task.runner]);
+  const runnerLocked = Boolean(
+    sessionRunner &&
+    ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)
+  );
+
+  useEffect(() => {
+    setFollowUpRunner(runnerLocked && sessionRunner ? sessionRunner : task.runner || 'claude');
+    setFollowUpModel(task.model || '');
+  }, [task.id, task.runner, task.model, sessionRunner, runnerLocked]);
 
   const handleFollowUpPaste = useCallback((e: React.ClipboardEvent) => {
     if (e.clipboardData?.items) {
@@ -651,6 +672,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                       onModelChange={setFollowUpModel}
                       agentId={agentId}
                       compact
+                      lockRunner={runnerLocked}
                     />
                     <input ref={followUpFileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFollowUpFileSelect} />
                     <button
