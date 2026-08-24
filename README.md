@@ -11,10 +11,10 @@ CCManager is a self-hosted control plane for running coding-agent tasks across m
 ## What It Supports
 
 - **Conversation workspace** — Each project has a persistent conversation sidebar, live timeline, follow-up composer, status controls, summaries, and runner/model metadata.
-- **Multiple coding runners** — Claude, Claude Grok, Codex, Qwen, tClaude, and tCodex can be selected per task or follow-up.
+- **Multiple coding runners** — Claude, Claude Grok, Codex, Qwen, etc. can be selected per task or follow-up.
 - **Agent-discovered models** — Each agent reports the models actually available on that machine; the server validates named model selections before dispatch.
 - **Reliable live output** — Versioned stream events, persisted snapshots, replay after reconnect, duplicate suppression, tool-call grouping, Markdown/GFM, math, tables, and code blocks.
-- **Existing CLI sessions** — Browse active or historical sessions from Claude, Claude Grok, Codex, Qwen, tClaude, tCodex, and Docker Claude; search messages, inspect merged chains, adopt a session, or continue it with the original runner.
+- **Existing CLI sessions** — Browse active or historical sessions from Claude, Claude Grok, Codex, Qwen, etc., including Docker sessions; search messages, inspect merged chains, adopt a session, or continue it with the original runner.
 - **Task orchestration** — Parallel tasks, dependencies, cancellation, retry, waiting states, Plan Mode, permission prompts, and orphan-task recovery after reconnect.
 - **Rich prompts** — Paste or upload images, add images to follow-ups, and optionally dictate prompts through an OpenAI-compatible Whisper endpoint.
 - **Isolation options** — Run plain Claude tasks locally or in hardened Docker containers; optionally create a Git worktree per task and merge or clean it up from the UI.
@@ -82,7 +82,7 @@ Browser / installed PWA
   Linux agent       macOS agent       additional agents
   local/Docker      local execution   concurrent execution
         │                │                  │
-        └──── Claude / Claude Grok / Codex / Qwen / tClaude / tCodex
+        └──── Claude / Claude Grok / Codex / Qwen / etc.
 ```
 
 | Package | Role |
@@ -102,8 +102,7 @@ Runner availability is machine-specific. At startup, each agent probes its insta
 | Claude Grok | `claude-grok` | `~/.config/distill-grok/claude-settings.json` | Host |
 | Codex | `codex` | Codex model catalog/config | Host |
 | Qwen | `qwen` | CLI availability; default model | Host |
-| tClaude | `tclaude` | CLI/daemon model catalog | Host |
-| tCodex | `tcodex` | tCodex model catalog/config | Host |
+| etc. | Other compatible local commands | Agent-reported model catalog | Host |
 
 Docker execution currently wraps the plain `claude` runner. The other runners use their host-side CLI and credentials even when the project executor is set to Docker.
 
@@ -345,7 +344,7 @@ packages/
 └── agent/src/
     ├── connection.ts             reconnect, heartbeat, parallel task dispatch
     ├── executor.ts               Claude-family and Qwen execution
-    ├── codexExecutor.ts          Codex and tCodex execution
+    ├── codexExecutor.ts          Codex-compatible runner execution
     ├── runnerModels.ts           installed-runner/model discovery
     ├── sessions.ts               multi-runner local/Docker session discovery
     ├── docker.ts                 hardened plain-Claude containers

@@ -11,10 +11,10 @@ CCManager 是一个自托管的多设备编程 Agent 控制平台，由对话式
 ## 当前能力
 
 - **对话式项目工作区** — 每个项目拥有持久会话侧栏、实时执行时间线、追问输入框、状态操作、摘要和 Runner/模型信息。
-- **多 Runner 支持** — 每个任务或追问均可选择 Claude、Claude Grok、Codex、Qwen、tClaude 或 tCodex。
+- **多 Runner 支持** — 每个任务或追问均可选择 Claude、Claude Grok、Codex、Qwen、etc.。
 - **Agent 自动发现模型** — Agent 启动时探测本机已安装 CLI 和可用模型，服务端在派发前校验模型选择。
 - **可靠实时输出** — 使用带版本的流事件、持久化快照、断线回放和去重；支持工具调用折叠、Markdown/GFM、公式、表格和代码块。
-- **接管已有 CLI 会话** — 浏览 Claude、Claude Grok、Codex、Qwen、tClaude、tCodex 和 Docker Claude 的活跃或历史会话，搜索消息、查看合并链，并用原 Runner 接入或继续。
+- **接管已有 CLI 会话** — 浏览 Claude、Claude Grok、Codex、Qwen、etc. 的活跃或历史会话（包括 Docker 会话），搜索消息、查看合并链，并用原 Runner 接入或继续。
 - **任务编排** — 支持并行任务、依赖关系、取消、重试、等待状态、Plan Mode、权限确认，以及 Agent 重连后的孤儿任务恢复。
 - **富输入** — 新任务和追问都可粘贴或上传图片，也可通过兼容 OpenAI 的 Whisper 接口进行语音输入。
 - **隔离执行** — 普通 Claude 可在本机或安全加固的 Docker 中运行；也可为每个任务创建 Git worktree，并在界面中合并或清理。
@@ -82,7 +82,7 @@ CCManager 是一个自托管的多设备编程 Agent 控制平台，由对话式
    Linux Agent      macOS Agent        更多 Agent
    本机/Docker      本机执行           并发执行
         │                │                  │
-        └──── Claude / Claude Grok / Codex / Qwen / tClaude / tCodex
+        └──── Claude / Claude Grok / Codex / Qwen / etc.
 ```
 
 | 包 | 作用 |
@@ -102,8 +102,7 @@ Runner 是否可用取决于每台 Agent 机器。Agent 启动时会探测已安
 | Claude Grok | `claude-grok` | `~/.config/distill-grok/claude-settings.json` | 宿主机 |
 | Codex | `codex` | Codex 模型目录与配置 | 宿主机 |
 | Qwen | `qwen` | 检测 CLI，可使用默认模型 | 宿主机 |
-| tClaude | `tclaude` | CLI/本地 daemon 模型目录 | 宿主机 |
-| tCodex | `tcodex` | tCodex 模型目录与配置 | 宿主机 |
+| etc. | 其他兼容的本地命令 | Agent 上报的模型目录 | 宿主机 |
 
 当前 Docker 执行只封装普通 `claude` Runner。即使项目选择 Docker，其余 Runner 仍使用宿主机上的 CLI 与凭证。
 
@@ -345,7 +344,7 @@ packages/
 └── agent/src/
     ├── connection.ts             重连、心跳、并行任务派发
     ├── executor.ts               Claude 系与 Qwen 执行
-    ├── codexExecutor.ts          Codex 与 tCodex 执行
+    ├── codexExecutor.ts          Codex 兼容 Runner 执行
     ├── runnerModels.ts           已安装 Runner/模型发现
     ├── sessions.ts               多 Runner 本机/Docker 会话发现
     ├── docker.ts                 加固后的普通 Claude 容器
