@@ -29,12 +29,7 @@ import {
   TimelineView,
 } from './TimelineRenderer';
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
-
-interface PastedImage {
-  id: string;
-  dataUrl: string;
-  name: string;
-}
+import { readImageFiles, type PendingImage } from '../../utils/images';
 
 // Safe date formatting
 function formatDate(date: unknown): string {
@@ -80,60 +75,45 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
-  const [followUpImages, setFollowUpImages] = useState<PastedImage[]>([]);
+  const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [isReadingImages, setIsReadingImages] = useState(false);
   const followUpFileInputRef = useRef<HTMLInputElement>(null);
 
-  const handleFollowUpPaste = useCallback((e: React.ClipboardEvent) => {
-    if (e.clipboardData?.items) {
-      for (let i = 0; i < e.clipboardData.items.length; i++) {
-        const item = e.clipboardData.items[i];
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (!file) continue;
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            const dataUrl = ev.target?.result as string;
-            if (dataUrl) {
-              setFollowUpImages(prev => [
-                ...prev,
-                {
-                  id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                  dataUrl,
-                  name: file.name || `screenshot-${Date.now()}.png`,
-                },
-              ]);
-            }
-          };
-          reader.readAsDataURL(file);
-        }
-      }
+  const handleFollowUpPaste = useCallback(async (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length === 0 || isReadingImages) return;
+    setIsReadingImages(true);
+    try {
+      const result = await readImageFiles(files, followUpImages);
+      setFollowUpImages(result.images);
+      setImageError(result.error || null);
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Could not read image');
+    } finally {
+      setIsReadingImages(false);
     }
-  }, []);
+  }, [followUpImages, isReadingImages]);
 
-  const handleFollowUpFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFollowUpFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file.type.startsWith('image/')) continue;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        if (dataUrl) {
-          setFollowUpImages(prev => [
-            ...prev,
-            {
-              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              dataUrl,
-              name: file.name || `image-${Date.now()}.png`,
-            },
-          ]);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (isReadingImages) return;
+    setIsReadingImages(true);
+    try {
+      const result = await readImageFiles(files, followUpImages);
+      setFollowUpImages(result.images);
+      setImageError(result.error || null);
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Could not read image');
+    } finally {
+      setIsReadingImages(false);
+      e.target.value = '';
     }
-    e.target.value = '';
-  }, []);
+  }, [followUpImages, isReadingImages]);
 
   const removeFollowUpImage = useCallback((id: string) => {
     setFollowUpImages(prev => prev.filter(img => img.id !== id));
@@ -643,12 +623,14 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                   onSubmit={(e) => {
                     e.preventDefault();
                     const prompt = continuePrompt.trim();
-                    if (!prompt && followUpImages.length === 0) return;
+                    if ((!prompt && followUpImages.length === 0) || isReadingImages) return;
+                    const effectivePrompt = prompt ||
+                      `Please analyze the ${followUpImages.length} attached image${followUpImages.length === 1 ? '' : 's'}.`;
                     const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
                     // Always send immediately - server/agent handles interrupting running tasks
-                    const optimistic = { content: prompt || 'Image attachment', timestamp: Date.now() };
+                    const optimistic = { content: effectivePrompt, timestamp: Date.now() };
                     setSentMessages(prev => [...prev, optimistic]);
-                    continueTask.mutate({ taskId: task.id, prompt, images: imageBase64s }, {
+                    continueTask.mutate({ taskId: task.id, prompt: effectivePrompt, images: imageBase64s }, {
                       onSuccess: () => {
                         setContinuePrompt('');
                         setFollowUpImages([]);
@@ -678,7 +660,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                         }
                       }}
                       placeholder={stream.followUpQueueSize > 0 ? "Add another message (will be merged)..." : "Follow-up message..."}
-                      disabled={continueTask.isPending}
+                      disabled={continueTask.isPending || isReadingImages}
                       rows={1}
                       className="w-full bg-transparent px-3 py-1 pr-20 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
                     />
@@ -686,7 +668,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       <input
                         ref={followUpFileInputRef}
                         type="file"
-                        accept="image/*"
+                        accept="image/png,image/jpeg,image/gif,image/webp"
                         multiple
                         className="hidden"
                         onChange={handleFollowUpFileSelect}
@@ -694,7 +676,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       <button
                         type="button"
                         onClick={() => followUpFileInputRef.current?.click()}
-                        disabled={continueTask.isPending}
+                        disabled={continueTask.isPending || isReadingImages}
                         className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
                         title="Attach images"
                       >
@@ -706,7 +688,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       />
                       <button
                         type="submit"
-                        disabled={continueTask.isPending || (!continuePrompt.trim() && followUpImages.length === 0)}
+                        disabled={continueTask.isPending || isReadingImages || (!continuePrompt.trim() && followUpImages.length === 0)}
                         className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
                       >
                         <Send size={16} />
@@ -742,6 +724,8 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       </div>
                     </div>
                   )}
+                  {imageError && <p className="text-red-400 text-xs mt-2" role="alert">{imageError}</p>}
+                  {isReadingImages && <p className="text-dark-500 text-xs mt-2">Preparing images…</p>}
                 </form>
                 {continueTask.isError && (
                   <p className="text-red-400 text-xs mt-2" role="alert">

@@ -16,6 +16,7 @@ export const db: DatabaseType = new Database(DB_PATH);
 
 // Enable WAL mode for better performance
 db.pragma('journal_mode = WAL');
+db.pragma('foreign_keys = ON');
 
 // Initialize schema
 db.exec(`
@@ -71,6 +72,12 @@ db.exec(`
     summary TEXT,
     security_warnings TEXT,
     pending_permission TEXT,
+    session_id TEXT,
+    session_runner TEXT,
+    attempt_count INTEGER DEFAULT 0,
+    recovery_count INTEGER DEFAULT 0,
+    last_progress_at TEXT,
+    last_recovery_at TEXT,
     FOREIGN KEY (project_id) REFERENCES projects(id),
     FOREIGN KEY (depends_on) REFERENCES tasks(id)
   );
@@ -83,6 +90,31 @@ db.exec(`
     type TEXT NOT NULL,
     content TEXT NOT NULL,
     FOREIGN KEY (task_id) REFERENCES tasks(id)
+  );
+
+  -- Persist task images outside the task API payload so interrupted executions
+  -- can be resumed without returning large base64 strings in every task list.
+  CREATE TABLE IF NOT EXISTS task_attachments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    byte_size INTEGER NOT NULL,
+    data_url TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    UNIQUE(task_id, position)
+  );
+
+  CREATE TABLE IF NOT EXISTS task_followups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_id INTEGER NOT NULL,
+    prompt TEXT NOT NULL,
+    images TEXT,
+    runner TEXT,
+    model TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
 
   -- Device tokens table (per-device authentication)
@@ -118,6 +150,8 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id);
   CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
   CREATE INDEX IF NOT EXISTS idx_task_logs_task ON task_logs(task_id);
+  CREATE INDEX IF NOT EXISTS idx_task_attachments_task ON task_attachments(task_id);
+  CREATE INDEX IF NOT EXISTS idx_task_followups_task ON task_followups(task_id);
   CREATE INDEX IF NOT EXISTS idx_projects_agent ON projects(agent_id);
   CREATE INDEX IF NOT EXISTS idx_device_tokens_hash ON device_tokens(token_hash);
   CREATE INDEX IF NOT EXISTS idx_agent_tokens_hash ON agent_tokens(token_hash);
@@ -192,6 +226,22 @@ try {
   console.log('Migration: Added model column to tasks table');
 } catch {
   // Column already exists, ignore
+}
+
+for (const migration of [
+  ['session_id', 'TEXT'],
+  ['session_runner', 'TEXT'],
+  ['attempt_count', 'INTEGER DEFAULT 0'],
+  ['recovery_count', 'INTEGER DEFAULT 0'],
+  ['last_progress_at', 'TEXT'],
+  ['last_recovery_at', 'TEXT'],
+] as const) {
+  try {
+    db.exec(`ALTER TABLE tasks ADD COLUMN ${migration[0]} ${migration[1]}`);
+    console.log(`Migration: Added ${migration[0]} column to tasks table`);
+  } catch {
+    // Column already exists, ignore
+  }
 }
 
 // Add last_model column to projects table (per-project last-used model)

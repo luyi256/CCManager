@@ -9,6 +9,7 @@ import { errorResponse } from '../utils/errorResponse.js';
 import { enqueue, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import { validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
+import { getTaskImages, replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
@@ -67,10 +68,11 @@ router.get('/tasks/:id', async (req, res) => {
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
     const { prompt, isPlanMode, runner, model, dependsOn, images } = req.body;
+    const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
     const selectedRunner = parseRunner(runner) ?? 'claude';
     const projectId = req.params.projectId;
 
-    if (!prompt && (!images || images.length === 0)) {
+    if (!normalizedPrompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt or images required' });
     }
 
@@ -91,9 +93,18 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       return res.status(400).json({ message: selectedModel.error });
     }
 
+    let validatedImages: string[];
+    try {
+      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+    }
+    const effectivePrompt = normalizedPrompt ||
+      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
+
     const task = await storage.createTask(projectId, {
       projectId,
-      prompt,
+      prompt: effectivePrompt,
       status: 'pending',
       isPlanMode: isPlanMode || false,
       runner: selectedRunner,
@@ -101,6 +112,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       dependsOn,
       createdAt: new Date().toISOString(),
     });
+    if (validatedImages.length > 0) replaceTaskImages(task.id, validatedImages);
 
     // If project has worktree enabled, set the branch name
     if (project.enableWorktree) {
@@ -110,8 +122,12 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
 
     // Start execution if no dependencies
     if (!dependsOn) {
-      // Try to dispatch first, only update status if successful
       const startedAt = new Date().toISOString();
+      task.attemptCount = (task.attemptCount || 0) + 1;
+      task.lastProgressAt = startedAt;
+      task.status = 'running';
+      task.startedAt = startedAt;
+      await storage.saveTask(projectId, task);
       const dispatched = agentPool.dispatchTask(project.agentId, {
         taskId: task.id,
         projectId: project.id,
@@ -126,18 +142,20 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         postTaskHook: project.postTaskHook,
         extraMounts: project.extraMounts,
         allowedPaths: buildTaskAllowedPaths(project),
-        images: images as string[] | undefined,
+        images: validatedImages.length > 0 ? validatedImages : undefined,
         startedAt,
+        attempt: task.attemptCount,
       });
 
       if (dispatched) {
-        task.status = 'running';
-        task.startedAt = startedAt;
+        // The task was persisted before dispatch so early session events cannot
+        // race with this request and be overwritten.
       } else {
         task.status = 'failed';
         task.error = 'Failed to dispatch task to agent';
+        task.completedAt = new Date().toISOString();
+        await storage.saveTask(projectId, task);
       }
-      await storage.saveTask(projectId, task);
       if (dispatched) await broadcastStreamPhase(task, 'starting');
     }
 
@@ -268,7 +286,11 @@ router.post('/tasks/:id/retry', async (req, res) => {
     // For cancelled tasks, the session might already contain the follow-up prompt
     // (slight risk of duplicate), but losing the user's follow-up message entirely
     // is a much worse experience than a potential duplicate.
-    if (task.continuePrompt && task.gitInfo) {
+    sessionId = task.sessionId;
+    if (sessionId) {
+      prompt = task.continuePrompt || 'Continue the interrupted task from where you left off and finish it.';
+      continueSession = true;
+    } else if (task.continuePrompt && task.gitInfo) {
       try {
         const gitInfo = JSON.parse(task.gitInfo);
         if (gitInfo.sessionId) {
@@ -279,8 +301,18 @@ router.post('/tasks/:id/retry', async (req, res) => {
       } catch { /* ignore parse errors */ }
     }
 
-    // Try to dispatch first, only update status if successful
+    const previousStatus = task.status;
+    const previousStartedAt = task.startedAt;
+    const previousCompletedAt = task.completedAt;
     const startedAt = new Date().toISOString();
+    task.attemptCount = (task.attemptCount || 0) + 1;
+    task.lastProgressAt = startedAt;
+    task.status = 'running';
+    task.error = undefined;
+    task.startedAt = startedAt;
+    task.completedAt = undefined;
+    if (!continueSession) task.continuePrompt = undefined;
+    await storage.saveTask(task.projectId, task);
     const dispatched = agentPool.dispatchTask(project.agentId, {
       taskId: task.id,
       projectId: project.id,
@@ -299,25 +331,21 @@ router.post('/tasks/:id/retry', async (req, res) => {
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: buildTaskAllowedPaths(project),
+      images: getTaskImages(task.id),
       startedAt,
+      attempt: task.attemptCount,
     });
 
     if (!dispatched) {
+      task.status = previousStatus;
+      task.startedAt = previousStartedAt;
+      task.completedAt = previousCompletedAt;
+      await storage.saveTask(task.projectId, task);
       return res.status(503).json({
         message: 'Failed to dispatch task to agent',
       });
     }
 
-    // Reset task only after successful dispatch
-    task.status = 'running';
-    task.error = undefined;
-    task.startedAt = startedAt;
-    task.completedAt = undefined;
-    // Clear stale continuePrompt so future retries don't try to resume old follow-ups
-    if (!continueSession) {
-      task.continuePrompt = undefined;
-    }
-    await storage.saveTask(task.projectId, task);
     await broadcastStreamPhase(task, 'starting');
 
     res.json(task);
@@ -332,10 +360,20 @@ router.post('/tasks/:id/continue', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id, 10);
     const { prompt, images, runner, model } = req.body;
+    const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
 
-    if (!prompt && (!images || images.length === 0)) {
+    if (!normalizedPrompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt or images required' });
     }
+
+    let validatedImages: string[];
+    try {
+      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+    }
+    const effectivePrompt = normalizedPrompt ||
+      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
 
     const task = await storage.getTaskById(taskId);
     if (!task) {
@@ -355,9 +393,13 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
     let sessionRunner: Runner | undefined;
-    if (task.gitInfo) {
+    sessionRunner = task.sessionRunner;
+    let sessionId: string | undefined = task.sessionId;
+    if (!sessionId && task.gitInfo) {
       try {
-        sessionRunner = parseRunner(JSON.parse(task.gitInfo).sessionRunner);
+        const gitInfo = JSON.parse(task.gitInfo);
+        sessionId = typeof gitInfo.sessionId === 'string' ? gitInfo.sessionId : undefined;
+        sessionRunner = parseRunner(gitInfo.sessionRunner);
       } catch {
         // Ignore malformed legacy metadata.
       }
@@ -376,13 +418,13 @@ router.post('/tasks/:id/continue', async (req, res) => {
     // Log the follow-up prompt FIRST so it appears in the timeline
     await storage.appendTaskLog(task.projectId, task.id, {
       type: 'user_message',
-      content: prompt,
+      content: effectivePrompt,
     });
 
     // If task is currently active (running/waiting/etc.), queue instead of dispatching
     const activeStatuses = ['running', 'waiting', 'waiting_permission', 'plan_review'];
     if (activeStatuses.includes(task.status)) {
-      enqueue(taskId, prompt, images as string[] | undefined, nextRunner, nextModel);
+      enqueue(taskId, effectivePrompt, validatedImages.length > 0 ? validatedImages : undefined, nextRunner, nextModel);
       const queued = queueSize(taskId);
       console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
       // Broadcast queue info to frontend
@@ -392,17 +434,6 @@ router.post('/tasks/:id/continue', async (req, res) => {
 
     // Get session ID from gitInfo. Active tasks can accept queued follow-ups before
     // the session ID is available; completed tasks need it to resume immediately.
-    let sessionId: string | undefined;
-    if (task.gitInfo) {
-      try {
-        const gitInfo = JSON.parse(task.gitInfo);
-        sessionId = gitInfo.sessionId;
-        sessionRunner = parseRunner(gitInfo.sessionRunner);
-      } catch {
-        // Ignore parse errors
-      }
-    }
-
     if (!sessionId) {
       return res.status(400).json({ message: 'No session ID found for this task' });
     }
@@ -424,12 +455,15 @@ router.post('/tasks/:id/continue', async (req, res) => {
     const previousCompletedAt = task.completedAt;
     const startedAt = new Date().toISOString();
     task.status = 'running';
-    task.continuePrompt = prompt;
+    task.continuePrompt = effectivePrompt;
     task.runner = nextRunner;
     task.model = nextModel;
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
+    replaceTaskImages(task.id, validatedImages);
+    task.attemptCount = (task.attemptCount || 0) + 1;
+    task.lastProgressAt = startedAt;
     await storage.saveTask(task.projectId, task);
 
     // Dispatch task with continue session (after DB is updated)
@@ -437,7 +471,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       taskId: task.id,
       projectId: project.id,
       projectPath: project.projectPath,
-      prompt: prompt,
+      prompt: effectivePrompt,
       isPlanMode: task.isPlanMode,
       runner: task.runner,
       model: task.model,
@@ -449,8 +483,9 @@ router.post('/tasks/:id/continue', async (req, res) => {
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: buildTaskAllowedPaths(project),
-      images: images as string[] | undefined,
+      images: validatedImages.length > 0 ? validatedImages : undefined,
       startedAt,
+      attempt: task.attemptCount,
     });
 
     if (!dispatched) {

@@ -93,7 +93,7 @@ function streamReducer(state: TaskStreamModel, action: StreamAction): TaskStream
       const phase = phaseForTaskStatus(action.status);
       const preserveLivePhase =
         action.status === 'running' &&
-        (state.phase === 'thinking' || state.phase === 'tool');
+        (state.phase === 'recovering' || state.phase === 'thinking' || state.phase === 'tool');
       return {
         ...state,
         phase: preserveLivePhase ? state.phase : phase || state.phase,

@@ -50,6 +50,7 @@ export type TaskStreamPhase =
   | 'connecting'
   | 'queued'
   | 'starting'
+  | 'recovering'
   | 'thinking'
   | 'tool'
   | 'waiting'
@@ -83,6 +84,7 @@ export interface TaskStreamEvent {
   };
   error?: string;
   replay?: boolean;
+  heartbeat?: boolean;
 }
 
 export interface TaskStreamSnapshot {
@@ -131,6 +133,12 @@ export interface Task {
   summary?: string;
   securityWarnings?: Violation[];
   pendingPermission?: PermissionRequest;
+  sessionId?: string;
+  sessionRunner?: Runner;
+  attemptCount?: number;
+  recoveryCount?: number;
+  lastProgressAt?: string;
+  lastRecoveryAt?: string;
 }
 
 export interface Violation {

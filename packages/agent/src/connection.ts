@@ -1,5 +1,6 @@
 import { io, Socket } from 'socket.io-client';
 import { exec, execSync } from 'child_process';
+import fs from 'fs';
 import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
 import { CodexExecutor } from './codexExecutor.js';
@@ -23,6 +24,7 @@ interface BufferedEvent {
 const HEARTBEAT_INTERVAL_MS = 20000;
 const URL_DISCOVERY_COOLDOWN_MS = 5000;
 const URL_DISCOVERY_TIMEOUT_MS = 10000;
+const HEARTBEAT_FILE = process.env.CCM_AGENT_HEARTBEAT_FILE || '/tmp/ccm-agent-heartbeat.json';
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -357,14 +359,35 @@ export class AgentConnection {
   }
 
   private register(socket: Socket): void {
+    const runningTasks = Array.from(this.executors.entries()).map(([taskId, executor]) => ({
+      taskId,
+      sessionId: 'getSessionId' in executor ? executor.getSessionId() || undefined : undefined,
+    }));
     const info: AgentInfo = {
       agentId: this.config.agentId,
       agentName: this.config.agentName,
       capabilities: this.config.capabilities || [],
       status: 'online',
+      runningTasks,
     };
 
-    socket.emit('register', info);
+    socket.emit('register', info, (data?: {
+      runningTasks?: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+    }) => {
+      if (!data?.runningTasks) return;
+      for (const task of data.runningTasks) {
+        const executor = this.executors.get(task.taskId);
+        if (!executor) continue;
+        const sessionId = 'getSessionId' in executor ? executor.getSessionId() : null;
+        if (!task.sessionId && sessionId) {
+          this.socket?.emit('task:session_id', {
+            taskId: task.taskId,
+            sessionId,
+            startedAt: task.startedAt,
+          });
+        }
+      }
+    });
     console.log(`Registered as: ${this.config.agentName}`);
 
     // Publish active executors immediately, then keep a comfortable margin
@@ -381,6 +404,16 @@ export class AgentConnection {
       runningTasks,
       taskCount: runningTasks.length,
     });
+    try {
+      fs.writeFileSync(HEARTBEAT_FILE, JSON.stringify({
+        timestamp: new Date().toISOString(),
+        connected: true,
+        agentId: this.config.agentId,
+        runningTasks,
+      }));
+    } catch (error) {
+      console.warn('Failed to write agent heartbeat:', error instanceof Error ? error.message : error);
+    }
   }
 
   private startHeartbeat(): void {
@@ -440,6 +473,8 @@ export class AgentConnection {
 
     let executor: Executor | undefined;
     let executionPath = task.projectPath;
+    let progressTimer: NodeJS.Timeout | undefined;
+    let currentPhase: 'thinking' | 'tool' | 'recovering' = task.recovery ? 'recovering' : 'thinking';
 
     try {
       // Validate path (use project-level allowedPaths if provided)
@@ -497,27 +532,60 @@ export class AgentConnection {
 
       // Set up event handlers
       executor.on('output', (text: string) => {
-        this.socket?.emit('task:output', { taskId: task.taskId, text });
+        currentPhase = 'thinking';
+        this.socket?.emit('task:stream', {
+          version: 1,
+          taskId: task.taskId,
+          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
+          kind: 'phase',
+          timestamp: new Date().toISOString(),
+          runId: task.startedAt,
+          phase: 'thinking',
+          heartbeat: true,
+        });
+        this.socket?.emit('task:output', { taskId: task.taskId, text, startedAt: task.startedAt });
       });
 
       executor.on('tool_use', (data) => {
-        this.socket?.emit('task:tool_use', { taskId: task.taskId, ...data });
+        currentPhase = 'tool';
+        this.socket?.emit('task:stream', {
+          version: 1,
+          taskId: task.taskId,
+          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:tool:${Date.now()}`,
+          kind: 'phase',
+          timestamp: new Date().toISOString(),
+          runId: task.startedAt,
+          phase: 'tool',
+          heartbeat: true,
+        });
+        this.socket?.emit('task:tool_use', { taskId: task.taskId, ...data, startedAt: task.startedAt });
       });
 
       executor.on('tool_result', (data) => {
-        this.socket?.emit('task:tool_result', { taskId: task.taskId, ...data });
+        currentPhase = 'thinking';
+        this.socket?.emit('task:stream', {
+          version: 1,
+          taskId: task.taskId,
+          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
+          kind: 'phase',
+          timestamp: new Date().toISOString(),
+          runId: task.startedAt,
+          phase: 'thinking',
+          heartbeat: true,
+        });
+        this.socket?.emit('task:tool_result', { taskId: task.taskId, ...data, startedAt: task.startedAt });
       });
 
       executor.on('plan_question', (data) => {
-        this.socket?.emit('task:plan_question', { taskId: task.taskId, question: data });
+        this.socket?.emit('task:plan_question', { taskId: task.taskId, question: data, startedAt: task.startedAt });
       });
 
       executor.on('permission_request', (data) => {
-        this.socket?.emit('task:permission_request', { taskId: task.taskId, request: data });
+        this.socket?.emit('task:permission_request', { taskId: task.taskId, request: data, startedAt: task.startedAt });
       });
 
       executor.on('error', (error: Error) => {
-        this.socket?.emit('task:error', { taskId: task.taskId, error: error.message });
+        this.socket?.emit('task:error', { taskId: task.taskId, error: error.message, startedAt: task.startedAt });
       });
 
       executor.on('session_id', (sessionId: string) => {
@@ -525,11 +593,34 @@ export class AgentConnection {
           taskId: task.taskId,
           sessionId,
           runner: task.runner ?? 'claude',
+          startedAt: task.startedAt,
+          attempt: task.attempt,
         });
       });
 
       // Execute task (use worktree path if available)
       console.log(`Task ${task.taskId}: Starting execution in ${executionPath}...`);
+      this.socket?.emit('task:stream', {
+        version: 1,
+        taskId: task.taskId,
+        eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
+        kind: 'phase',
+        timestamp: new Date().toISOString(),
+        runId: task.startedAt,
+        phase: task.recovery ? 'recovering' : 'thinking',
+      });
+      progressTimer = setInterval(() => {
+        this.socket?.emit('task:stream', {
+          version: 1,
+          taskId: task.taskId,
+          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:heartbeat:${Date.now()}`,
+          kind: 'phase',
+          timestamp: new Date().toISOString(),
+          runId: task.startedAt,
+          phase: currentPhase,
+          heartbeat: true,
+        });
+      }, 15_000);
       await executor.execute(task, executionPath);
 
       // Check if this execution was superseded by a newer follow-up.
@@ -548,6 +639,7 @@ export class AgentConnection {
         this.socket?.emit('task:output', {
           taskId: task.taskId,
           text: `\n[Post-Task Hook] Running: ${task.postTaskHook}\n`,
+          startedAt: task.startedAt,
         });
         try {
           const { stdout, stderr } = await execAsync(task.postTaskHook, {
@@ -555,10 +647,10 @@ export class AgentConnection {
             timeout: 30000,
           });
           if (stdout) {
-            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stdout}` });
+            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stdout}`, startedAt: task.startedAt });
           }
           if (stderr) {
-            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stderr}` });
+            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stderr}`, startedAt: task.startedAt });
           }
           console.log(`Task ${task.taskId}: Post-task hook completed`);
         } catch (hookError) {
@@ -567,6 +659,7 @@ export class AgentConnection {
           this.socket?.emit('task:output', {
             taskId: task.taskId,
             text: `[Post-Task Hook] Failed: ${msg}\n`,
+            startedAt: task.startedAt,
           });
         }
       }
@@ -593,6 +686,7 @@ export class AgentConnection {
         startedAt: task.startedAt,
       });
     } finally {
+      if (progressTimer) clearInterval(progressTimer);
       // Only clean up if this is still the current executor for this task
       if (executor && this.executors.get(task.taskId) === executor) {
         this.executors.delete(task.taskId);
@@ -717,6 +811,16 @@ export class AgentConnection {
     this.socket?.removeAllListeners();
     this.socket?.disconnect();
     this.socket = null;
+    try {
+      fs.writeFileSync(HEARTBEAT_FILE, JSON.stringify({
+        timestamp: new Date().toISOString(),
+        connected: false,
+        agentId: this.config.agentId,
+        runningTasks: [],
+      }));
+    } catch {
+      // Best-effort shutdown marker.
+    }
   }
 
   get isConnected(): boolean {

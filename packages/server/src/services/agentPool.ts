@@ -29,6 +29,7 @@ class AgentPool {
     agentName: string;
     capabilities: string[];
     executor?: 'local' | 'docker';
+    runningTasks?: Array<{ taskId: number; sessionId?: string }>;
   }): void {
     const agent: ConnectedAgent = {
       socket,
@@ -37,7 +38,7 @@ class AgentPool {
       capabilities: info.capabilities,
       executor: info.executor || 'local',
       status: 'online',
-      runningTasks: [],
+      runningTasks: info.runningTasks?.map((task) => task.taskId) || [],
       lastHeartbeat: Date.now(),
     };
 
@@ -64,8 +65,9 @@ class AgentPool {
     console.log(`Agent registered: ${info.agentName} (${info.agentId})`);
   }
 
-  unregister(agentId: string): void {
+  unregister(agentId: string, socket?: Socket): void {
     const agent = this.agents.get(agentId);
+    if (socket && agent?.socket !== socket) return;
     if (agent) {
       // Disconnect socket to release resources
       try {
@@ -180,6 +182,8 @@ class AgentPool {
     images?: string[];
     startedAt?: string;
     isRetry?: boolean;
+    attempt?: number;
+    recovery?: boolean;
   }): boolean {
     const agent = this.agents.get(agentId);
     if (!agent || agent.status !== 'online') {

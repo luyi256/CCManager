@@ -3,12 +3,7 @@ import { Send, Loader2, AlertCircle, X, Image, Paperclip } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
 import ModelSwitcher from '../Conversation/ModelSwitcher';
 import type { Runner, Task } from '../../types';
-
-interface PastedImage {
-  id: string;
-  dataUrl: string; // data:image/png;base64,...
-  name: string;
-}
+import { readImageFiles, type PendingImage } from '../../utils/images';
 
 interface TaskInputProps {
   onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
@@ -26,7 +21,8 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
   const [model, setModel] = useState(lastModel || '');
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
-  const [images, setImages] = useState<PastedImage[]>([]);
+  const [images, setImages] = useState<PendingImage[]>([]);
+  const [isReadingImages, setIsReadingImages] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Update model when lastModel prop changes (project switch)
@@ -44,80 +40,53 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
     ['pending', 'running', 'waiting', 'waiting_permission', 'plan_review'].includes(t.status)
   );
 
-  const addImagesFromClipboard = useCallback((items: DataTransferItemList) => {
-    const newImages: PastedImage[] = [];
-    for (let i = 0; i < items.length; i++) {
-      const item = items[i];
-      if (item.type.startsWith('image/')) {
-        const file = item.getAsFile();
-        if (!file) continue;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          const dataUrl = e.target?.result as string;
-          if (dataUrl) {
-            setImages((prev) => [
-              ...prev,
-              {
-                id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                dataUrl,
-                name: file.name || `screenshot-${Date.now()}.png`,
-              },
-            ]);
-          }
-        };
-        reader.readAsDataURL(file);
-        newImages.push({ id: '', dataUrl: '', name: '' }); // placeholder to track we found images
-      }
-    }
-    return newImages.length > 0;
-  }, []);
-
   const handlePaste = useCallback(
-    (e: React.ClipboardEvent) => {
-      if (e.clipboardData?.items) {
-        const hasImage = addImagesFromClipboard(e.clipboardData.items);
-        if (hasImage) {
-          // Don't prevent default — allow text paste to still work
-          // Images are handled separately
-        }
+    async (e: React.ClipboardEvent) => {
+      const files = Array.from(e.clipboardData?.items || [])
+        .filter((item) => item.kind === 'file')
+        .map((item) => item.getAsFile())
+        .filter((file): file is File => file !== null);
+      if (files.length === 0) return;
+      if (isReadingImages) return;
+      setIsReadingImages(true);
+      try {
+        const result = await readImageFiles(files, images);
+        setImages(result.images);
+        setError(result.error || null);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : 'Could not read image');
+      } finally {
+        setIsReadingImages(false);
       }
     },
-    [addImagesFromClipboard]
+    [images, isReadingImages]
   );
 
   const removeImage = useCallback((id: string) => {
     setImages((prev) => prev.filter((img) => img.id !== id));
   }, []);
 
-  const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file.type.startsWith('image/')) continue;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        if (dataUrl) {
-          setImages((prev) => [
-            ...prev,
-            {
-              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              dataUrl,
-              name: file.name || `image-${Date.now()}.png`,
-            },
-          ]);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (isReadingImages) return;
+    setIsReadingImages(true);
+    try {
+      const result = await readImageFiles(files, images);
+      setImages(result.images);
+      setError(result.error || null);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : 'Could not read image');
+    } finally {
+      setIsReadingImages(false);
+      // Reset so selecting the same file again triggers onChange
+      e.target.value = '';
     }
-    // Reset so selecting the same file again triggers onChange
-    e.target.value = '';
-  }, []);
+  }, [images, isReadingImages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!prompt.trim() && images.length === 0) || isSubmitting) return;
+    if ((!prompt.trim() && images.length === 0) || isSubmitting || isReadingImages) return;
 
     setError(null);
     try {
@@ -125,7 +94,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
         ? images.map((img) => img.dataUrl)
         : undefined;
       await onSubmit({
-        prompt: prompt.trim(),
+        prompt: prompt.trim() || `Please analyze the ${images.length} attached image${images.length === 1 ? '' : 's'}.`,
         isPlanMode,
         runner,
         model: model || undefined,
@@ -177,7 +146,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
             }}
             placeholder="Describe the coding task..."
             className="input resize-none flex-1"
-            disabled={isSubmitting}
+            disabled={isSubmitting || isReadingImages}
           />
           {/* Pasted image previews */}
           {images.length > 0 && (
@@ -214,7 +183,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/*"
+            accept="image/png,image/jpeg,image/gif,image/webp"
             multiple
             className="hidden"
             onChange={handleFileSelect}
@@ -222,7 +191,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={isSubmitting}
+            disabled={isSubmitting || isReadingImages}
             className="p-2 rounded-lg bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600 transition-colors"
             title="Upload images"
           >
@@ -230,10 +199,10 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           </button>
           <button
             type="submit"
-            disabled={(!prompt.trim() && images.length === 0) || isSubmitting}
+            disabled={(!prompt.trim() && images.length === 0) || isSubmitting || isReadingImages}
             className="btn btn-primary p-2 flex-1 sm:flex-none"
           >
-            {isSubmitting ? (
+            {isSubmitting || isReadingImages ? (
               <Loader2 size={20} className="animate-spin" />
             ) : (
               <Send size={20} />

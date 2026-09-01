@@ -38,7 +38,6 @@ coverage/
 deploy.sh
 start.sh
 tunnel-monitor.sh
-ccm-guardian.sh
 
 # Old build artifacts
 dist.old/

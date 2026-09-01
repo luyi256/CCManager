@@ -1,12 +1,13 @@
 import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
-import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed } from '../services/storage.js';
+import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed, touchTaskProgress } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
 import { dequeue, hasQueued, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import { buildTaskStreamSnapshot, taskLogToStreamEvent } from '../services/taskStream.js';
+import { getTaskImages, replaceTaskImages } from '../services/taskAttachments.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -114,7 +115,15 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
   agentNamespace.on('connection', (socket: Socket) => {
     console.log('Agent connected:', socket.id);
 
-    socket.on('register', async (info) => {
+    socket.on('register', async (info: {
+      agentId: string;
+      agentName: string;
+      capabilities: string[];
+      executor?: 'local' | 'docker';
+      runningTasks?: Array<{ taskId: number; sessionId?: string }>;
+    }, ack?: (data: {
+      runningTasks: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+    }) => void) => {
       agentPool.register(socket, info);
       // Broadcast updated agent list to users
       broadcastAgentList();
@@ -122,21 +131,48 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       // Recover orphaned running tasks for this agent
       try {
         const runningTasks = await getRunningTasksForAgent(info.agentId);
+        const reportedRunning = new Set((info.runningTasks || []).map((task) => task.taskId));
+        ack?.({
+          runningTasks: runningTasks.map(({ task }) => ({
+            taskId: task.id,
+            sessionId: task.sessionId,
+            startedAt: task.startedAt,
+          })),
+        });
         if (runningTasks.length > 0) {
           console.log(`Recovering ${runningTasks.length} orphaned task(s) for agent ${info.agentId}`);
           for (const { task, project } of runningTasks) {
+            if (reportedRunning.has(task.id)) {
+              console.log(`  - Task ${task.id} is still active on the reconnected agent; skipping recovery`);
+              continue;
+            }
             // Use continuePrompt if available (task was in follow-up mode)
-            const prompt = task.continuePrompt || task.prompt;
-            // If task has a session ID and continuePrompt, resume the session
+            let prompt = task.continuePrompt || task.prompt;
+            // Resume any running task whose CLI session ID was persisted. Initial
+            // tasks are resumable too; restricting resume to follow-ups loses all
+            // progress whenever an agent process restarts.
             let sessionId: string | undefined;
             let continueSession = false;
-            if (task.continuePrompt && task.gitInfo) {
+            sessionId = task.sessionId;
+            continueSession = Boolean(sessionId);
+            if (!sessionId && task.gitInfo) {
               try {
                 const gitInfo = JSON.parse(task.gitInfo);
                 sessionId = gitInfo.sessionId;
                 continueSession = !!sessionId;
               } catch { /* ignore */ }
             }
+            if (continueSession) {
+              prompt = 'Continue the interrupted task from where you left off and finish it.';
+            }
+            const recoveredAt = new Date().toISOString();
+            task.attemptCount = (task.attemptCount || 0) + 1;
+            task.recoveryCount = (task.recoveryCount || 0) + 1;
+            task.startedAt = recoveredAt;
+            task.lastRecoveryAt = recoveredAt;
+            task.lastProgressAt = task.lastRecoveryAt;
+            await saveTask(task.projectId, task);
+            await persistAndBroadcastPhase(task.id, 'recovering', task.startedAt);
             const dispatched = agentPool.dispatchTask(info.agentId, {
               taskId: task.id,
               projectId: project.id,
@@ -154,11 +190,20 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
               postTaskHook: project.postTaskHook,
               extraMounts: project.extraMounts,
               allowedPaths: buildTaskAllowedPaths(project),
+              images: getTaskImages(task.id),
+              startedAt: task.startedAt,
+              attempt: task.attemptCount,
+              recovery: true,
             });
             if (dispatched) {
               console.log(`  - Task ${task.id} re-dispatched`);
             } else {
               console.log(`  - Task ${task.id} failed to dispatch`);
+              task.status = 'failed';
+              task.error = 'Failed to recover task after agent reconnect';
+              task.completedAt = new Date().toISOString();
+              await saveTask(task.projectId, task);
+              await persistAndBroadcastPhase(task.id, 'failed', task.startedAt);
             }
           }
         }
@@ -179,6 +224,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (!task) return;
+        if (data.runId && task.startedAt && data.runId !== task.startedAt) return;
+        touchTaskProgress(data.taskId, data.timestamp || new Date().toISOString());
 
         if (data.kind === 'text' && data.text) {
           const log = await appendTaskLog(task.projectId, data.taskId, {
@@ -191,6 +238,10 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
         }
 
         if (data.kind === 'phase' && data.phase) {
+          if (data.heartbeat) {
+            broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, data));
+            return;
+          }
           await persistAndBroadcastPhase(data.taskId, data.phase, data.runId || task.startedAt);
           return;
         }
@@ -250,6 +301,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+          touchTaskProgress(data.taskId);
           const log = await appendTaskLog(task.projectId, data.taskId, { type: 'output', content: data.text });
           const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
           if (event) broadcastToTask(data.taskId, 'task:stream', event);
@@ -264,6 +317,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+          touchTaskProgress(data.taskId);
           const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_use', content: data });
           const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
           if (event) broadcastToTask(data.taskId, 'task:stream', event);
@@ -278,6 +333,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+          touchTaskProgress(data.taskId);
           const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_result', content: data });
           const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
           if (event) broadcastToTask(data.taskId, 'task:stream', event);
@@ -292,6 +349,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+          touchTaskProgress(data.taskId);
           const log = await appendTaskLog(task.projectId, data.taskId, { type: 'plan_question', content: data });
           const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
           if (event) broadcastToTask(data.taskId, 'task:stream', event);
@@ -306,6 +365,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+          touchTaskProgress(data.taskId);
           const log = await appendTaskLog(task.projectId, data.taskId, { type: 'permission_request', content: data });
           const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
           if (event) broadcastToTask(data.taskId, 'task:stream', event);
@@ -320,11 +381,15 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
           // Store session_id in gitInfo field (reusing existing field)
           const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
           gitInfo.sessionId = data.sessionId;
           gitInfo.sessionRunner = data.runner ?? task.runner ?? 'claude';
           task.gitInfo = JSON.stringify(gitInfo);
+          task.sessionId = data.sessionId;
+          task.sessionRunner = data.runner ?? task.runner ?? 'claude';
+          task.lastProgressAt = new Date().toISOString();
           await saveTask(task.projectId, task);
         }
       } catch (error) {
@@ -338,6 +403,10 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
         await new Promise(resolve => setTimeout(resolve, 100));
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
+            console.log(`Ignoring stale completion for task ${data.taskId} run ${data.startedAt}`);
+            return;
+          }
           task.status = 'completed';
           task.completedAt = new Date().toISOString();
           if (data.summary) task.summary = data.summary;
@@ -347,6 +416,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
             gitInfo.sessionId = data.sessionId;
             gitInfo.sessionRunner = task.runner ?? 'claude';
             task.gitInfo = JSON.stringify(gitInfo);
+            task.sessionId = data.sessionId;
+            task.sessionRunner = task.runner ?? 'claude';
           }
           await saveTask(task.projectId, task);
         }
@@ -369,7 +440,9 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
           const mergedPrompt = prompts.join('\n\n');
           let sessionId: string | undefined;
           let sessionRunner: string | undefined;
-          if (task.gitInfo) {
+          sessionId = task.sessionId;
+          sessionRunner = task.sessionRunner;
+          if (!sessionId && task.gitInfo) {
             try {
               const gitInfo = JSON.parse(task.gitInfo);
               sessionId = gitInfo.sessionId;
@@ -393,6 +466,9 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
               task.startedAt = startedAt;
               task.completedAt = undefined;
               task.error = undefined;
+              replaceTaskImages(task.id, allImages);
+              task.attemptCount = (task.attemptCount || 0) + 1;
+              task.lastProgressAt = startedAt;
               await saveTask(task.projectId, task);
 
               console.log(`Task ${data.taskId}: Draining ${prompts.length} queued follow-up(s), resuming session`);
@@ -415,6 +491,7 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
                 allowedPaths: buildTaskAllowedPaths(project),
                 images: allImages.length > 0 ? allImages : undefined,
                 startedAt,
+                attempt: task.attemptCount,
               });
 
               if (dispatched) {
@@ -461,6 +538,10 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       try {
         const task = await getTaskById(data.taskId);
         if (task) {
+          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
+            console.log(`Ignoring stale failure for task ${data.taskId} run ${data.startedAt}`);
+            return;
+          }
           task.status = 'failed';
           task.error = data.error;
           task.completedAt = new Date().toISOString();
@@ -488,7 +569,9 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       }
     });
 
-    socket.on('task:error', (data) => {
+    socket.on('task:error', async (data) => {
+      const task = await getTaskById(data.taskId);
+      if (data.startedAt && task?.startedAt && data.startedAt !== task.startedAt) return;
       broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
         kind: 'error',
         error: data.error,
@@ -531,7 +614,7 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
     socket.on('disconnect', () => {
       const agentId = socket.handshake.auth.agentId;
       if (agentId) {
-        agentPool.unregister(agentId);
+        agentPool.unregister(agentId, socket);
         broadcastAgentList();
       }
       console.log('Agent disconnected:', socket.id);

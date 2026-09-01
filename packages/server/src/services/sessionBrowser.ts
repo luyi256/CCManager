@@ -291,12 +291,24 @@ export function getLinkedTaskIds(projectId: string): Map<string, number> {
   const map = new Map<string, number>();
   try {
     const stmt = db.prepare(
-      'SELECT id, git_info FROM tasks WHERE project_id = ? AND git_info IS NOT NULL'
+      `SELECT id, git_info, session_id, session_runner
+       FROM tasks
+       WHERE project_id = ? AND (session_id IS NOT NULL OR git_info IS NOT NULL)`
     );
-    const rows = stmt.all(projectId) as Array<{ id: number; git_info: string }>;
+    const rows = stmt.all(projectId) as Array<{
+      id: number;
+      git_info: string | null;
+      session_id: string | null;
+      session_runner: string | null;
+    }>;
     for (const row of rows) {
+      if (row.session_id) {
+        if (row.session_runner) map.set(`${row.session_runner}:${row.session_id}`, row.id);
+        else map.set(row.session_id, row.id);
+        continue;
+      }
       try {
-        const info = JSON.parse(row.git_info);
+        const info = JSON.parse(row.git_info || '{}');
         if (info.sessionId) {
           if (typeof info.sessionRunner === 'string') {
             map.set(`${info.sessionRunner}:${info.sessionId}`, row.id);
@@ -314,12 +326,31 @@ function getLinkedTaskSummaries(projectId: string): Map<string, { taskId: number
   const map = new Map<string, { taskId: number; summary?: string; prompt?: string }>();
   try {
     const stmt = db.prepare(
-      'SELECT id, prompt, summary, git_info FROM tasks WHERE project_id = ? AND git_info IS NOT NULL'
+      `SELECT id, prompt, summary, git_info, session_id, session_runner
+       FROM tasks
+       WHERE project_id = ? AND (session_id IS NOT NULL OR git_info IS NOT NULL)`
     );
-    const rows = stmt.all(projectId) as Array<{ id: number; prompt: string; summary: string | null; git_info: string }>;
+    const rows = stmt.all(projectId) as Array<{
+      id: number;
+      prompt: string;
+      summary: string | null;
+      git_info: string | null;
+      session_id: string | null;
+      session_runner: string | null;
+    }>;
     for (const row of rows) {
+      if (row.session_id) {
+        const value = {
+          taskId: row.id,
+          summary: row.summary || undefined,
+          prompt: row.prompt || undefined,
+        };
+        if (row.session_runner) map.set(`${row.session_runner}:${row.session_id}`, value);
+        else map.set(row.session_id, value);
+        continue;
+      }
       try {
-        const info = JSON.parse(row.git_info);
+        const info = JSON.parse(row.git_info || '{}');
         if (info.sessionId) {
           const value = {
             taskId: row.id,

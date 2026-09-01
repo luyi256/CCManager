@@ -17,6 +17,44 @@ const RUNNER_COMMANDS: Record<Runner, string> = {
 };
 const CLAUDE_ALIAS_PATTERN = /'([a-z][a-z0-9-]*)'/g;
 const TCLAUDE_UNAVAILABLE_MODEL = '__ccmanager_model_probe__';
+const CAPABILITY_CACHE_TTL_MS = 30 * 60 * 1000;
+const CAPABILITY_CACHE_PATH = path.join(os.homedir(), '.ccm-agent-model-capabilities.json');
+const capabilityCache = new Map<Runner, { expiresAt: number; capability: string }>();
+
+function loadCapabilityCache(): void {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(CAPABILITY_CACHE_PATH, 'utf8')) as
+      Partial<Record<Runner, { expiresAt?: unknown; capability?: unknown }>>;
+    for (const [runner, value] of Object.entries(parsed)) {
+      if (
+        value &&
+        typeof value.expiresAt === 'number' &&
+        typeof value.capability === 'string'
+      ) {
+        capabilityCache.set(runner as Runner, {
+          expiresAt: value.expiresAt,
+          capability: value.capability,
+        });
+      }
+    }
+  } catch {
+    // No persisted cache yet.
+  }
+}
+
+function persistCapabilityCache(): void {
+  try {
+    fs.writeFileSync(
+      CAPABILITY_CACHE_PATH,
+      JSON.stringify(Object.fromEntries(capabilityCache), null, 2) + '\n',
+      { mode: 0o600 },
+    );
+  } catch (error) {
+    console.warn('[models] Failed to persist capability cache:', error instanceof Error ? error.message : error);
+  }
+}
+
+loadCapabilityCache();
 
 interface CodexModel {
   slug?: unknown;
@@ -259,6 +297,9 @@ async function listRunnerModels(runner: Runner): Promise<string[]> {
 export async function discoverRunnerModelCapabilities(): Promise<string[]> {
   const runners = Object.keys(RUNNER_COMMANDS) as Runner[];
   const entries = await Promise.all(runners.map(async (runner) => {
+    const cached = capabilityCache.get(runner);
+    if (cached && cached.expiresAt > Date.now()) return cached.capability;
+
     let catalog: RunnerModelCatalog;
     try {
       catalog = {
@@ -283,7 +324,13 @@ export async function discoverRunnerModelCapabilities(): Promise<string[]> {
         } : {}),
       };
     }
-    return `models:${runner}:${JSON.stringify(catalog)}`;
+    const capability = `models:${runner}:${JSON.stringify(catalog)}`;
+    capabilityCache.set(runner, {
+      expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS,
+      capability,
+    });
+    persistCapabilityCache();
+    return capability;
   }));
   return entries;
 }

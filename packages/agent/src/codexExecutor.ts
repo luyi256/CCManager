@@ -17,6 +17,7 @@ export class CodexExecutor extends EventEmitter {
   private collectedOutput = ''; // Track output for auth-failure detection
   private fatalError: Error | null = null;
   private streamedItemText = new Map<string, string>();
+  private processGroupId: number | null = null;
 
   constructor(private taskTimeout: number = DEFAULT_TASK_TIMEOUT, private command = 'codex') {
     super();
@@ -93,7 +94,9 @@ export class CodexExecutor extends EventEmitter {
         cwd,
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
+        detached: process.platform !== 'win32',
       });
+      this.processGroupId = this.process.pid || null;
 
       // Set execution timeout
       this.timeoutHandle = setTimeout(() => {
@@ -154,6 +157,7 @@ export class CodexExecutor extends EventEmitter {
         if (this.fatalError) {
           const error = this.fatalError;
           this.process = null;
+          this.processGroupId = null;
           this.currentTaskId = null;
           this.fatalError = null;
           reject(error);
@@ -169,6 +173,7 @@ export class CodexExecutor extends EventEmitter {
           );
           this.emit('error', authError);
           this.process = null;
+          this.processGroupId = null;
           this.currentTaskId = null;
           reject(authError);
           return;
@@ -179,6 +184,7 @@ export class CodexExecutor extends EventEmitter {
           const error = new Error(`${this.command} exited with code ${code}`);
           this.emit('error', error);
           this.process = null;
+          this.processGroupId = null;
           this.currentTaskId = null;
           reject(error);
           return;
@@ -186,6 +192,7 @@ export class CodexExecutor extends EventEmitter {
 
         this.emit('exit', code);
         this.process = null;
+        this.processGroupId = null;
         this.currentTaskId = null;
         resolve();
       });
@@ -213,6 +220,9 @@ export class CodexExecutor extends EventEmitter {
             this.sessionId = event.thread_id;
             this.emit('session_id', event.thread_id);
           }
+          break;
+
+        case 'turn.started':
           break;
 
         case 'item.started':
@@ -287,10 +297,21 @@ export class CodexExecutor extends EventEmitter {
       this.timeoutHandle = null;
     }
     if (this.process) {
-      this.process.kill('SIGTERM');
+      const processGroupId = this.processGroupId;
+      try {
+        if (processGroupId && process.platform !== 'win32') process.kill(-processGroupId, 'SIGTERM');
+        else this.process.kill('SIGTERM');
+      } catch {
+        this.process.kill('SIGTERM');
+      }
       setTimeout(() => {
         if (this.process) {
-          this.process.kill('SIGKILL');
+          try {
+            if (processGroupId && process.platform !== 'win32') process.kill(-processGroupId, 'SIGKILL');
+            else this.process.kill('SIGKILL');
+          } catch {
+            this.process.kill('SIGKILL');
+          }
         }
       }, 5000);
     }

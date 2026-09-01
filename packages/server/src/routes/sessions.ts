@@ -5,9 +5,12 @@ import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions, searchSessions, cleanUserMessage, isCommandMessage, isContinuationMessage } from '../services/sessionBrowser.js';
 import type { SessionListItem, SessionDetail, SessionTimelineEntry } from '../services/sessionBrowser.js';
 import type { Runner } from '../types/index.js';
+import { replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
 
 const router = Router();
 const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const ACTIVE_SESSION_CACHE_TTL_MS = 15_000;
+const activeSessionCache = new Map<string, { expiresAt: number; sessions: SessionListItem[] }>();
 
 function parseRunner(value: unknown): Runner | undefined {
   return typeof value === 'string' && VALID_RUNNERS.has(value as Runner)
@@ -151,12 +154,18 @@ async function fetchSessionDetail(
 }
 
 async function fetchActiveSessionList(project: { id: string; projectPath: string; agentId: string }): Promise<SessionListItem[]> {
+  const cached = activeSessionCache.get(project.id);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.sessions.map((session) => ({ ...session }));
+  }
   const local = await listActiveSessions(project.projectPath, project.id);
   console.log(`[sessions] local active for ${project.id}: ${local.length} sessions`);
   const agent = agentPool.getAgent(project.agentId);
   if (!agent) {
     console.log(`[sessions] agent ${project.agentId} not connected for active`);
-    return combineSessions(attachLinkedTasks(project.id, local));
+    const sessions = combineSessions(attachLinkedTasks(project.id, local));
+    activeSessionCache.set(project.id, { expiresAt: Date.now() + ACTIVE_SESSION_CACHE_TTL_MS, sessions });
+    return sessions;
   }
 
   try {
@@ -167,15 +176,23 @@ async function fetchActiveSessionList(project: { id: string; projectPath: string
       error?: string;
     };
     console.log(`[sessions] active agent response: ok=${result.ok}, sessions=${result.sessions?.length ?? 'undefined'}, error=${result.error}`);
-    if (!result.ok || !result.sessions) return combineSessions(attachLinkedTasks(project.id, local));
+    if (!result.ok || !result.sessions) {
+      const sessions = combineSessions(attachLinkedTasks(project.id, local));
+      activeSessionCache.set(project.id, { expiresAt: Date.now() + ACTIVE_SESSION_CACHE_TTL_MS, sessions });
+      return sessions;
+    }
     result.sessions = normalizeAgentSessions(result.sessions);
 
     // Clean agent-returned data (safety net)
     cleanSessionList(result.sessions);
 
-    return combineSessions(attachLinkedTasks(project.id, local), attachLinkedTasks(project.id, result.sessions));
+    const sessions = combineSessions(attachLinkedTasks(project.id, local), attachLinkedTasks(project.id, result.sessions));
+    activeSessionCache.set(project.id, { expiresAt: Date.now() + ACTIVE_SESSION_CACHE_TTL_MS, sessions });
+    return sessions;
   } catch {
-    return combineSessions(attachLinkedTasks(project.id, local));
+    const sessions = combineSessions(attachLinkedTasks(project.id, local));
+    activeSessionCache.set(project.id, { expiresAt: Date.now() + ACTIVE_SESSION_CACHE_TTL_MS, sessions });
+    return sessions;
   }
 }
 
@@ -298,7 +315,8 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
 router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res) => {
   try {
     const { prompt, images, runner, model } = req.body;
-    if (!prompt && (!images || images.length === 0)) {
+    const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+    if (!normalizedPrompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt required' });
     }
 
@@ -309,6 +327,14 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
 
     const sessionId = req.params.sessionId;
     const selectedRunner = parseRunner(runner) ?? 'claude';
+    let validatedImages: string[];
+    try {
+      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+    }
+    const effectivePrompt = normalizedPrompt ||
+      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
 
     // Check agent
     const agent = agentPool.getAgent(project.agentId);
@@ -319,7 +345,7 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
     // Create a new task with sessionId pre-set
     const task = await storage.createTask(project.id, {
       projectId: project.id,
-      prompt,
+      prompt: effectivePrompt,
       status: 'pending',
       isPlanMode: false,
       runner: selectedRunner,
@@ -329,8 +355,13 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
 
     // Set the sessionId in gitInfo so the agent knows to --resume
     task.gitInfo = JSON.stringify({ sessionId, sessionRunner: selectedRunner });
+    task.sessionId = sessionId;
+    task.sessionRunner = selectedRunner;
+    if (validatedImages.length > 0) replaceTaskImages(task.id, validatedImages);
     task.status = 'running';
     task.startedAt = new Date().toISOString();
+    task.attemptCount = 1;
+    task.lastProgressAt = task.startedAt;
     await storage.saveTask(project.id, task);
 
     // Dispatch with continueSession
@@ -338,7 +369,7 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       taskId: task.id,
       projectId: project.id,
       projectPath: project.projectPath,
-      prompt,
+      prompt: effectivePrompt,
       isPlanMode: false,
       runner: selectedRunner,
       model: task.model,
@@ -349,7 +380,9 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: buildTaskAllowedPaths(project),
-      images: images as string[] | undefined,
+      images: validatedImages.length > 0 ? validatedImages : undefined,
+      startedAt: task.startedAt,
+      attempt: task.attemptCount,
     });
 
     if (!dispatched) {
@@ -416,6 +449,8 @@ router.post('/projects/:projectId/sessions/:sessionId/adopt', async (req, res) =
       createdAt,
     });
     task.gitInfo = JSON.stringify({ sessionId, sessionRunner: runner });
+    task.sessionId = sessionId;
+    task.sessionRunner = runner;
     task.completedAt = new Date().toISOString();
     await storage.saveTask(project.id, task);
 

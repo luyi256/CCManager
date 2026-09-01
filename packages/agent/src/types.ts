@@ -48,6 +48,8 @@ export interface TaskRequest {
   allowedPaths?: string[]; // Per-project allowed paths override
   images?: string[]; // base64 data URLs for screenshots
   startedAt?: string; // Dispatch timestamp for stale event detection
+  attempt?: number;
+  recovery?: boolean;
 }
 
 export interface TaskOutput {
@@ -69,6 +71,7 @@ export interface AgentInfo {
   capabilities: string[];
   executor?: 'local' | 'docker';
   status: 'online' | 'busy';
+  runningTasks?: Array<{ taskId: number; sessionId?: string }>;
 }
 
 export interface MergeResult {

@@ -50,6 +50,7 @@ export type TaskStreamPhase =
   | 'connecting'
   | 'queued'
   | 'starting'
+  | 'recovering'
   | 'thinking'
   | 'tool'
   | 'waiting'
@@ -85,6 +86,7 @@ export interface TaskStreamEvent {
   };
   error?: string;
   replay?: boolean;
+  heartbeat?: boolean;
 }
 
 export interface TaskStreamSnapshot {
@@ -133,6 +135,12 @@ export interface Task {
   summary?: string;
   securityWarnings?: Violation[];
   pendingPermission?: PermissionRequest;
+  sessionId?: string;
+  sessionRunner?: Runner;
+  attemptCount?: number;
+  recoveryCount?: number;
+  lastProgressAt?: string;
+  lastRecoveryAt?: string;
 }
 
 export interface Violation {
@@ -202,6 +210,8 @@ export interface ServerToAgentEvents {
     allowedPaths?: string[];
     images?: string[];
     startedAt?: string;
+    attempt?: number;
+    recovery?: boolean;
   }) => void;
   'task:input': (data: { taskId: number; input: string }) => void;
   'task:cancel': (data: { taskId: number }) => void;
@@ -215,18 +225,19 @@ export interface AgentToServerEvents {
     agentName: string;
     capabilities: string[];
     executor?: 'local' | 'docker';
-  }) => void;
+    runningTasks?: Array<{ taskId: number; sessionId?: string }>;
+  }, ack?: (data: { runningTasks: Array<{ taskId: number; sessionId?: string; startedAt?: string }> }) => void) => void;
   status: (data: { status: 'online' | 'busy'; taskId?: number; runningTasks?: number[]; taskCount?: number }) => void;
   'task:stream': (data: TaskStreamEvent) => void;
-  'task:output': (data: { taskId: number; text: string }) => void;
-  'task:tool_use': (data: { taskId: number; id: string; name: string; input: unknown }) => void;
-  'task:tool_result': (data: { taskId: number; id: string; result: unknown }) => void;
-  'task:plan_question': (data: { taskId: number; question: unknown }) => void;
-  'task:permission_request': (data: { taskId: number; request: unknown }) => void;
-  'task:session_id': (data: { taskId: number; sessionId: string; runner?: Runner }) => void;
+  'task:output': (data: { taskId: number; text: string; startedAt?: string }) => void;
+  'task:tool_use': (data: { taskId: number; id: string; name: string; input: unknown; startedAt?: string }) => void;
+  'task:tool_result': (data: { taskId: number; id: string; result: unknown; startedAt?: string }) => void;
+  'task:plan_question': (data: { taskId: number; question: unknown; startedAt?: string }) => void;
+  'task:permission_request': (data: { taskId: number; request: unknown; startedAt?: string }) => void;
+  'task:session_id': (data: { taskId: number; sessionId: string; runner?: Runner; startedAt?: string; attempt?: number }) => void;
   'task:completed': (data: { taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }) => void;
   'task:failed': (data: { taskId: number; error: string; startedAt?: string }) => void;
-  'task:error': (data: { taskId: number; error: string }) => void;
+  'task:error': (data: { taskId: number; error: string; startedAt?: string }) => void;
   'task:merge-result': (data: { taskId: number; success: boolean; mergeCommit?: string; conflicts?: string[]; error?: string }) => void;
   'task:worktree-cleaned': (data: { taskId: number; branch: string }) => void;
 }

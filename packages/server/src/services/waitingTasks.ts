@@ -1,5 +1,6 @@
 import cron from 'node-cron';
 import * as storage from './storage.js';
+import { getTaskImages } from './taskAttachments.js';
 import { agentPool } from './agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { buildTaskAllowedPaths } from './pathValidation.js';
@@ -103,9 +104,19 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
   task.waitingUntil = undefined;
   task.checkCommand = undefined;
   task.startedAt = new Date().toISOString();
+  task.attemptCount = (task.attemptCount || 0) + 1;
+  task.lastProgressAt = task.startedAt;
   await storage.saveTask(projectId, task);
 
   // Dispatch to agent with continue prompt
+  let sessionId = task.sessionId;
+  if (!sessionId && task.gitInfo) {
+    try {
+      sessionId = JSON.parse(task.gitInfo).sessionId;
+    } catch {
+      // Ignore malformed legacy metadata.
+    }
+  }
   const dispatched = agentPool.dispatchTask(project.agentId, {
     taskId: task.id,
     projectId: project.id,
@@ -115,12 +126,17 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     runner: task.runner,
     model: task.model,
     skipModelValidation: true,
+    continueSession: Boolean(sessionId),
+    sessionId,
     executor: project.executor,
     worktreeBranch: task.worktreeBranch,
     dockerImage: project.dockerImage,
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
     allowedPaths: buildTaskAllowedPaths(project),
+    images: getTaskImages(task.id),
+    startedAt: task.startedAt,
+    attempt: task.attemptCount,
   });
 
   if (dispatched) {
@@ -170,6 +186,12 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
           }
 
           // Try to dispatch first, only update status if successful (consistent with other fixes)
+          const startedAt = new Date().toISOString();
+          currentTask.attemptCount = (currentTask.attemptCount || 0) + 1;
+          currentTask.lastProgressAt = startedAt;
+          currentTask.status = 'running';
+          currentTask.startedAt = startedAt;
+          await storage.saveTask(project.id, currentTask);
           const dispatched = agentPool.dispatchTask(project.agentId, {
             taskId: currentTask.id,
             projectId: project.id,
@@ -185,14 +207,18 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
             allowedPaths: buildTaskAllowedPaths(project),
+            images: getTaskImages(currentTask.id),
+            startedAt,
+            attempt: currentTask.attemptCount,
           });
 
           if (dispatched) {
-            currentTask.status = 'running';
-            currentTask.startedAt = new Date().toISOString();
-            await storage.saveTask(project.id, currentTask);
             // Broadcast status change so UI updates immediately
             broadcast(currentTask.id, { type: 'task:status', taskId: currentTask.id, status: 'running' });
+          } else {
+            currentTask.status = 'pending';
+            currentTask.startedAt = undefined;
+            await storage.saveTask(project.id, currentTask);
           }
         } finally {
           releaseLock(task.id);

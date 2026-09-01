@@ -16,8 +16,9 @@ export function useActiveSessions(projectId: string) {
     queryKey: ['sessions', 'active', projectId],
     queryFn: () => api.getActiveSessions(projectId),
     enabled: !!projectId,
-    staleTime: 10_000,
-    refetchInterval: 10_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
+    refetchIntervalInBackground: false,
   });
 }
 

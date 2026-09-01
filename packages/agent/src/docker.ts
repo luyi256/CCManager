@@ -19,6 +19,7 @@ export class DockerExecutor extends EventEmitter {
   private taskTimeout: number;
   private sessionId: string | null = null;
   private hasStreamedDelta = false;
+  private tempImageFiles: string[] = [];
 
   constructor(private config: DockerConfig) {
     super();
@@ -33,6 +34,7 @@ export class DockerExecutor extends EventEmitter {
     this.currentTaskId = task.taskId;
     this.sessionId = null;
     this.hasStreamedDelta = false;
+    this.tempImageFiles = [];
 
     const containerName = `ccm-task-${task.taskId}-${Date.now()}`;
     this.containerName = containerName;
@@ -86,6 +88,27 @@ export class DockerExecutor extends EventEmitter {
     args.push('-v', `${sessionsDir}:/home/ccm:rw`);
     args.push('-e', 'HOME=/home/ccm');
 
+    let prompt = task.prompt;
+    if (task.images?.length) {
+      const attachmentDir = path.join(sessionsDir, '.ccm-attachments');
+      fs.mkdirSync(attachmentDir, { recursive: true });
+      const containerPaths: string[] = [];
+      for (let index = 0; index < task.images.length; index++) {
+        const match = task.images[index].match(/^data:image\/(png|jpeg|gif|webp);base64,(.+)$/);
+        if (!match) continue;
+        const extension = match[1] === 'jpeg' ? 'jpg' : match[1];
+        const filename = `task-${task.taskId}-${Date.now()}-${index}.${extension}`;
+        const hostPath = path.join(attachmentDir, filename);
+        fs.writeFileSync(hostPath, Buffer.from(match[2], 'base64'));
+        this.tempImageFiles.push(hostPath);
+        containerPaths.push(`/home/ccm/.ccm-attachments/${filename}`);
+      }
+      if (containerPaths.length > 0) {
+        prompt += `\n\nI've attached ${containerPaths.length} screenshot(s). Please read and analyze them:\n`;
+        prompt += containerPaths.map((imagePath) => `- ${imagePath}`).join('\n');
+      }
+    }
+
     // Copy host credentials so Claude CLI can authenticate inside the container
     const hostCredentials = path.join(os.homedir(), '.claude', '.credentials.json');
     if (fs.existsSync(hostCredentials)) {
@@ -121,7 +144,7 @@ export class DockerExecutor extends EventEmitter {
 
     // Claude CLI arguments (after the image, these become the CMD)
     const isContinue = !!(task.continueSession && task.sessionId);
-    args.push('-p', task.prompt);
+    args.push('-p', prompt);
     args.push('--output-format', 'stream-json', '--verbose');
 
     if (task.model) {
@@ -138,7 +161,18 @@ export class DockerExecutor extends EventEmitter {
 
     args.push('--dangerously-skip-permissions');
 
-    return this.runDocker(args);
+    try {
+      await this.runDocker(args);
+    } finally {
+      for (const tempImage of this.tempImageFiles) {
+        try {
+          fs.unlinkSync(tempImage);
+        } catch {
+          // Ignore cleanup errors.
+        }
+      }
+      this.tempImageFiles = [];
+    }
   }
 
   private getSessionsDir(projectId: string): string {

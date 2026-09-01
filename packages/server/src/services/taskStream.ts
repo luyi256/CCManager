@@ -72,7 +72,7 @@ export function taskLogToStreamEvent(
     const phase = content.phase;
     if (
       typeof phase !== 'string' ||
-      !['connecting', 'queued', 'starting', 'thinking', 'tool', 'waiting', 'completed', 'failed', 'cancelled'].includes(phase)
+      !['connecting', 'queued', 'starting', 'recovering', 'thinking', 'tool', 'waiting', 'completed', 'failed', 'cancelled'].includes(phase)
     ) return null;
     return {
       ...base,

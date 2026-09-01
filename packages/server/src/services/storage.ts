@@ -234,6 +234,8 @@ export async function saveProject(project: Omit<Project, 'taskCount' | 'runningC
 }
 
 export async function deleteProject(projectId: string): Promise<void> {
+  db.prepare('DELETE FROM task_attachments WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
+  db.prepare('DELETE FROM task_followups WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
   // Delete task logs first
   db.prepare('DELETE FROM task_logs WHERE task_id IN (SELECT id FROM tasks WHERE project_id = ?)').run(projectId);
   // Delete tasks
@@ -264,10 +266,21 @@ export async function getTaskById(taskId: number): Promise<Task | null> {
   return rowToTask(row as Parameters<typeof rowToTask>[0]);
 }
 
+export function touchTaskProgress(taskId: number, timestamp = new Date().toISOString()): void {
+  db.prepare(`
+    UPDATE tasks
+    SET last_progress_at = ?
+    WHERE id = ?
+  `).run(timestamp, taskId);
+}
+
 // Get all running tasks for a specific agent (for recovery after restart)
 export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ task: Task; project: Project }>> {
   const stmt = db.prepare(`
-    SELECT t.*, p.id as p_id, p.name as p_name, p.agent_id, p.project_path, p.security_mode, p.auth_type, p.post_task_hook, p.extra_mounts, p.allowed_paths
+    SELECT t.*, p.id as p_id, p.name as p_name, p.agent_id, p.project_path,
+           p.security_mode, p.auth_type, p.executor AS p_executor,
+           p.docker_image, p.enable_worktree, p.post_task_hook,
+           p.extra_mounts, p.allowed_paths
     FROM tasks t
     JOIN projects p ON t.project_id = p.id
     WHERE p.agent_id = ? AND t.status = 'running'
@@ -280,6 +293,9 @@ export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ 
     project_path: string;
     security_mode: string;
     auth_type: string;
+    p_executor: string | null;
+    docker_image: string | null;
+    enable_worktree: number;
     post_task_hook: string | null;
     extra_mounts: string | null;
     allowed_paths: string | null;
@@ -294,9 +310,11 @@ export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ 
       projectPath: row.project_path,
       securityMode: row.security_mode as 'auto' | 'safe',
       authType: row.auth_type as 'oauth' | 'apikey',
+      executor: (row.p_executor as 'local' | 'docker') || 'local',
+      dockerImage: row.docker_image || undefined,
       postTaskHook: row.post_task_hook || undefined,
       extraMounts: safeJsonParse(row.extra_mounts),
-      enableWorktree: (row as unknown as { enable_worktree: number }).enable_worktree === 1,
+      enableWorktree: row.enable_worktree === 1,
       allowedPaths: safeJsonParse(row.allowed_paths),
       createdAt: '',
       taskCount: 0,
@@ -338,6 +356,12 @@ function rowToTask(row: {
   summary: string | null;
   security_warnings: string | null;
   pending_permission: string | null;
+  session_id: string | null;
+  session_runner: string | null;
+  attempt_count: number | null;
+  recovery_count: number | null;
+  last_progress_at: string | null;
+  last_recovery_at: string | null;
 }): Task {
   return {
     id: row.id,
@@ -362,6 +386,12 @@ function rowToTask(row: {
     summary: row.summary || undefined,
     securityWarnings: safeJsonParse(row.security_warnings),
     pendingPermission: safeJsonParse(row.pending_permission),
+    sessionId: row.session_id || undefined,
+    sessionRunner: (row.session_runner as Task['sessionRunner']) || undefined,
+    attemptCount: row.attempt_count || 0,
+    recoveryCount: row.recovery_count || 0,
+    lastProgressAt: row.last_progress_at || undefined,
+    lastRecoveryAt: row.last_recovery_at || undefined,
   };
 }
 
@@ -370,8 +400,9 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     INSERT INTO tasks (
       id, project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
       created_at, started_at, completed_at, error, waiting_until, wait_reason,
-      check_command, continue_prompt, git_info, summary, security_warnings, pending_permission
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      check_command, continue_prompt, git_info, summary, security_warnings, pending_permission,
+      session_id, session_runner, attempt_count, recovery_count, last_progress_at, last_recovery_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       runner = excluded.runner,
@@ -386,7 +417,13 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
       git_info = excluded.git_info,
       summary = excluded.summary,
       security_warnings = excluded.security_warnings,
-      pending_permission = excluded.pending_permission
+      pending_permission = excluded.pending_permission,
+      session_id = excluded.session_id,
+      session_runner = excluded.session_runner,
+      attempt_count = excluded.attempt_count,
+      recovery_count = excluded.recovery_count,
+      last_progress_at = excluded.last_progress_at,
+      last_recovery_at = excluded.last_recovery_at
   `);
   stmt.run(
     task.id,
@@ -409,7 +446,13 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     task.gitInfo || (task.git ? JSON.stringify(task.git) : null),
     task.summary || null,
     task.securityWarnings ? JSON.stringify(task.securityWarnings) : null,
-    task.pendingPermission ? JSON.stringify(task.pendingPermission) : null
+    task.pendingPermission ? JSON.stringify(task.pendingPermission) : null,
+    task.sessionId || null,
+    task.sessionRunner || null,
+    task.attemptCount || 0,
+    task.recoveryCount || 0,
+    task.lastProgressAt || null,
+    task.lastRecoveryAt || null
   );
 
   // Update project last_activity
@@ -420,8 +463,10 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
   const stmt = db.prepare(`
     INSERT INTO tasks (
       project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
-      created_at, started_at, completed_at, error
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      created_at, started_at, completed_at, error, session_id, session_runner,
+      attempt_count, recovery_count,
+      last_progress_at, last_recovery_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     projectId,
@@ -435,7 +480,13 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
     task.createdAt,
     task.startedAt || null,
     task.completedAt || null,
-    task.error || null
+    task.error || null,
+    task.sessionId || null,
+    task.sessionRunner || null,
+    task.attemptCount || 0,
+    task.recoveryCount || 0,
+    task.lastProgressAt || null,
+    task.lastRecoveryAt || null
   );
 
   // Update project last_activity

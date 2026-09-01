@@ -35,6 +35,7 @@ const PHASE_META: Record<TaskStreamPhase, {
   connecting: { label: 'Connecting to live updates', className: 'text-dark-400', icon: Wifi },
   queued: { label: 'Queued', className: 'text-amber-400', icon: Clock3 },
   starting: { label: 'Starting runner', className: 'text-blue-400', icon: Loader2, spin: true },
+  recovering: { label: 'Recovering after reconnect', className: 'text-amber-400', icon: Loader2, spin: true },
   thinking: { label: 'Thinking', className: 'text-purple-400', icon: Brain },
   tool: { label: 'Using tools', className: 'text-green-400', icon: Wrench },
   waiting: { label: 'Waiting for input', className: 'text-amber-400', icon: Clock3 },

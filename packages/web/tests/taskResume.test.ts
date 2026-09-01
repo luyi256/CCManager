@@ -18,6 +18,10 @@ describe('task follow-up availability', () => {
     assert.equal(canSendFollowUpForTask(task), true);
   });
 
+  it('recognizes the dedicated persisted session id', () => {
+    assert.equal(hasResumeSession({ sessionId: 'session-258' }), true);
+  });
+
   it('keeps follow-up visible after completion even before refreshed session metadata arrives', () => {
     assert.equal(canSendFollowUpForTask({ status: 'completed' }), true);
   });

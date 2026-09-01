@@ -33,12 +33,7 @@ import {
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
 import { getTimestamp } from '../../utils/dateTime';
 import { useWebSocket } from '../../contexts/WebSocketContext';
-
-interface PastedImage {
-  id: string;
-  dataUrl: string;
-  name: string;
-}
+import { readImageFiles, type PendingImage } from '../../utils/images';
 
 function formatDate(date: unknown): string {
   if (!date) return 'Unknown';
@@ -49,6 +44,16 @@ function formatDate(date: unknown): string {
   } catch {
     return 'Invalid date';
   }
+}
+
+function formatElapsed(totalSeconds: number): string {
+  const seconds = Math.max(0, Math.floor(totalSeconds));
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const remainder = seconds % 60;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${remainder}s`;
+  return `${remainder}s`;
 }
 
 interface ConversationPanelProps {
@@ -83,7 +88,9 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
   const [continuePrompt, setContinuePrompt] = useState('');
-  const [followUpImages, setFollowUpImages] = useState<PastedImage[]>([]);
+  const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
+  const [imageError, setImageError] = useState<string | null>(null);
+  const [isReadingImages, setIsReadingImages] = useState(false);
   const followUpFileInputRef = useRef<HTMLInputElement>(null);
 
   // Model switching state for follow-up
@@ -92,6 +99,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   );
   const [followUpModel, setFollowUpModel] = useState(task.model || '');
   const sessionRunner = useMemo<Runner | undefined>(() => {
+    if (task.sessionId) return task.sessionRunner || task.runner || 'claude';
     if (!task.gitInfo) return undefined;
     try {
       const metadata = JSON.parse(task.gitInfo) as { sessionId?: unknown; sessionRunner?: unknown };
@@ -102,7 +110,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     } catch {
       return undefined;
     }
-  }, [task.gitInfo, task.runner]);
+  }, [task.gitInfo, task.runner, task.sessionId, task.sessionRunner]);
   const runnerLocked = Boolean(
     sessionRunner &&
     ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)
@@ -113,57 +121,41 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     setFollowUpModel(task.model || '');
   }, [task.id, task.runner, task.model, sessionRunner, runnerLocked]);
 
-  const handleFollowUpPaste = useCallback((e: React.ClipboardEvent) => {
-    if (e.clipboardData?.items) {
-      for (let i = 0; i < e.clipboardData.items.length; i++) {
-        const item = e.clipboardData.items[i];
-        if (item.type.startsWith('image/')) {
-          const file = item.getAsFile();
-          if (!file) continue;
-          const reader = new FileReader();
-          reader.onload = (ev) => {
-            const dataUrl = ev.target?.result as string;
-            if (dataUrl) {
-              setFollowUpImages(prev => [
-                ...prev,
-                {
-                  id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-                  dataUrl,
-                  name: file.name || `screenshot-${Date.now()}.png`,
-                },
-              ]);
-            }
-          };
-          reader.readAsDataURL(file);
-        }
-      }
+  const handleFollowUpPaste = useCallback(async (e: React.ClipboardEvent) => {
+    const files = Array.from(e.clipboardData?.items || [])
+      .filter((item) => item.kind === 'file')
+      .map((item) => item.getAsFile())
+      .filter((file): file is File => file !== null);
+    if (files.length === 0) return;
+    if (isReadingImages) return;
+    setIsReadingImages(true);
+    try {
+      const result = await readImageFiles(files, followUpImages);
+      setFollowUpImages(result.images);
+      setImageError(result.error || null);
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Could not read image');
+    } finally {
+      setIsReadingImages(false);
     }
-  }, []);
+  }, [followUpImages, isReadingImages]);
 
-  const handleFollowUpFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  const handleFollowUpFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
-      if (!file.type.startsWith('image/')) continue;
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        if (dataUrl) {
-          setFollowUpImages(prev => [
-            ...prev,
-            {
-              id: `img-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              dataUrl,
-              name: file.name || `image-${Date.now()}.png`,
-            },
-          ]);
-        }
-      };
-      reader.readAsDataURL(file);
+    if (isReadingImages) return;
+    setIsReadingImages(true);
+    try {
+      const result = await readImageFiles(files, followUpImages);
+      setFollowUpImages(result.images);
+      setImageError(result.error || null);
+    } catch (error) {
+      setImageError(error instanceof Error ? error.message : 'Could not read image');
+    } finally {
+      setIsReadingImages(false);
+      e.target.value = '';
     }
-    e.target.value = '';
-  }, []);
+  }, [followUpImages, isReadingImages]);
 
   const removeFollowUpImage = useCallback((id: string) => {
     setFollowUpImages(prev => prev.filter(img => img.id !== id));
@@ -323,6 +315,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const waitingForFirstActivity = isActive && !logsLoading && !hasAssistantActivity && !stream.planQuestion && !stream.permissionRequest;
   const firstActivityStartedAt = getTimestamp(task.startedAt || task.createdAt);
   const [waitingSeconds, setWaitingSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
 
   useEffect(() => {
     if (!waitingForFirstActivity) {
@@ -336,6 +329,19 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [waitingForFirstActivity, firstActivityStartedAt]);
+
+  useEffect(() => {
+    if (!isActive || !firstActivityStartedAt) {
+      setElapsedSeconds(0);
+      return;
+    }
+    const update = () => setElapsedSeconds(
+      Math.max(0, Math.floor((Date.now() - firstActivityStartedAt) / 1000))
+    );
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [isActive, firstActivityStartedAt]);
 
   useEffect(() => {
     if (isConnected) refetchLogs();
@@ -389,6 +395,19 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
         <span className="text-dark-500 font-mono text-sm">#{task.id}</span>
         <StatusBadge status={task.status} />
         {isActive && <StreamPhaseIndicator phase={stream.phase} />}
+        {isActive && (
+          <span className="text-xs text-dark-500 tabular-nums hidden sm:inline">
+            {formatElapsed(elapsedSeconds)}
+          </span>
+        )}
+        {(task.recoveryCount || 0) > 0 && (
+          <span
+            className="px-2 py-0.5 rounded text-xs bg-amber-500/15 text-amber-300"
+            title={task.lastRecoveryAt ? `Last recovery: ${formatDate(task.lastRecoveryAt)}` : undefined}
+          >
+            Recovered {task.recoveryCount}×
+          </span>
+        )}
         {task.isPlanMode && (
           <span className="px-2 py-0.5 bg-purple-500/20 text-purple-400 rounded text-xs">Plan</span>
         )}
@@ -427,6 +446,21 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
             <div>
               <span className="text-dark-500 flex items-center gap-1"><Clock size={14} /> Started</span>
               <span className="text-dark-300 mt-0.5 block text-xs">{formatDate(task.startedAt)}</span>
+            </div>
+          )}
+          {(task.attemptCount || 0) > 0 && (
+            <div>
+              <span className="text-dark-500">Attempt</span>
+              <span className="text-dark-300 mt-0.5 block text-xs">
+                {task.attemptCount}
+                {(task.recoveryCount || 0) > 0 ? ` (${task.recoveryCount} automatic recoveries)` : ''}
+              </span>
+            </div>
+          )}
+          {task.lastProgressAt && (
+            <div>
+              <span className="text-dark-500">Last progress</span>
+              <span className="text-dark-300 mt-0.5 block text-xs">{formatDate(task.lastProgressAt)}</span>
             </div>
           )}
           {task.waitReason && (
@@ -472,7 +506,9 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                             <StreamPhaseIndicator phase={stream.phase} />
                           </div>
                           <p className="text-xs text-dark-500">
-                            {isConnected ? `Live connection • ${waitingSeconds}s` : 'Reconnecting to live updates…'}
+                            {isConnected
+                              ? `${waitingSeconds < 30 ? 'Runner is preparing' : 'Model is reasoning'} • ${formatElapsed(waitingSeconds)}`
+                              : 'Reconnecting to live updates…'}
                           </p>
                         </div>
                       ) : 'No output recorded'}
@@ -620,13 +656,15 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                 onSubmit={(e) => {
                   e.preventDefault();
                   const prompt = continuePrompt.trim();
-                  if (!prompt && followUpImages.length === 0) return;
+                  if ((!prompt && followUpImages.length === 0) || isReadingImages) return;
+                  const effectivePrompt = prompt ||
+                    `Please analyze the ${followUpImages.length} attached image${followUpImages.length === 1 ? '' : 's'}.`;
                   const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
-                  const optimistic = { content: prompt || 'Image attachment', timestamp: Date.now() };
+                  const optimistic = { content: effectivePrompt, timestamp: Date.now() };
                   setSentMessages(prev => [...prev, optimistic]);
                   continueTask.mutate({
                     taskId: task.id,
-                    prompt,
+                    prompt: effectivePrompt,
                     images: imageBase64s,
                     runner: followUpRunner,
                     model: followUpModel,
@@ -660,7 +698,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                       }
                     }}
                     placeholder={stream.followUpQueueSize > 0 ? "Add another message..." : "Follow-up message..."}
-                    disabled={continueTask.isPending}
+                    disabled={continueTask.isPending || isReadingImages}
                     rows={1}
                     className="w-full bg-transparent px-3 py-2 pr-28 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
                   />
@@ -674,11 +712,11 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                       compact
                       lockRunner={runnerLocked}
                     />
-                    <input ref={followUpFileInputRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFollowUpFileSelect} />
+                    <input ref={followUpFileInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple className="hidden" onChange={handleFollowUpFileSelect} />
                     <button
                       type="button"
                       onClick={() => followUpFileInputRef.current?.click()}
-                      disabled={continueTask.isPending}
+                      disabled={continueTask.isPending || isReadingImages}
                       className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
                       title="Attach images"
                     >
@@ -687,7 +725,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     <VoiceInput compact onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))} />
                     <button
                       type="submit"
-                      disabled={continueTask.isPending || (!continuePrompt.trim() && followUpImages.length === 0)}
+                      disabled={continueTask.isPending || isReadingImages || (!continuePrompt.trim() && followUpImages.length === 0)}
                       className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
                     >
                       <Send size={16} />
@@ -714,6 +752,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     </div>
                   </div>
                 )}
+                {imageError && <p className="text-red-400 text-xs mt-2" role="alert">{imageError}</p>}
+                {isReadingImages && <p className="text-dark-500 text-xs mt-2">Preparing images…</p>}
               </form>
               {continueTask.isError && (
                 <p className="text-red-400 text-xs mt-2" role="alert">
