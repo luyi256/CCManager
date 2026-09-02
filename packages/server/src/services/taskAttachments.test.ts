@@ -21,4 +21,13 @@ describe('task image validation', () => {
   it('rejects too many images', () => {
     assert.throws(() => validateTaskImages(Array.from({ length: 9 }, () => png)), /at most 8/);
   });
+
+  it('does not impose a per-image limit below the total request bound', () => {
+    const largePng = `data:image/png;base64,${Buffer.concat([
+      Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+      Buffer.alloc(11 * 1024 * 1024),
+    ]).toString('base64')}`;
+    const images = validateTaskImages([largePng]);
+    assert.ok(images[0].byteSize > 10 * 1024 * 1024);
+  });
 });

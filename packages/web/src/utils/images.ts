@@ -6,8 +6,7 @@ export interface PendingImage {
 }
 
 export const MAX_IMAGE_COUNT = 8;
-export const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-export const MAX_TOTAL_IMAGE_BYTES = 30 * 1024 * 1024;
+export const MAX_TOTAL_IMAGE_BYTES = 36 * 1024 * 1024;
 const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
 function imageId(): string {
@@ -29,12 +28,9 @@ export async function readImageFiles(
     if (!SUPPORTED_IMAGE_TYPES.has(file.type)) {
       return { images: existing, error: `${file.name || 'Image'} is not a supported PNG, JPEG, GIF, or WebP file.` };
     }
-    if (file.size > MAX_IMAGE_BYTES) {
-      return { images: existing, error: `${file.name || 'Image'} exceeds the 10 MB limit.` };
-    }
     totalBytes += file.size;
     if (totalBytes > MAX_TOTAL_IMAGE_BYTES) {
-      return { images: existing, error: 'Attached images exceed the 30 MB total limit.' };
+      return { images: existing, error: 'Attached images exceed the 36 MB total request limit.' };
     }
     const dataUrl = await new Promise<string>((resolve, reject) => {
       const reader = new FileReader();

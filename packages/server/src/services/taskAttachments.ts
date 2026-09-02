@@ -1,8 +1,9 @@
 import { db } from './database.js';
 
 const MAX_IMAGE_COUNT = 8;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_TOTAL_BYTES = 30 * 1024 * 1024;
+// No per-image product limit. Keep only a total bound that fits below the
+// Express JSON body limit after base64 expansion and leaves room for prompts.
+const MAX_TOTAL_BYTES = 36 * 1024 * 1024;
 const IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)$/;
 
 export interface ParsedImage {
@@ -46,9 +47,8 @@ export function validateTaskImages(value: unknown): ParsedImage[] {
     if (!bytes.length || !hasValidSignature(mimeType, bytes)) {
       throw new Error(`Image ${index + 1} content does not match ${mimeType}`);
     }
-    if (bytes.length > MAX_IMAGE_BYTES) throw new Error(`Image ${index + 1} exceeds the 10 MB limit`);
     totalBytes += bytes.length;
-    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Images exceed the 30 MB total limit');
+    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Images exceed the 36 MB total request limit');
     return {
       dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
       mimeType,
