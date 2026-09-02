@@ -28,6 +28,28 @@ test('rejects missing CLIs and unsupported models while keeping old agents compa
   assert.match(validateRunnerSelection(capabilities, 'tcodex', 'gpt-5-codex').error || '', /not supported/);
 });
 
+test('accepts a requested model when the probe reported an empty catalog', () => {
+  // A timed-out probe must not block the request: rejecting here used to 400
+  // before attachments were persisted, discarding the user's uploaded images.
+  const capabilities = ['models:tcodex:{"installed":true,"models":[]}'];
+  assert.deepEqual(validateRunnerSelection(capabilities, 'tcodex', 'gpt-5.6-sol'), {
+    model: 'gpt-5.6-sol',
+  });
+});
+
+test('accepts a requested model when the agent reported no catalog at all', () => {
+  assert.deepEqual(validateRunnerSelection([], 'tcodex', 'gpt-5.6-sol'), {
+    model: 'gpt-5.6-sol',
+  });
+});
+
+test('still rejects a blank model string', () => {
+  assert.match(
+    validateRunnerSelection([], 'tcodex', '   ').error || '',
+    /non-empty string/
+  );
+});
+
 test('accepts a supported runner default without inventing a model name', () => {
   const capabilities = ['models:tclaude:{"installed":true,"models":[]}'];
   assert.deepEqual(validateRunnerSelection(capabilities, 'tclaude', undefined), {});

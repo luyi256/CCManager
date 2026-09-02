@@ -49,26 +49,62 @@ export function getRunnerModelCatalog(
   }
 }
 
+function acceptRequestedModel(value: unknown): { model?: string; error?: string } {
+  if (value === undefined || value === null || value === '') return {};
+  if (typeof value !== 'string' || !value.trim()) {
+    return { error: 'Model must be a non-empty string' };
+  }
+  return { model: value.trim() };
+}
+
+/**
+ * Fails open on purpose. A runner's catalog can be missing or momentarily empty
+ * (agent predates model reporting, or its probe timed out), and rejecting the
+ * request in that case used to 400 before attachments were persisted — losing
+ * the user's uploaded images. Only a genuine mismatch against a known catalog,
+ * or a CLI that is definitively absent, is worth blocking.
+ *
+ * Note the asymmetry: routes/sessions.ts never validates models at all, so it
+ * has always been fail-open.
+ */
 export function validateRunnerSelection(
   capabilities: string[],
   runner: Runner,
   value: unknown
 ): { model?: string; error?: string } {
   const catalog = getRunnerModelCatalog(capabilities, runner);
-  if (catalog === null) return {};
+
+  // The agent never reported a catalog (older agent, or malformed capability).
+  if (catalog === null) {
+    const accepted = acceptRequestedModel(value);
+    if (accepted.model) {
+      console.warn(
+        `[models] Agent reported no catalog for ${runner}; ` +
+        `accepting requested model "${accepted.model}" unvalidated`
+      );
+    }
+    return accepted;
+  }
+
   if (!catalog.installed) {
     return { error: catalog.message || `${runner} CLI is not installed on this agent` };
   }
-  if (value === undefined || value === null || value === '') return {};
-  if (typeof value !== 'string' || !value.trim()) {
-    return { error: 'Model must be a non-empty string' };
+
+  const accepted = acceptRequestedModel(value);
+  if (accepted.error || !accepted.model) return accepted;
+
+  if (catalog.models.length === 0) {
+    console.warn(
+      `[models] ${runner} reported an empty model catalog; ` +
+      `accepting requested model "${accepted.model}" unvalidated`
+    );
+    return { model: accepted.model };
   }
 
-  const model = value.trim();
-  if (!catalog.models.includes(model)) {
+  if (!catalog.models.includes(accepted.model)) {
     return {
-      error: `Model "${model}" is not supported by ${runner} on this agent`,
+      error: `Model "${accepted.model}" is not supported by ${runner} on this agent`,
     };
   }
-  return { model };
+  return { model: accepted.model };
 }

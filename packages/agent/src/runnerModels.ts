@@ -18,7 +18,13 @@ const RUNNER_COMMANDS: Record<Runner, string> = {
 const CLAUDE_ALIAS_PATTERN = /'([a-z][a-z0-9-]*)'/g;
 const TCLAUDE_UNAVAILABLE_MODEL = '__ccmanager_model_probe__';
 const CAPABILITY_CACHE_TTL_MS = 30 * 60 * 1000;
-const CAPABILITY_CACHE_PATH = path.join(os.homedir(), '.ccm-agent-model-capabilities.json');
+// A missing CLI is usually a PATH glitch during boot rather than a permanent
+// state, so let it re-probe far sooner than a known-good catalog.
+const MISSING_CLI_CACHE_TTL_MS = 5 * 60 * 1000;
+const CODEX_MODELS_TIMEOUT_MS = 60_000;
+const PROBE_RETRY_DELAY_MS = 750;
+const CAPABILITY_CACHE_PATH = process.env.CCM_MODEL_CACHE_PATH ||
+  path.join(os.homedir(), '.ccm-agent-model-capabilities.json');
 const capabilityCache = new Map<Runner, { expiresAt: number; capability: string }>();
 
 function loadCapabilityCache(): void {
@@ -120,7 +126,7 @@ async function listCodexModels(runner: 'codex' | 'tcodex'): Promise<string[]> {
     return configured.model ? [configured.model] : [];
   }
 
-  const { stdout } = await runCli(runner, ['debug', 'models'], 30_000);
+  const { stdout } = await runCli(runner, ['debug', 'models'], CODEX_MODELS_TIMEOUT_MS);
   return normalizeModels([
     ...(configured.model ? [configured.model] : []),
     ...parseCodexCatalog(stdout),
@@ -294,43 +300,84 @@ async function listRunnerModels(runner: Runner): Promise<string[]> {
   }
 }
 
-export async function discoverRunnerModelCapabilities(): Promise<string[]> {
-  const runners = Object.keys(RUNNER_COMMANDS) as Runner[];
-  const entries = await Promise.all(runners.map(async (runner) => {
-    const cached = capabilityCache.get(runner);
-    if (cached && cached.expiresAt > Date.now()) return cached.capability;
+/**
+ * Why a probe distinguishes "missing" from "transient": caching a timeout or a
+ * boot-time PATH glitch as an empty catalog makes the manager reject the user's
+ * model for the whole TTL, which previously discarded uploaded images with it.
+ */
+export type ProbeOutcome =
+  | { kind: 'models'; models: string[] }
+  | { kind: 'missing' }
+  | { kind: 'transient'; message: string };
 
-    let catalog: RunnerModelCatalog;
+export function buildRunnerCatalog(runner: Runner, outcome: ProbeOutcome): RunnerModelCatalog {
+  if (outcome.kind === 'models') {
+    return { installed: true, models: outcome.models };
+  }
+  if (outcome.kind === 'missing') {
+    return {
+      installed: false,
+      models: [],
+      message: `Install or expose the local ${RUNNER_COMMANDS[runner]} command on this agent`,
+    };
+  }
+  // Installed, but the catalog could not be read this time. Advertising an empty
+  // list keeps the runner selectable; the manager accepts unverified models.
+  return { installed: true, models: [] };
+}
+
+/** Returns null when an outcome must NOT be cached. */
+export function capabilityCacheTtl(outcome: ProbeOutcome): number | null {
+  if (outcome.kind === 'models') {
+    // An empty list is legitimate for runners without a catalog contract
+    // (qwen, claude-grok) and cheap to re-derive, so don't freeze it.
+    return outcome.models.length > 0 ? CAPABILITY_CACHE_TTL_MS : null;
+  }
+  if (outcome.kind === 'missing') return MISSING_CLI_CACHE_TTL_MS;
+  return null;
+}
+
+async function probeRunner(runner: Runner): Promise<ProbeOutcome> {
+  for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      catalog = {
-        installed: true,
-        models: await listRunnerModels(runner),
-      };
+      return { kind: 'models', models: await listRunnerModels(runner) };
     } catch (error) {
       const code = error instanceof Error
         ? (error as NodeJS.ErrnoException).code
         : undefined;
-      if (code !== 'ENOENT') {
-        console.warn(
-          `[models] Failed to discover ${runner} models:`,
-          error instanceof Error ? error.message : error
-        );
+      if (code === 'ENOENT') return { kind: 'missing' };
+
+      const message = error instanceof Error ? error.message : String(error);
+      if (attempt === 0) {
+        await new Promise((resolve) => setTimeout(resolve, PROBE_RETRY_DELAY_MS));
+        continue;
       }
-      catalog = {
-        installed: code !== 'ENOENT',
-        models: [],
-        ...(code === 'ENOENT' ? {
-          message: 'Install or expose the local claude-grok command on this agent',
-        } : {}),
-      };
+      console.warn(`[models] Failed to discover ${runner} models:`, message);
+      return { kind: 'transient', message };
     }
-    const capability = `models:${runner}:${JSON.stringify(catalog)}`;
-    capabilityCache.set(runner, {
-      expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS,
-      capability,
-    });
-    persistCapabilityCache();
+  }
+  return { kind: 'transient', message: 'Model probe exhausted retries' };
+}
+
+export async function discoverRunnerModelCapabilities(): Promise<string[]> {
+  const runners = Object.keys(RUNNER_COMMANDS) as Runner[];
+  let dirty = false;
+  const entries = await Promise.all(runners.map(async (runner) => {
+    const cached = capabilityCache.get(runner);
+    if (cached && cached.expiresAt > Date.now()) return cached.capability;
+
+    const outcome = await probeRunner(runner);
+    const capability = `models:${runner}:${JSON.stringify(buildRunnerCatalog(runner, outcome))}`;
+    const ttl = capabilityCacheTtl(outcome);
+    if (ttl === null) {
+      // Never leave a stale negative behind for the next process to load.
+      if (capabilityCache.delete(runner)) dirty = true;
+    } else {
+      capabilityCache.set(runner, { expiresAt: Date.now() + ttl, capability });
+      dirty = true;
+    }
     return capability;
   }));
+  if (dirty) persistCapabilityCache();
   return entries;
 }

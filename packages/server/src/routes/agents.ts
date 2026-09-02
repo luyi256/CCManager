@@ -62,6 +62,8 @@ router.get('/:id/models', async (req, res) => {
       message: `Agent has not reported whether ${typedRunner} is available. Reconnect it after updating the agent.`,
     } : !catalog.installed ? {
       message: `${typedRunner} CLI is not installed on this agent`,
+    } : catalog.models.length === 0 ? {
+      message: `${typedRunner} did not report a model catalog; use its default or type a model name`,
     } : {}),
   });
 });

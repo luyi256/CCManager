@@ -1,12 +1,35 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
+  buildRunnerCatalog,
+  capabilityCacheTtl,
   parseClaudeHelpModels,
   parseClaudeGrokSettings,
   parseCodexCatalog,
   parseTClaudeAvailableModels,
   resolveClaudeGrokModel,
 } from '../src/runnerModels.js';
+
+test('never caches transient probe failures or empty catalogs', () => {
+  // Caching a timeout as an empty catalog made the manager reject the user's
+  // model for the whole TTL, taking their uploaded images down with it.
+  assert.equal(capabilityCacheTtl({ kind: 'transient', message: 'ETIMEDOUT' }), null);
+  assert.equal(capabilityCacheTtl({ kind: 'models', models: [] }), null);
+  assert.equal(capabilityCacheTtl({ kind: 'models', models: ['gpt-5.6-sol'] }), 30 * 60 * 1000);
+  assert.equal(capabilityCacheTtl({ kind: 'missing' }), 5 * 60 * 1000);
+});
+
+test('keeps a runner selectable when its catalog could not be read', () => {
+  assert.deepEqual(buildRunnerCatalog('tcodex', { kind: 'transient', message: 'ETIMEDOUT' }), {
+    installed: true,
+    models: [],
+  });
+});
+
+test('names the actual missing command instead of a hard-coded wrapper', () => {
+  assert.match(buildRunnerCatalog('qwen', { kind: 'missing' }).message || '', /qwen/);
+  assert.doesNotMatch(buildRunnerCatalog('qwen', { kind: 'missing' }).message || '', /claude-grok/);
+});
 
 test('filters Codex catalog entries to selectable API-supported models', () => {
   const raw = JSON.stringify({
