@@ -25,6 +25,10 @@ const HEARTBEAT_INTERVAL_MS = 20000;
 const URL_DISCOVERY_COOLDOWN_MS = 5000;
 const URL_DISCOVERY_TIMEOUT_MS = 10000;
 const HEARTBEAT_FILE = process.env.CCM_AGENT_HEARTBEAT_FILE || '/tmp/ccm-agent-heartbeat.json';
+// Grace period for a superseded process to release its session file before a
+// --resume starts. Only elapses if the old process is genuinely still running.
+const SESSION_RESUME_GRACE_MS = 5000;
+const STOPPING_EXECUTOR_TTL_MS = 30000;
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -123,6 +127,8 @@ async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: 
 export class AgentConnection {
   private socket: Socket | null = null;
   private executors: Map<number, Executor> = new Map();
+  /** Cancelled executors whose process may still be shutting down. */
+  private stoppingExecutors: Map<number, Executor> = new Map();
   private config: AgentConfig;
   private currentUrl: string;
   private reconnectAttempts = 0;
@@ -228,6 +234,8 @@ export class AgentConnection {
       if (executor) {
         executor.cancel();
         this.executors.delete(data.taskId);
+        // A resume for this task may arrive before the process is gone.
+        this.trackStoppingExecutor(data.taskId, executor);
       }
     });
 
@@ -442,6 +450,31 @@ export class AgentConnection {
     }
   }
 
+  /**
+   * Wait out an executor that was cancelled but may still be shutting down, so
+   * --resume does not collide with the old process over the session file.
+   * Polling the tracked executor beats a blind sleep: a process that already
+   * exited costs nothing, and one that is slow still gets the full grace period.
+   */
+  private async waitForStoppingExecutor(taskId: number, capMs: number): Promise<void> {
+    const stopping = this.stoppingExecutors.get(taskId);
+    if (!stopping) return;
+    await this.waitForExecutorStop(stopping, capMs);
+    if (this.stoppingExecutors.get(taskId) === stopping) {
+      this.stoppingExecutors.delete(taskId);
+    }
+  }
+
+  /** Remember a cancelled executor until its process is actually gone. */
+  private trackStoppingExecutor(taskId: number, executor: Executor): void {
+    this.stoppingExecutors.set(taskId, executor);
+    void this.waitForExecutorStop(executor, STOPPING_EXECUTOR_TTL_MS).then(() => {
+      if (this.stoppingExecutors.get(taskId) === executor) {
+        this.stoppingExecutors.delete(taskId);
+      }
+    });
+  }
+
   private async handleTask(task: TaskRequest): Promise<void> {
     console.log(`Received task ${task.taskId}: ${task.prompt.substring(0, 50)}...`);
     console.log(`Task ${task.taskId} projectPath: ${task.projectPath}`);
@@ -457,18 +490,18 @@ export class AgentConnection {
         // Wait for the old process to actually exit (up to 5s) rather than a blind
         // fixed sleep, so the follow-up starts promptly once the previous run is gone.
         await this.waitForExecutorStop(oldExecutor, 5000);
+        if (oldExecutor.isRunning) this.trackStoppingExecutor(task.taskId, oldExecutor);
       } else {
         // Duplicate dispatch (e.g. reconnect recovery) — skip
         console.log(`Task ${task.taskId}: Already running, skipping duplicate dispatch`);
         return;
       }
     } else if (task.continueSession) {
-      // Continue/retry with session resume but no active executor in map.
-      // This means the previous executor was removed (by cancel handler or completion).
-      // The old process might still be dying (SIGTERM sent, not yet exited).
-      // Wait to avoid session file conflicts with --resume.
-      console.log(`Task ${task.taskId}: Session resume without active executor, waiting for old process cleanup`);
-      await new Promise<void>((resolve) => setTimeout(resolve, 3000));
+      // Continue/retry with session resume but no active executor in map. The
+      // previous executor was removed (by the cancel handler or on completion)
+      // but its process may still be dying, and --resume would collide with it.
+      // Wait only as long as that process actually needs.
+      await this.waitForStoppingExecutor(task.taskId, SESSION_RESUME_GRACE_MS);
     }
 
     let executor: Executor | undefined;
