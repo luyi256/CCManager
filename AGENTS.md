@@ -109,9 +109,10 @@ pnpm run dev                  # Start server (3001) + web (5173)
 pnpm run dev:server           # Server only
 pnpm run dev:web              # Web only
 
-pnpm run build                # Build server + web
+pnpm run build                # Build agent + server + web
 pnpm run build:server         # Build server only
 pnpm run build:web            # Build web only
+pnpm run build:agent          # Build agent only
 
 pnpm run start                # Start production server
 pnpm run lint                 # Lint
@@ -127,6 +128,10 @@ Build locally and restart the service after code changes.
 ```bash
 pnpm run build && pm2 restart ccm-server
 ```
+
+`pnpm run build` builds all three packages. If the change touched
+`packages/agent`, also restart the agent so it picks up the new build —
+`pm2 restart ccm-agent`, and on any remote machines running their own agent.
 
 ### Claude Code Workflow
 
