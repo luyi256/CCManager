@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
-import { Send, Loader2, AlertCircle, X, Image, Paperclip } from 'lucide-react';
+import { Send, Loader2, AlertCircle, Image, Paperclip } from 'lucide-react';
 import VoiceInput from '../common/VoiceInput';
+import ImageThumbnail from '../common/ImageThumbnail';
 import ModelSwitcher from '../Conversation/ModelSwitcher';
 import type { Runner, Task } from '../../types';
 import { readImageFiles, type PendingImage } from '../../utils/images';
@@ -152,24 +153,13 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           {images.length > 0 && (
             <div className="flex flex-wrap gap-2 mt-2">
               {images.map((img) => (
-                <div
+                <ImageThumbnail
                   key={img.id}
-                  className="relative group w-16 h-16 rounded-lg overflow-hidden border border-dark-600 bg-dark-800"
-                >
-                  <img
-                    src={img.dataUrl}
-                    alt={img.name}
-                    className="w-full h-full object-cover"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => removeImage(img.id)}
-                    className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-300 hover:text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
-                    aria-label={`Remove ${img.name}`}
-                  >
-                    <X size={12} />
-                  </button>
-                </div>
+                  src={img.dataUrl}
+                  alt={img.name}
+                  size="md"
+                  onRemove={() => removeImage(img.id)}
+                />
               ))}
               <div className="flex items-center text-dark-500 text-xs gap-1">
                 <Image size={12} />

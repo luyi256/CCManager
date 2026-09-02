@@ -255,6 +255,12 @@ export interface ServerToUserEvents {
   'task:status': (data: { taskId: number; status: string }) => void;
   'task:completed': (data: { taskId: number }) => void;
   'task:failed': (data: { taskId: number; error: string }) => void;
+  'task:followup_queued': (data: { taskId: number; queueSize: number; prompt?: string }) => void;
+  'task:followup_pending': (data: {
+    taskId: number;
+    queueSize: number;
+    reason: 'no_session' | 'no_project' | 'agent_unavailable' | 'task_active' | 'task_failed' | 'task_cancelled';
+  }) => void;
 }
 
 export interface UserToServerEvents {

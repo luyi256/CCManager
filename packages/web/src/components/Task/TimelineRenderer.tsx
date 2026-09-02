@@ -15,16 +15,19 @@ import {
   Wifi,
 } from 'lucide-react';
 import SafeMarkdown from '../common/SafeMarkdown';
+import { AttachmentThumbnail } from '../common/ImageThumbnail';
 import type { TaskStreamPhase } from '../../types';
 import {
   groupTimeline,
+  parseUserMessageContent,
   safeStringify,
+  type AttachmentRef,
   type GroupedItem,
   type TimelineItem,
 } from '../../utils/timeline';
 
-export { groupTimeline, safeStringify };
-export type { GroupedItem, TimelineItem };
+export { groupTimeline, safeStringify, parseUserMessageContent };
+export type { GroupedItem, TimelineItem, AttachmentRef };
 
 const PHASE_META: Record<TaskStreamPhase, {
   label: string;
@@ -174,9 +177,12 @@ function ToolResultItem({ item }: { item: TimelineItem }) {
 }
 
 // Render a grouped timeline
-export function TimelineView({ grouped, userMessageLabel }: {
+// taskId is optional so session timelines (which have no task attachments) can
+// keep calling this unchanged.
+export function TimelineView({ grouped, userMessageLabel, taskId }: {
   grouped: GroupedItem[];
   userMessageLabel?: (item: TimelineItem) => string;
+  taskId?: number;
 }) {
   const getLabel = userMessageLabel || ((item: TimelineItem) =>
     item.id === 'initial-prompt' ? 'Prompt' : 'Follow-up'
@@ -210,6 +216,18 @@ export function TimelineView({ grouped, userMessageLabel }: {
                     {getLabel(item)}
                   </div>
                   <p className="text-dark-200 break-words whitespace-pre-wrap">{item.content}</p>
+                  {taskId !== undefined && item.attachments && item.attachments.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5 mt-2">
+                      {item.attachments.map((attachment) => (
+                        <AttachmentThumbnail
+                          key={attachment.id}
+                          taskId={taskId}
+                          attachmentId={attachment.id}
+                          alt={`Attachment ${attachment.position + 1}`}
+                        />
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             ) : item.type === 'tool_use' ? (

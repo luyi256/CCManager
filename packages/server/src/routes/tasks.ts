@@ -6,14 +6,21 @@ import { broadcast } from '../websocket/index.js';
 import { cancelDependentTasks } from '../services/waitingTasks.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { errorResponse } from '../utils/errorResponse.js';
-import { enqueue, queueSize, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
+import { enqueue, queueSize, hasQueued, peekAll, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
+import { drainFollowUps, isTaskActive } from '../services/followUpDispatch.js';
 import { validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
-import { getTaskImages, replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
+import { bindAttachmentsToLog, getTaskImages, replaceTaskImages, validateTaskImages, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
 const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const FOLLOWUP_BLOCKED_MESSAGES: Record<string, string> = {
+  no_session: 'This task has no session to resume yet. Wait for it to start, then try again.',
+  no_project: 'The project for this task is no longer available.',
+  agent_unavailable: 'The agent is not reachable. Reconnect it, then try again.',
+  task_active: 'This task is already running. These messages will be sent when it finishes.',
+};
 
 async function broadcastStreamPhase(
   task: Task,
@@ -88,17 +95,19 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         message: `Agent ${project.agentId} is not connected. Please ensure the agent is running.`,
       });
     }
-    const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
-    if (selectedModel.error) {
-      return res.status(400).json({ message: selectedModel.error });
-    }
-
+    // Validate the user's own input (images) before environmental checks
+    // (model availability), so the actionable error surfaces first.
     let validatedImages: string[];
     try {
       validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
     }
+    const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
+    if (selectedModel.error) {
+      return res.status(400).json({ message: selectedModel.error });
+    }
+
     const effectivePrompt = normalizedPrompt ||
       `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
 
@@ -223,8 +232,17 @@ router.post('/tasks/:id/cancel', async (req, res) => {
     await storage.saveTask(task.projectId, task);
     await broadcastStreamPhase(task, 'cancelled');
 
-    // Clear any queued follow-ups
-    clearFollowUpQueue(taskId);
+    // Keep queued follow-ups for the same reason continuePrompt is preserved
+    // above: silently dropping the user's queued messages (and their images) is
+    // worse than leaving them visible to resend or discard explicitly.
+    if (hasQueued(taskId)) {
+      broadcast(taskId, {
+        type: 'task:followup_pending',
+        taskId,
+        queueSize: queueSize(taskId),
+        reason: 'task_cancelled',
+      });
+    }
 
     broadcast(taskId, { type: 'task:cancelled', taskId });
 
@@ -415,16 +433,23 @@ router.post('/tasks/:id/continue', async (req, res) => {
       ? selectedModel.model
       : runnerChanged ? undefined : task.model;
 
-    // Log the follow-up prompt FIRST so it appears in the timeline
-    await storage.appendTaskLog(task.projectId, task.id, {
-      type: 'user_message',
-      content: effectivePrompt,
-    });
-
     // If task is currently active (running/waiting/etc.), queue instead of dispatching
-    const activeStatuses = ['running', 'waiting', 'waiting_permission', 'plan_review'];
-    if (activeStatuses.includes(task.status)) {
-      enqueue(taskId, effectivePrompt, validatedImages.length > 0 ? validatedImages : undefined, nextRunner, nextModel);
+    const isQueued = isTaskActive(task.status);
+
+    // Persist attachments before the log row so their ids can be recorded on it.
+    // Queued images land inactive so the in-flight run keeps its own image set;
+    // drainFollowUps activates them at dispatch time.
+    const stored = replaceTaskImages(task.id, validatedImages, null, { activate: !isQueued });
+
+    // Log the follow-up prompt FIRST so it appears in the timeline
+    const userLog = await storage.appendTaskLog(task.projectId, task.id, {
+      type: 'user_message',
+      content: { text: effectivePrompt, attachmentIds: stored.ids },
+    });
+    bindAttachmentsToLog(stored.ids, userLog.id);
+
+    if (isQueued) {
+      enqueue(taskId, effectivePrompt, validatedImages.length > 0 ? validatedImages : undefined, nextRunner, nextModel, userLog.id);
       const queued = queueSize(taskId);
       console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
       // Broadcast queue info to frontend
@@ -461,7 +486,6 @@ router.post('/tasks/:id/continue', async (req, res) => {
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
-    replaceTaskImages(task.id, validatedImages);
     task.attemptCount = (task.attemptCount || 0) + 1;
     task.lastProgressAt = startedAt;
     await storage.saveTask(task.projectId, task);
@@ -625,6 +649,126 @@ router.post('/tasks/:id/cleanup-worktree', async (req, res) => {
   } catch (error) {
     console.error('Failed to cleanup worktree:', error);
     errorResponse(res, 500, 'Failed to cleanup worktree');
+  }
+});
+
+// Inspect queued follow-ups. Never returns base64 image payloads — only counts.
+router.get('/tasks/:id/followups', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const items = peekAll(taskId).map((message) => ({
+      id: message.id,
+      prompt: message.prompt,
+      imageCount: message.images?.length ?? 0,
+      runner: message.runner,
+      model: message.model,
+    }));
+    res.json({ queueSize: items.length, items });
+  } catch (error) {
+    console.error('Failed to get queued follow-ups:', error);
+    errorResponse(res, 500, 'Failed to get queued follow-ups');
+  }
+});
+
+// Retry a drain that was blocked (agent had gone away, session not yet known).
+router.post('/tasks/:id/followups/flush', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const result = await drainFollowUps(taskId);
+    if (result.status === 'empty') return res.status(204).end();
+    if (result.status === 'blocked') {
+      return res.status(409).json({
+        message: FOLLOWUP_BLOCKED_MESSAGES[result.reason],
+        reason: result.reason,
+        queueSize: result.count,
+      });
+    }
+
+    await broadcastStreamPhase({ ...task, startedAt: result.startedAt }, 'starting');
+    broadcast(taskId, { type: 'task:status', taskId, status: 'running' });
+    res.json({ dispatched: result.count });
+  } catch (error) {
+    console.error('Failed to flush queued follow-ups:', error);
+    errorResponse(res, 500, 'Failed to flush queued follow-ups');
+  }
+});
+
+// Explicit user discard — the only path that may drop queued messages.
+router.delete('/tasks/:id/followups', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const discarded = queueSize(taskId);
+    clearFollowUpQueue(taskId);
+    broadcast(taskId, { type: 'task:followup_queued', taskId, queueSize: 0 });
+    res.json({ discarded });
+  } catch (error) {
+    console.error('Failed to discard queued follow-ups:', error);
+    errorResponse(res, 500, 'Failed to discard queued follow-ups');
+  }
+});
+
+// Attachment metadata for the timeline. Grouped so each user_message can render
+// its own thumbnails; log_id NULL means the task's initial prompt.
+router.get('/tasks/:id/attachments', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const task = await storage.getTaskById(taskId);
+    if (!task) {
+      return res.status(404).json({ message: 'Task not found' });
+    }
+
+    const initial: AttachmentMeta[] = [];
+    const byLogId: Record<string, AttachmentMeta[]> = {};
+    for (const attachment of listTaskAttachments(taskId)) {
+      if (attachment.logId === null) initial.push(attachment);
+      else (byLogId[String(attachment.logId)] ||= []).push(attachment);
+    }
+    res.json({ initial, byLogId });
+  } catch (error) {
+    console.error('Failed to list attachments:', error);
+    errorResponse(res, 500, 'Failed to list attachments');
+  }
+});
+
+// Serve the image bytes. Scoping the path by task id gives ownership validation
+// for free. Auth is device-level (any valid device already sees every project
+// via GET /projects), so apiAuthMiddleware is the whole access check here.
+router.get('/tasks/:id/attachments/:attachmentId', async (req, res) => {
+  try {
+    const taskId = parseInt(req.params.id, 10);
+    const attachmentId = parseInt(req.params.attachmentId, 10);
+    if (!Number.isInteger(taskId) || !Number.isInteger(attachmentId)) {
+      return res.status(400).json({ message: 'Invalid attachment reference' });
+    }
+
+    const attachment = getAttachmentForTask(taskId, attachmentId);
+    if (!attachment) {
+      return res.status(404).json({ message: 'Attachment not found' });
+    }
+
+    res.setHeader('Content-Type', attachment.mimeType);
+    res.setHeader('Content-Length', attachment.buffer.length);
+    // Attachment bytes never change once stored.
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    res.end(attachment.buffer);
+  } catch (error) {
+    console.error('Failed to read attachment:', error);
+    errorResponse(res, 500, 'Failed to read attachment');
   }
 });
 

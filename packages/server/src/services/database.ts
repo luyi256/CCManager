@@ -252,4 +252,41 @@ try {
   // Column already exists, ignore
 }
 
+// Make task_attachments append-only so a follow-up no longer erases the images
+// of earlier messages. New generations append at MAX(position)+1, which keeps
+// the UNIQUE(task_id, position) constraint intact without rebuilding the table.
+//   active = 1        -> part of the current dispatch set
+//   log_id IS NULL    -> belongs to the task's initial prompt
+//   log_id = <log id> -> belongs to that user_message
+for (const migration of [
+  ['log_id', 'INTEGER'],
+  ['active', 'INTEGER DEFAULT 1'],
+] as const) {
+  try {
+    db.exec(`ALTER TABLE task_attachments ADD COLUMN ${migration[0]} ${migration[1]}`);
+    console.log(`Migration: Added ${migration[0]} column to task_attachments table`);
+  } catch {
+    // Column already exists, ignore
+  }
+}
+try {
+  db.exec(`CREATE INDEX IF NOT EXISTS idx_task_attachments_log ON task_attachments(log_id)`);
+} catch { /* ignore */ }
+
+// Bind a queued follow-up to the user_message log it was written for, so a drain
+// can activate exactly that message's already-stored attachments. attachment_ids
+// covers legacy rows that predate log binding, keeping a retried drain from
+// re-inserting the same images every time.
+for (const migration of [
+  ['log_id', 'INTEGER'],
+  ['attachment_ids', 'TEXT'],
+] as const) {
+  try {
+    db.exec(`ALTER TABLE task_followups ADD COLUMN ${migration[0]} ${migration[1]}`);
+    console.log(`Migration: Added ${migration[0]} column to task_followups table`);
+  } catch {
+    // Column already exists, ignore
+  }
+}
+
 console.log('Database initialized at:', DB_PATH);

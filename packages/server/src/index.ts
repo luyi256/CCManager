@@ -37,7 +37,7 @@ import transcribeRouter from './routes/transcribe.js';
 import sessionsRouter from './routes/sessions.js';
 import authRouter from './routes/auth.js';
 import { setupWebSocket } from './websocket/index.js';
-import { startWaitingTaskChecker } from './services/waitingTasks.js';
+import { startWaitingTaskChecker, startAttachmentRetention } from './services/waitingTasks.js';
 import { agentPool } from './services/agentPool.js';
 import { hashToken } from './services/auth.js';
 import { findDeviceByHash, updateDeviceLastUsed } from './services/storage.js';
@@ -79,15 +79,30 @@ app.use(cors({ origin: false }));
 app.use(express.json({ limit: '50mb' }));
 
 // Rate limiting — 100 requests per minute per IP
+// Attachment reads are exempt and metered separately: one message can hold 8
+// thumbnails, so they would otherwise exhaust the general budget immediately.
+const ATTACHMENT_PATH = /^\/tasks\/\d+\/attachments\/\d+$/;
+const attachmentLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 600,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attachment requests, please try again later' },
+});
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' },
+  skip: (req) => ATTACHMENT_PATH.test(req.path),
 });
-app.use('/api', apiLimiter);
-app.use('/ccm/api', apiLimiter);
+const limitApi: express.RequestHandler = (req, res, next) =>
+  ATTACHMENT_PATH.test(req.path)
+    ? attachmentLimiter(req, res, next)
+    : apiLimiter(req, res, next);
+app.use('/api', limitApi);
+app.use('/ccm/api', limitApi);
 
 // Health check must stay public so setup scripts and remote devices can probe connectivity.
 app.get('/api/health', (req, res) => {
@@ -183,6 +198,9 @@ setupWebSocket(server, process.env.SOCKET_IO_PATH || '/socket.io');
 
 // Start waiting task checker
 startWaitingTaskChecker();
+
+// Sweep superseded attachment bytes so the DB does not grow without bound
+startAttachmentRetention();
 
 const PORT = process.env.PORT || 3001;
 const HOST = process.env.HOST || '127.0.0.1';

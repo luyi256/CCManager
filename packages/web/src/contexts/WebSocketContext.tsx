@@ -97,6 +97,7 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       'task:completed',
       'task:failed',
       'task:followup_queued',
+      'task:followup_pending',
     ];
 
     for (const event of taskEvents) {
@@ -104,11 +105,13 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         const msg: WebSocketMessage = { ...data, type: event };
         if (
           typeof msg.taskId === 'number' &&
-          ['task:status', 'task:completed', 'task:failed', 'task:followup_queued'].includes(event)
+          ['task:status', 'task:completed', 'task:failed', 'task:followup_queued', 'task:followup_pending'].includes(event)
         ) {
           queryClient.invalidateQueries({ queryKey: ['task', msg.taskId] });
           queryClient.invalidateQueries({ queryKey: ['tasks'] });
           queryClient.invalidateQueries({ queryKey: ['taskLogs', msg.taskId] });
+          queryClient.invalidateQueries({ queryKey: ['taskAttachments', msg.taskId] });
+          queryClient.invalidateQueries({ queryKey: ['taskFollowUps', msg.taskId] });
         }
         handlersRef.current.forEach((handler) => handler(msg));
       });

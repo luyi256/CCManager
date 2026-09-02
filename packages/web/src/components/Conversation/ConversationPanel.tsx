@@ -11,22 +11,24 @@ import {
   ArrowDown,
   Send,
   Paperclip,
-  X,
   Image,
   ArrowLeft,
   ChevronDown,
 } from 'lucide-react';
 import StatusBadge from '../common/StatusBadge';
+import ImageThumbnail from '../common/ImageThumbnail';
 import ErrorBoundary from '../common/ErrorBoundary';
 import VoiceInput from '../common/VoiceInput';
 import ModelSwitcher from './ModelSwitcher';
 import { useTaskStream } from '../../hooks/useTaskStream';
-import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask } from '../../hooks/useTasks';
+import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask, useFlushFollowUps, useDiscardFollowUps, useTaskFollowUps } from '../../hooks/useTasks';
 import { mergeTask, cleanupWorktree } from '../../services/api';
 import type { Runner, Task } from '../../types';
 import {
   type TimelineItem,
+  type AttachmentRef,
   groupTimeline,
+  parseUserMessageContent,
   StreamPhaseIndicator,
   TimelineView,
 } from '../Task/TimelineRenderer';
@@ -34,6 +36,7 @@ import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
 import { getTimestamp } from '../../utils/dateTime';
 import { useWebSocket } from '../../contexts/WebSocketContext';
 import { readImageFiles, type PendingImage } from '../../utils/images';
+import { useTaskAttachments } from '../../hooks/useAttachmentUrl';
 
 function formatDate(date: unknown): string {
   if (!date) return 'Unknown';
@@ -80,6 +83,24 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const followUpTextareaRef = useRef<HTMLTextAreaElement>(null);
 
   const { data: savedLogs, isLoading: logsLoading, refetch: refetchLogs } = useTaskLogs(task.id);
+  const { data: attachments } = useTaskAttachments(task.id);
+  // Prefer the log binding; fall back to ids recorded on the message so rows
+  // written before either mechanism existed still resolve.
+  const resolveAttachments = useCallback((
+    logId: number | undefined,
+    attachmentIds: number[]
+  ): AttachmentRef[] | undefined => {
+    if (!attachments) return undefined;
+    const bound = logId === undefined ? undefined : attachments.byLogId[String(logId)];
+    if (bound?.length) return bound;
+    if (attachmentIds.length === 0) return undefined;
+    const flat = [
+      ...attachments.initial,
+      ...Object.values(attachments.byLogId).flat(),
+    ];
+    const matched = flat.filter((attachment) => attachmentIds.includes(attachment.id));
+    return matched.length > 0 ? matched : undefined;
+  }, [attachments]);
   const stream = useTaskStream(isActive ? task.id : null);
   const { isConnected } = useWebSocket();
   const streamReset = stream.reset;
@@ -87,6 +108,14 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
+  const flushFollowUps = useFlushFollowUps();
+  const discardFollowUps = useDiscardFollowUps();
+  const { data: followUps } = useTaskFollowUps(task.id, canSendFollowUp);
+  // Prefer the live count while streaming; fall back to the durable one.
+  const queuedCount = isActive
+    ? Math.max(stream.followUpQueueSize, followUps?.queueSize ?? 0)
+    : followUps?.queueSize ?? 0;
+  const queuedImageCount = followUps?.items.reduce((sum, item) => sum + item.imageCount, 0) ?? 0;
   const [continuePrompt, setContinuePrompt] = useState('');
   const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
@@ -193,7 +222,9 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   useEffect(() => {
     if (savedLogs && sentMessages.length > 0) {
       const savedUserContents = new Set(
-        savedLogs.filter(l => l.type === 'user_message').map(l => String(l.content))
+        savedLogs
+          .filter(l => l.type === 'user_message')
+          .map(l => parseUserMessageContent(l.content).text)
       );
       setSentMessages(prev => prev.filter(m => !savedUserContents.has(m.content)));
     }
@@ -209,6 +240,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
       type: 'user_message',
       timestamp: new Date(task.createdAt).getTime(),
       content: task.prompt,
+      attachments: attachments?.initial,
     });
 
     if (savedLogs && savedLogs.length > 0) {
@@ -249,8 +281,16 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
             toolResult: data.result,
           });
         } else if (log.type === 'user_message') {
-          savedUserMessages.add(String(log.content));
-          items.push({ id: `saved-user-${index}`, type: 'user_message', timestamp, content: String(log.content) });
+          const { text, attachmentIds } = parseUserMessageContent(log.content);
+          savedUserMessages.add(text);
+          items.push({
+            id: `saved-user-${index}`,
+            type: 'user_message',
+            timestamp,
+            content: text,
+            logId: log.id,
+            attachments: resolveAttachments(log.id, attachmentIds),
+          });
         }
       });
     }
@@ -307,7 +347,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
 
     items.sort((a, b) => a.timestamp - b.timestamp);
     return items;
-  }, [savedLogs, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt, task.continuePrompt, task.startedAt]);
+  }, [savedLogs, stream.messages, stream.toolCalls, sentMessages, task.prompt, task.createdAt, task.continuePrompt, task.startedAt, attachments, resolveAttachments]);
 
   const grouped = useMemo(() => groupTimeline(timeline), [timeline]);
   const hasContent = timeline.length > 0 || isActive;
@@ -514,7 +554,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                       ) : 'No output recorded'}
                     </div>
                   ) : (
-                    <TimelineView grouped={grouped} />
+                    <TimelineView grouped={grouped} taskId={task.id} />
                   )}
                 </div>
               </div>
@@ -680,10 +720,48 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   });
                 }}
               >
-                {stream.followUpQueueSize > 0 && (
-                  <div className="text-xs text-amber-400/80 mb-1.5 px-1">
-                    {stream.followUpQueueSize} message{stream.followUpQueueSize > 1 ? 's' : ''} queued
-                  </div>
+                {/* Queued follow-ups come from the API, not the stream: the stream
+                    is torn down when a task goes terminal, which is exactly when a
+                    stranded queue most needs to be visible. */}
+                {queuedCount > 0 && (
+                  isActive ? (
+                    <div className="text-xs text-amber-400/80 mb-1.5 px-1">
+                      {queuedCount} message{queuedCount > 1 ? 's' : ''} queued
+                    </div>
+                  ) : (
+                    <div className="mb-1.5 px-2 py-1.5 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-start gap-2">
+                      <AlertTriangle size={13} className="text-amber-400 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1 min-w-0">
+                        <p className="text-xs text-amber-300">
+                          {queuedCount} message{queuedCount > 1 ? 's' : ''} not sent yet
+                          {queuedImageCount > 0 && ` (${queuedImageCount} image${queuedImageCount > 1 ? 's' : ''})`}
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          <button
+                            type="button"
+                            onClick={() => flushFollowUps.mutate(task.id)}
+                            disabled={flushFollowUps.isPending}
+                            className="text-xs text-amber-300 hover:text-amber-100 underline disabled:text-dark-500 disabled:no-underline"
+                          >
+                            {flushFollowUps.isPending ? 'Resending…' : 'Resend'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => discardFollowUps.mutate(task.id)}
+                            disabled={discardFollowUps.isPending}
+                            className="text-xs text-dark-400 hover:text-dark-200 underline disabled:text-dark-600 disabled:no-underline"
+                          >
+                            Discard
+                          </button>
+                        </div>
+                        {flushFollowUps.isError && (
+                          <p className="text-xs text-red-400 mt-1">
+                            {flushFollowUps.error instanceof Error ? flushFollowUps.error.message : 'Could not resend'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  )
                 )}
                 <div className="relative bg-dark-800 border border-dark-600 rounded-lg focus-within:border-primary-500">
                   <textarea
@@ -697,7 +775,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                         e.currentTarget.form?.requestSubmit();
                       }
                     }}
-                    placeholder={stream.followUpQueueSize > 0 ? "Add another message..." : "Follow-up message..."}
+                    placeholder={queuedCount > 0 ? "Add another message..." : "Follow-up message..."}
                     disabled={continueTask.isPending || isReadingImages}
                     rows={1}
                     className="w-full bg-transparent px-3 py-2 pr-28 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
@@ -735,17 +813,12 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                 {followUpImages.length > 0 && (
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
                     {followUpImages.map((img) => (
-                      <div key={img.id} className="relative group w-12 h-12 rounded-lg overflow-hidden border border-dark-600 bg-dark-800">
-                        <img src={img.dataUrl} alt={img.name} className="w-full h-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeFollowUpImage(img.id)}
-                          className="absolute top-0 right-0 p-0.5 bg-dark-900/80 rounded-bl-lg text-dark-300 hover:text-white opacity-100 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100 transition-opacity"
-                          aria-label={`Remove ${img.name}`}
-                        >
-                          <X size={10} />
-                        </button>
-                      </div>
+                      <ImageThumbnail
+                        key={img.id}
+                        src={img.dataUrl}
+                        alt={img.name}
+                        onRemove={() => removeFollowUpImage(img.id)}
+                      />
                     ))}
                     <div className="flex items-center text-dark-500 text-xs gap-1">
                       <Image size={10} /><span>{followUpImages.length}</span>

@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import * as storage from './storage.js';
-import { getTaskImages } from './taskAttachments.js';
+import { ATTACHMENT_RETENTION_DAYS, getTaskImages, pruneStaleAttachments } from './taskAttachments.js';
 import { agentPool } from './agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { buildTaskAllowedPaths } from './pathValidation.js';
@@ -34,6 +34,25 @@ export function startWaitingTaskChecker(): void {
   });
 
   console.log('Waiting task checker started');
+}
+
+/**
+ * Attachments are append-only (a follow-up supersedes rather than deletes), so
+ * without a sweep the stored base64 grows without bound. Runs off-peak.
+ */
+export function startAttachmentRetention(): void {
+  cron.schedule('17 4 * * *', () => {
+    try {
+      const removed = pruneStaleAttachments();
+      if (removed > 0) {
+        console.log(`Attachment retention: removed ${removed} superseded attachment(s)`);
+      }
+    } catch (error) {
+      console.error('Attachment retention failed:', error instanceof Error ? error.message : error);
+    }
+  });
+
+  console.log(`Attachment retention started (${ATTACHMENT_RETENTION_DAYS}-day window)`);
 }
 
 async function checkWaitingTasks(): Promise<void> {

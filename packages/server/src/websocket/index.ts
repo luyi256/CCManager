@@ -3,11 +3,12 @@ import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
 import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed, touchTaskProgress } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
-import { dequeue, hasQueued, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
+import { hasQueued, queueSize } from '../services/followUpQueue.js';
+import { drainFollowUps } from '../services/followUpDispatch.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import { buildTaskStreamSnapshot, taskLogToStreamEvent } from '../services/taskStream.js';
-import { getTaskImages, replaceTaskImages } from '../services/taskAttachments.js';
+import { getTaskImages } from '../services/taskAttachments.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -422,97 +423,27 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
           await saveTask(task.projectId, task);
         }
 
-        // Drain queued follow-up messages: merge all pending into one and resume session
+        // Drain queued follow-up messages: merge all pending into one and resume
+        // session. Queue rows survive a blocked drain so nothing is lost.
         if (task && hasQueued(data.taskId)) {
-          const prompts: string[] = [];
-          const allImages: string[] = [];
-          let queuedRunner = task.runner;
-          let queuedModel = task.model;
-          let msg;
-          while ((msg = dequeue(data.taskId))) {
-            prompts.push(msg.prompt);
-            if (msg.images) allImages.push(...msg.images);
-            if (msg.runner) queuedRunner = msg.runner;
-            if (msg.model !== undefined) queuedModel = msg.model;
+          const result = await drainFollowUps(data.taskId);
+          if (result.status === 'dispatched') {
+            await persistAndBroadcastPhase(data.taskId, 'starting', result.startedAt);
+            broadcastToTask(data.taskId, 'task:status', {
+              taskId: data.taskId,
+              status: 'running',
+            });
+            return; // Skip the completed broadcast since we're continuing
           }
-          clearFollowUpQueue(data.taskId);
-
-          const mergedPrompt = prompts.join('\n\n');
-          let sessionId: string | undefined;
-          let sessionRunner: string | undefined;
-          sessionId = task.sessionId;
-          sessionRunner = task.sessionRunner;
-          if (!sessionId && task.gitInfo) {
-            try {
-              const gitInfo = JSON.parse(task.gitInfo);
-              sessionId = gitInfo.sessionId;
-              sessionRunner = gitInfo.sessionRunner;
-            } catch { /* ignore */ }
-          }
-
-          if (sessionId) {
-            const project = await getProject(task.projectId);
-            if (project) {
-              if (sessionRunner && queuedRunner !== sessionRunner) {
-                console.log(`Task ${data.taskId}: keeping queued follow-up on original ${sessionRunner} session runner`);
-                queuedRunner = sessionRunner as typeof queuedRunner;
-                queuedModel = task.model;
-              }
-              const startedAt = new Date().toISOString();
-              task.status = 'running';
-              task.continuePrompt = mergedPrompt;
-              task.runner = queuedRunner;
-              task.model = queuedModel;
-              task.startedAt = startedAt;
-              task.completedAt = undefined;
-              task.error = undefined;
-              replaceTaskImages(task.id, allImages);
-              task.attemptCount = (task.attemptCount || 0) + 1;
-              task.lastProgressAt = startedAt;
-              await saveTask(task.projectId, task);
-
-              console.log(`Task ${data.taskId}: Draining ${prompts.length} queued follow-up(s), resuming session`);
-              const dispatched = agentPool.dispatchTask(project.agentId, {
-                taskId: task.id,
-                projectId: project.id,
-                projectPath: project.projectPath,
-                prompt: mergedPrompt,
-                isPlanMode: task.isPlanMode,
-                runner: task.runner,
-                model: task.model,
-                skipModelValidation: true,
-                executor: project.executor,
-                dockerImage: project.dockerImage,
-                worktreeBranch: task.worktreeBranch,
-                continueSession: true,
-                sessionId,
-                postTaskHook: project.postTaskHook,
-                extraMounts: project.extraMounts,
-                allowedPaths: buildTaskAllowedPaths(project),
-                images: allImages.length > 0 ? allImages : undefined,
-                startedAt,
-                attempt: task.attemptCount,
-              });
-
-              if (dispatched) {
-                await persistAndBroadcastPhase(data.taskId, 'starting', startedAt);
-                // Broadcast that task is running again
-                broadcastToTask(data.taskId, 'task:status', {
-                  taskId: data.taskId,
-                  status: 'running',
-                });
-                return; // Skip the completed broadcast since we're continuing
-              }
-
-              // Agent went away before the queued follow-up could be dispatched.
-              // Revert to completed so the task is not stuck in "running", then fall
-              // through to the normal completed broadcast below.
-              console.warn(`Task ${data.taskId}: Failed to dispatch queued follow-up (agent unavailable); leaving task completed`);
-              task.status = 'completed';
-              task.completedAt = new Date().toISOString();
-              task.continuePrompt = undefined;
-              await saveTask(task.projectId, task);
-            }
+          if (result.status === 'blocked') {
+            console.warn(
+              `Task ${data.taskId}: ${result.count} queued follow-up(s) held (${result.reason})`
+            );
+            broadcastToTask(data.taskId, 'task:followup_pending', {
+              taskId: data.taskId,
+              queueSize: result.count,
+              reason: result.reason,
+            });
           }
         }
 
@@ -549,10 +480,14 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
           await persistAndBroadcastPhase(data.taskId, 'failed', task.startedAt);
         }
 
-        // Clear queued follow-ups on failure (don't try to continue a failed session)
+        // Keep queued follow-ups on failure. Discarding them silently lost the
+        // user's images; surface them instead so they can resend or discard.
         if (hasQueued(data.taskId)) {
-          clearFollowUpQueue(data.taskId);
-          console.log(`Task ${data.taskId}: Cleared queued follow-ups due to failure`);
+          broadcastToTask(data.taskId, 'task:followup_pending', {
+            taskId: data.taskId,
+            queueSize: queueSize(data.taskId),
+            reason: 'task_failed',
+          });
         }
 
         // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event

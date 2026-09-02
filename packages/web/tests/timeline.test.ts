@@ -2,9 +2,45 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   groupTimeline,
+  parseUserMessageContent,
   safeStringify,
   type TimelineItem,
 } from '../src/utils/timeline';
+
+describe('parseUserMessageContent', () => {
+  it('reads legacy rows that stored a bare string', () => {
+    // Rows written before attachments existed must keep rendering, and the
+    // returned text is what dedupes optimistic messages.
+    assert.deepEqual(parseUserMessageContent('hello'), {
+      text: 'hello',
+      attachmentIds: [],
+    });
+  });
+
+  it('reads the structured shape with attachment ids', () => {
+    assert.deepEqual(
+      parseUserMessageContent({ text: 'look at this', attachmentIds: [12, 13] }),
+      { text: 'look at this', attachmentIds: [12, 13] }
+    );
+  });
+
+  it('tolerates a missing or malformed attachment list', () => {
+    assert.deepEqual(parseUserMessageContent({ text: 'no images' }), {
+      text: 'no images',
+      attachmentIds: [],
+    });
+    assert.deepEqual(
+      parseUserMessageContent({ text: 'mixed', attachmentIds: [1, 'two', null] }),
+      { text: 'mixed', attachmentIds: [1] }
+    );
+  });
+
+  it('never returns "[object Object]" for unexpected content', () => {
+    assert.deepEqual(parseUserMessageContent(null), { text: '', attachmentIds: [] });
+    assert.deepEqual(parseUserMessageContent(undefined), { text: '', attachmentIds: [] });
+    assert.equal(parseUserMessageContent(42).text, '42');
+  });
+});
 
 describe('timeline grouping', () => {
   it('joins a persisted tool result to its matching tool call', () => {

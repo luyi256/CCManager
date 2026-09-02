@@ -1,3 +1,10 @@
+export interface AttachmentRef {
+  id: number;
+  position: number;
+  mimeType: string;
+  byteSize: number;
+}
+
 export interface TimelineItem {
   id: string;
   type: 'output' | 'tool_use' | 'tool_result' | 'user_message';
@@ -9,6 +16,31 @@ export interface TimelineItem {
   toolInput?: unknown;
   toolResult?: unknown;
   toolStatus?: 'pending' | 'running' | 'completed' | 'failed';
+  attachments?: AttachmentRef[];
+}
+
+/**
+ * user_message log content used to be a bare string and is now
+ * { text, attachmentIds }. Rows of both shapes coexist, so this is the single
+ * place that knows how to read either one.
+ */
+export function parseUserMessageContent(content: unknown): {
+  text: string;
+  attachmentIds: number[];
+} {
+  if (typeof content === 'string') return { text: content, attachmentIds: [] };
+  if (content && typeof content === 'object') {
+    const record = content as { text?: unknown; attachmentIds?: unknown };
+    if (typeof record.text === 'string') {
+      return {
+        text: record.text,
+        attachmentIds: Array.isArray(record.attachmentIds)
+          ? record.attachmentIds.filter((id): id is number => typeof id === 'number')
+          : [],
+      };
+    }
+  }
+  return { text: String(content ?? ''), attachmentIds: [] };
 }
 
 export type GroupedItem =

@@ -215,6 +215,9 @@ export function useTaskStream(taskId: number | null) {
         });
         break;
       case 'task:followup_queued':
+      // A blocked drain reports the same durable count; the banner itself is
+      // driven by useTaskFollowUps, which survives this stream being torn down.
+      case 'task:followup_pending':
         dispatch({ type: 'followup_queue', size: Number(msg.queueSize) || 0 });
         break;
     }

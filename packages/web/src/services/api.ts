@@ -180,6 +180,63 @@ export async function continueTask(
   });
 }
 
+export interface QueuedFollowUp {
+  id: number;
+  prompt: string;
+  imageCount: number;
+  runner?: Runner;
+  model?: string;
+}
+
+export async function getTaskFollowUps(
+  taskId: number
+): Promise<{ queueSize: number; items: QueuedFollowUp[] }> {
+  return request(`/tasks/${taskId}/followups`);
+}
+
+export async function flushTaskFollowUps(taskId: number): Promise<{ dispatched?: number }> {
+  return request(`/tasks/${taskId}/followups/flush`, { method: 'POST' });
+}
+
+export async function discardTaskFollowUps(taskId: number): Promise<{ discarded: number }> {
+  return request(`/tasks/${taskId}/followups`, { method: 'DELETE' });
+}
+
+export interface AttachmentMeta {
+  id: number;
+  position: number;
+  mimeType: string;
+  byteSize: number;
+}
+
+export interface TaskAttachments {
+  initial: AttachmentMeta[];
+  byLogId: Record<string, AttachmentMeta[]>;
+}
+
+export async function getTaskAttachments(taskId: number): Promise<TaskAttachments> {
+  return request(`/tasks/${taskId}/attachments`);
+}
+
+/**
+ * Attachment bytes cannot go through request() (it always parses JSON) and an
+ * <img src> cannot carry the Bearer header, so fetch the blob here and let the
+ * caller turn it into an object URL.
+ */
+export async function fetchAttachmentBlob(taskId: number, attachmentId: number): Promise<Blob> {
+  const token = getApiToken();
+  const response = await fetch(`${API_BASE}/tasks/${taskId}/attachments/${attachmentId}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (response.status === 401 || response.status === 403) {
+    clearApiToken();
+    window.location.reload();
+    throw new Error('Authorization required');
+  }
+  if (!response.ok) throw new Error('Failed to load attachment');
+  return response.blob();
+}
+
 export async function mergeTask(taskId: number, deleteBranch = false): Promise<{ message: string }> {
   return request(`/tasks/${taskId}/merge`, {
     method: 'POST',

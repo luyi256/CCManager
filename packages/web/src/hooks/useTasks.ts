@@ -96,6 +96,49 @@ export function useContinueTask() {
       // Also refetch to ensure consistency
       queryClient.invalidateQueries({ queryKey: ['tasks', task.projectId] });
       queryClient.invalidateQueries({ queryKey: ['taskLogs', task.id] });
+      queryClient.invalidateQueries({ queryKey: ['taskAttachments', task.id] });
+      queryClient.invalidateQueries({ queryKey: ['taskFollowUps', task.id] });
+    },
+  });
+}
+
+/**
+ * Queued follow-ups are durable server state, so read them from the API rather
+ * than the live stream: the stream is torn down as soon as a task goes terminal,
+ * which is exactly when a stranded queue needs to be visible.
+ */
+export function useTaskFollowUps(taskId: number | null, enabled = true) {
+  return useQuery({
+    queryKey: ['taskFollowUps', taskId],
+    queryFn: () => api.getTaskFollowUps(taskId as number),
+    enabled: taskId !== null && enabled,
+  });
+}
+
+export function useFlushFollowUps() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (taskId: number) => api.flushTaskFollowUps(taskId),
+    onSuccess: (_result, taskId) => {
+      queryClient.invalidateQueries({ queryKey: ['task', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['taskLogs', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['taskFollowUps', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['taskAttachments', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['tasks'] });
+    },
+  });
+}
+
+export function useDiscardFollowUps() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (taskId: number) => api.discardTaskFollowUps(taskId),
+    onSuccess: (_result, taskId) => {
+      queryClient.invalidateQueries({ queryKey: ['task', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['taskLogs', taskId] });
+      queryClient.invalidateQueries({ queryKey: ['taskFollowUps', taskId] });
     },
   });
 }
