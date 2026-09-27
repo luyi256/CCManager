@@ -111,7 +111,7 @@ Runner 是否可用取决于每台 Agent 机器。Agent 启动时会探测已安
 
 | 依赖 | 版本 | 用途 |
 |---|---:|---|
-| [Node.js](https://nodejs.org/) | `>= 18` | 运行时 |
+| [Node.js](https://nodejs.org/) | `>= 18`（使用 Cursor SDK 的 Agent 需 `>= 22.13`） | 运行时 |
 | [pnpm](https://pnpm.io/) | `9.x` | Monorepo 包管理 |
 | [PM2](https://pm2.keymetrics.io/) | `>= 5` | 推荐的进程管理器 |
 | 至少一个受支持的编程 CLI | 当前兼容版本 | 每台 Agent 上执行任务 |

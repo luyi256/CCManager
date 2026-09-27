@@ -111,7 +111,7 @@ Docker execution currently wraps the plain `claude` runner. The other runners us
 
 | Dependency | Version | Purpose |
 |---|---:|---|
-| [Node.js](https://nodejs.org/) | `>= 18` | Runtime |
+| [Node.js](https://nodejs.org/) | `>= 18` (`>= 22.13` for agents using Cursor SDK) | Runtime |
 | [pnpm](https://pnpm.io/) | `9.x` | Workspace package manager |
 | [PM2](https://pm2.keymetrics.io/) | `>= 5` | Recommended process manager |
 | At least one supported coding CLI | Current compatible release | Task execution on each agent |

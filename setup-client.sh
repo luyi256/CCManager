@@ -36,8 +36,9 @@ if ! command -v node &>/dev/null; then
   exit 1
 fi
 NODE_VER=$(node -v | sed 's/v//' | cut -d. -f1)
-if [ "$NODE_VER" -lt 18 ]; then
-  err "Node.js >= 18 required, found $(node -v)"
+NODE_MINOR=$(node -v | sed 's/v//' | cut -d. -f2)
+if [ "$NODE_VER" -lt 22 ] || { [ "$NODE_VER" -eq 22 ] && [ "$NODE_MINOR" -lt 13 ]; }; then
+  err "Node.js >= 22.13 required by the Cursor Agent SDK, found $(node -v)"
   exit 1
 fi
 ok "Node.js $(node -v)"
