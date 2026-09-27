@@ -35,3 +35,18 @@ test('uses the default variant parameters when Router is the only model', () => 
     params: [{ id: 'optimize_for', value: 'balanced' }],
   });
 });
+
+test('adds the default Router mode when it is explicitly selected', () => {
+  assert.deepEqual(selectCursorModel([{
+    id: 'auto-smart',
+    displayName: 'Cursor Router',
+    variants: [{
+      displayName: 'Intelligence',
+      isDefault: true,
+      params: [{ id: 'optimize_for', value: 'intelligence' }],
+    }],
+  }], 'auto-smart'), {
+    id: 'auto-smart',
+    params: [{ id: 'optimize_for', value: 'intelligence' }],
+  });
+});

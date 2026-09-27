@@ -46,8 +46,10 @@ async function loadCursorSdk(): Promise<typeof import('@cursor/sdk')> {
 }
 
 export function selectCursorModel(models: SDKModel[], requested: string | undefined): ModelSelection | null {
-  if (requested) return { id: requested };
-  const selected = models.find((model) => model.id !== 'auto-smart') ?? models[0];
+  if (requested && requested !== 'auto-smart') return { id: requested };
+  const selected = requested === 'auto-smart'
+    ? models.find((model) => model.id === requested)
+    : models.find((model) => model.id !== 'auto-smart') ?? models[0];
   if (!selected) return null;
   const defaultVariant = selected.variants?.find((variant) => variant.isDefault);
   return {
@@ -57,7 +59,7 @@ export function selectCursorModel(models: SDKModel[], requested: string | undefi
 }
 
 async function resolveModel(requested: string | undefined): Promise<ModelSelection> {
-  if (requested) return { id: requested };
+  if (requested && requested !== 'auto-smart') return { id: requested };
   const { Cursor } = await loadCursorSdk();
   const selected = selectCursorModel(await Cursor.models.list(), requested);
   if (!selected) throw new Error('Cursor did not return any models for this account');
