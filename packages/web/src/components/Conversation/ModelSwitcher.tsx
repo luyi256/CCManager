@@ -6,6 +6,7 @@ import type { Runner } from '../../types';
 const RUNNERS: Array<{ id: Runner; label: string; accent: string }> = [
   { id: 'codex', label: 'Codex', accent: 'text-emerald-400' },
   { id: 'tcodex', label: 'tCodex', accent: 'text-teal-400' },
+  { id: 'cursor', label: 'Cursor', accent: 'text-violet-400' },
   { id: 'claude', label: 'Claude', accent: 'text-primary-400' },
   { id: 'claude-grok', label: 'Claude Grok', accent: 'text-orange-400' },
   { id: 'tclaude', label: 'tClaude', accent: 'text-sky-400' },

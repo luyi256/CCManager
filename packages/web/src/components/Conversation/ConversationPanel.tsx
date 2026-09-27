@@ -120,6 +120,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isReadingImages, setIsReadingImages] = useState(false);
+  const followUpImagesRef = useRef<PendingImage[]>([]);
+  const followUpImageReadPromiseRef = useRef<Promise<PendingImage[]> | null>(null);
   const followUpFileInputRef = useRef<HTMLInputElement>(null);
 
   // Model switching state for follow-up
@@ -158,36 +160,56 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     if (files.length === 0) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    try {
-      const result = await readImageFiles(files, followUpImages);
+    const readPromise = readImageFiles(files, followUpImagesRef.current).then((result) => {
+      followUpImagesRef.current = result.images;
       setFollowUpImages(result.images);
       setImageError(result.error || null);
+      return result.images;
+    });
+    followUpImageReadPromiseRef.current = readPromise;
+    try {
+      await readPromise;
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Could not read image');
     } finally {
+      if (followUpImageReadPromiseRef.current === readPromise) {
+        followUpImageReadPromiseRef.current = null;
+      }
       setIsReadingImages(false);
     }
-  }, [followUpImages, isReadingImages]);
+  }, [isReadingImages]);
 
   const handleFollowUpFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    try {
-      const result = await readImageFiles(files, followUpImages);
+    const readPromise = readImageFiles(files, followUpImagesRef.current).then((result) => {
+      followUpImagesRef.current = result.images;
       setFollowUpImages(result.images);
       setImageError(result.error || null);
+      return result.images;
+    });
+    followUpImageReadPromiseRef.current = readPromise;
+    try {
+      await readPromise;
     } catch (error) {
       setImageError(error instanceof Error ? error.message : 'Could not read image');
     } finally {
+      if (followUpImageReadPromiseRef.current === readPromise) {
+        followUpImageReadPromiseRef.current = null;
+      }
       setIsReadingImages(false);
       e.target.value = '';
     }
-  }, [followUpImages, isReadingImages]);
+  }, [isReadingImages]);
 
   const removeFollowUpImage = useCallback((id: string) => {
-    setFollowUpImages(prev => prev.filter(img => img.id !== id));
+    setFollowUpImages(prev => {
+      const next = prev.filter(img => img.id !== id);
+      followUpImagesRef.current = next;
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -693,13 +715,22 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
           {canSendFollowUp && (
             <div className="p-3">
               <form
-                onSubmit={(e) => {
+                onSubmit={async (e) => {
                   e.preventDefault();
                   const prompt = continuePrompt.trim();
-                  if ((!prompt && followUpImages.length === 0) || isReadingImages) return;
+                  if (continueTask.isPending) return;
+                  let readyImages: PendingImage[];
+                  try {
+                    readyImages = followUpImageReadPromiseRef.current
+                      ? await followUpImageReadPromiseRef.current
+                      : followUpImagesRef.current;
+                  } catch {
+                    return;
+                  }
+                  if (!prompt && readyImages.length === 0) return;
                   const effectivePrompt = prompt ||
-                    `Please analyze the ${followUpImages.length} attached image${followUpImages.length === 1 ? '' : 's'}.`;
-                  const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
+                    `Please analyze the ${readyImages.length} attached image${readyImages.length === 1 ? '' : 's'}.`;
+                  const imageBase64s = readyImages.length > 0 ? readyImages.map(img => img.dataUrl) : undefined;
                   const optimistic = { content: effectivePrompt, timestamp: Date.now() };
                   setSentMessages(prev => [...prev, optimistic]);
                   continueTask.mutate({
@@ -711,6 +742,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   }, {
                     onSuccess: () => {
                       setContinuePrompt('');
+                      followUpImagesRef.current = [];
                       setFollowUpImages([]);
                       if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
                     },

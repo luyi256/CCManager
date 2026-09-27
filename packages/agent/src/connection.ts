@@ -4,17 +4,19 @@ import fs from 'fs';
 import { promisify } from 'util';
 import { ClaudeExecutor } from './executor.js';
 import { CodexExecutor } from './codexExecutor.js';
+import { CursorExecutor } from './cursorExecutor.js';
 import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import { parseClaudeGrokSettings } from './runnerModels.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
+import { getCursorSessionDetail, listCursorSessions, searchCursorSessions } from './cursorSessions.js';
 
 const execAsync = promisify(exec);
 
-type Executor = ClaudeExecutor | CodexExecutor | DockerExecutor;
-type Runner = 'claude' | 'claude-grok' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
+type Executor = ClaudeExecutor | CodexExecutor | CursorExecutor | DockerExecutor;
+type Runner = 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
 
 interface BufferedEvent {
   event: string;
@@ -73,11 +75,29 @@ function parseModelOutput(output: string, runner: Runner): string[] {
   return Array.from(models);
 }
 
+async function listCursorModels(): Promise<string[]> {
+  const { Cursor } = await import('@cursor/sdk');
+  const models = await Cursor.models.list();
+  return models.map((model) => model.id);
+}
+
 async function listRunnerModels(runner: Runner): Promise<{ ok: boolean; runner: Runner; models?: string[]; raw?: string; error?: string }> {
+  if (runner === 'cursor') {
+    try {
+      return { ok: true, runner, models: await listCursorModels() };
+    } catch (error) {
+      return {
+        ok: false,
+        runner,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
   const commandByRunner: Record<Runner, string> = {
     claude: 'claude',
     'claude-grok': 'claude-grok',
     codex: 'codex',
+    cursor: 'agent',
     qwen: 'qwen',
     tclaude: 'tclaude',
     tcodex: 'tcodex',
@@ -275,10 +295,14 @@ export class AgentConnection {
     socket.on('sessions:list', async (data: { projectPath: string; projectId?: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] list requested for projectPath: ${data.projectPath}`);
-        const sessions = await listSessions(data.projectPath, {
-          projectId: data.projectId,
-          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
-        });
+        const [fileSessions, cursorSessions] = await Promise.all([
+          listSessions(data.projectPath, {
+            projectId: data.projectId,
+            dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+          }),
+          listCursorSessions(data.projectPath).catch(() => []),
+        ]);
+        const sessions = [...fileSessions, ...cursorSessions];
         console.log(`[sessions] list result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
@@ -290,10 +314,14 @@ export class AgentConnection {
     socket.on('sessions:active', async (data: { projectPath: string; projectId?: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] active requested for projectPath: ${data.projectPath}`);
-        const sessions = await listActiveSessions(data.projectPath, {
-          projectId: data.projectId,
-          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
-        });
+        const [fileSessions, cursorSessions] = await Promise.all([
+          listActiveSessions(data.projectPath, {
+            projectId: data.projectId,
+            dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+          }),
+          listCursorSessions(data.projectPath, true).catch(() => []),
+        ]);
+        const sessions = [...fileSessions, ...cursorSessions];
         console.log(`[sessions] active result: ${sessions.length} sessions found`);
         callback({ ok: true, sessions });
       } catch (error) {
@@ -311,23 +339,27 @@ export class AgentConnection {
     }, callback: (result: unknown) => void) => {
       try {
         const runner = data.runner ?? 'claude';
-        const sessions = await listSessions(data.projectPath, {
-          projectId: data.projectId,
-          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
-        });
+        const sessions = data.runner === 'cursor'
+          ? await listCursorSessions(data.projectPath)
+          : await listSessions(data.projectPath, {
+              projectId: data.projectId,
+              dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+            });
         const session = sessions.find((item) =>
           item.runner === runner && item.sessionId === data.sessionId
         );
-        const entries = await getSessionDetail(
-          data.projectPath,
-          runner,
-          data.sessionId,
-          data.relatedSessionIds,
-          {
-            projectId: data.projectId,
-            dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
-          },
-        );
+        const entries = runner === 'cursor'
+          ? await getCursorSessionDetail(data.projectPath, data.sessionId)
+          : await getSessionDetail(
+              data.projectPath,
+              runner,
+              data.sessionId,
+              data.relatedSessionIds,
+              {
+                projectId: data.projectId,
+                dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+              },
+            );
         callback({ ok: true, entries, model: session?.model });
       } catch (error) {
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
@@ -337,10 +369,15 @@ export class AgentConnection {
     socket.on('sessions:search', async (data: { projectPath: string; projectId?: string; query: string }, callback: (result: unknown) => void) => {
       try {
         console.log(`[sessions] search requested for projectPath: ${data.projectPath}, query: "${data.query}"`);
-        const results = await searchSessions(data.projectPath, data.query, {
-          projectId: data.projectId,
-          dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
-        });
+        const [fileResults, cursorResults] = await Promise.all([
+          searchSessions(data.projectPath, data.query, {
+            projectId: data.projectId,
+            dockerSessionsDir: this.config.dockerConfig?.sessionsDir,
+          }),
+          searchCursorSessions(data.projectPath, data.query).catch(() => []),
+        ]);
+        const results = [...fileResults, ...cursorResults]
+          .sort((a, b) => new Date(b.lastModified).getTime() - new Date(a.lastModified).getTime());
         console.log(`[sessions] search result: ${results.length} sessions matched`);
         callback({ ok: true, results });
       } catch (error) {
@@ -350,7 +387,7 @@ export class AgentConnection {
     });
 
     socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
-      if (data.runner !== 'claude' && data.runner !== 'claude-grok' && data.runner !== 'codex' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
+      if (data.runner !== 'claude' && data.runner !== 'claude-grok' && data.runner !== 'codex' && data.runner !== 'cursor' && data.runner !== 'qwen' && data.runner !== 'tclaude' && data.runner !== 'tcodex') {
         callback({ ok: false, error: 'Invalid runner' });
         return;
       }
@@ -536,6 +573,10 @@ export class AgentConnection {
       const taskExecutor = task.executor ?? this.config.executor ?? 'local';
       if (task.runner === 'codex' || task.runner === 'tcodex') {
         executor = new CodexExecutor(undefined, task.runner === 'tcodex' ? 'tcodex' : 'codex');
+      } else if (task.runner === 'cursor') {
+        // Use Cursor's supported SDK instead of scraping CLI output. It provides
+        // typed streaming, image inputs, durable agent IDs, and resume/cancel.
+        executor = new CursorExecutor();
       } else if (task.runner === 'claude-grok') {
         // claude-grok is a host-side Claude Code wrapper with its own local
         // router/config, so it must not be replaced by the plain Docker image.

@@ -24,6 +24,8 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<PendingImage[]>([]);
   const [isReadingImages, setIsReadingImages] = useState(false);
+  const imagesRef = useRef<PendingImage[]>([]);
+  const imageReadPromiseRef = useRef<Promise<PendingImage[]> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Update model when lastModel prop changes (project switch)
@@ -50,21 +52,31 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
       if (files.length === 0) return;
       if (isReadingImages) return;
       setIsReadingImages(true);
-      try {
-        const result = await readImageFiles(files, images);
+      const readPromise = readImageFiles(files, imagesRef.current).then((result) => {
+        imagesRef.current = result.images;
         setImages(result.images);
         setError(result.error || null);
+        return result.images;
+      });
+      imageReadPromiseRef.current = readPromise;
+      try {
+        await readPromise;
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Could not read image');
       } finally {
+        if (imageReadPromiseRef.current === readPromise) imageReadPromiseRef.current = null;
         setIsReadingImages(false);
       }
     },
-    [images, isReadingImages]
+    [isReadingImages]
   );
 
   const removeImage = useCallback((id: string) => {
-    setImages((prev) => prev.filter((img) => img.id !== id));
+    setImages((prev) => {
+      const next = prev.filter((img) => img.id !== id);
+      imagesRef.current = next;
+      return next;
+    });
   }, []);
 
   const handleFileSelect = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -72,30 +84,43 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
     if (!files) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    try {
-      const result = await readImageFiles(files, images);
+    const readPromise = readImageFiles(files, imagesRef.current).then((result) => {
+      imagesRef.current = result.images;
       setImages(result.images);
       setError(result.error || null);
+      return result.images;
+    });
+    imageReadPromiseRef.current = readPromise;
+    try {
+      await readPromise;
     } catch (error) {
       setError(error instanceof Error ? error.message : 'Could not read image');
     } finally {
+      if (imageReadPromiseRef.current === readPromise) imageReadPromiseRef.current = null;
       setIsReadingImages(false);
       // Reset so selecting the same file again triggers onChange
       e.target.value = '';
     }
-  }, [images, isReadingImages]);
+  }, [isReadingImages]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!prompt.trim() && images.length === 0) || isSubmitting || isReadingImages) return;
+    if (isSubmitting) return;
 
     setError(null);
     try {
-      const imageBase64s = images.length > 0
-        ? images.map((img) => img.dataUrl)
+      // A paste and Cmd/Ctrl+Enter can arrive in the same React batch. State has
+      // not rendered yet in that case, so wait for the in-flight FileReader
+      // instead of submitting the text alone and silently dropping the image.
+      const readyImages = imageReadPromiseRef.current
+        ? await imageReadPromiseRef.current
+        : imagesRef.current;
+      if (!prompt.trim() && readyImages.length === 0) return;
+      const imageBase64s = readyImages.length > 0
+        ? readyImages.map((img) => img.dataUrl)
         : undefined;
       await onSubmit({
-        prompt: prompt.trim() || `Please analyze the ${images.length} attached image${images.length === 1 ? '' : 's'}.`,
+        prompt: prompt.trim() || `Please analyze the ${readyImages.length} attached image${readyImages.length === 1 ? '' : 's'}.`,
         isPlanMode,
         runner,
         model: model || undefined,
@@ -104,6 +129,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
       });
       setPrompt('');
       setDependsOn(undefined);
+      imagesRef.current = [];
       setImages([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create task');
@@ -140,9 +166,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
             onKeyDown={(e) => {
               if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
-                if ((prompt.trim() || images.length > 0) && !isSubmitting) {
-                  handleSubmit(e);
-                }
+                e.currentTarget.form?.requestSubmit();
               }
             }}
             placeholder="Describe the coding task..."

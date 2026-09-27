@@ -31,6 +31,21 @@ test('names the actual missing command instead of a hard-coded wrapper', () => {
   assert.doesNotMatch(buildRunnerCatalog('qwen', { kind: 'missing' }).message || '', /claude-grok/);
 });
 
+test('preserves a runner-specific unavailable message without caching it', () => {
+  assert.deepEqual(buildRunnerCatalog('cursor', {
+    kind: 'unavailable',
+    message: 'Configure CURSOR_API_KEY',
+  }), {
+    installed: false,
+    models: [],
+    message: 'Configure CURSOR_API_KEY',
+  });
+  assert.equal(capabilityCacheTtl({
+    kind: 'unavailable',
+    message: 'Configure CURSOR_API_KEY',
+  }), null);
+});
+
 test('filters Codex catalog entries to selectable API-supported models', () => {
   const raw = JSON.stringify({
     models: [

@@ -8,7 +8,8 @@ import type { Runner } from '../types/index.js';
 import { replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
 
 const router = Router();
-const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'cursor', 'qwen', 'tclaude', 'tcodex']);
+const CURSOR_MAX_IMAGE_COUNT = 5;
 const ACTIVE_SESSION_CACHE_TTL_MS = 15_000;
 const activeSessionCache = new Map<string, { expiresAt: number; sessions: SessionListItem[] }>();
 
@@ -332,6 +333,9 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+    }
+    if (selectedRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+      return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
     }
     const effectivePrompt = normalizedPrompt ||
       `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;

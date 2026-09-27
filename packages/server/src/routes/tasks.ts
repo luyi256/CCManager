@@ -14,7 +14,8 @@ import { bindAttachmentsToLog, getTaskImages, replaceTaskImages, validateTaskIma
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
-const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'cursor', 'qwen', 'tclaude', 'tcodex']);
+const CURSOR_MAX_IMAGE_COUNT = 5;
 const FOLLOWUP_BLOCKED_MESSAGES: Record<string, string> = {
   no_session: 'This task has no session to resume yet. Wait for it to start, then try again.',
   no_project: 'The project for this task is no longer available.',
@@ -102,6 +103,9 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
     } catch (error) {
       return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+    }
+    if (selectedRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+      return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
     }
     const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
     if (selectedModel.error) {
@@ -423,6 +427,9 @@ router.post('/tasks/:id/continue', async (req, res) => {
       }
     }
     const nextRunner = sessionRunner ?? parseRunner(runner) ?? task.runner ?? 'claude';
+    if (nextRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+      return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
+    }
     const modelWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'model');
     const selectedModel = validateRunnerSelection(agent.capabilities, nextRunner, model);
     if (selectedModel.error) {

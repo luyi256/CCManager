@@ -7,7 +7,7 @@ import { getRunnerModelCatalog } from '../services/runnerModels.js';
 import type { Runner } from '../types/index.js';
 
 const router = Router();
-const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'qwen', 'tclaude', 'tcodex']);
+const VALID_MODEL_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'cursor', 'qwen', 'tclaude', 'tcodex']);
 
 // Get all agents (both connected and offline)
 router.get('/', async (req, res) => {

@@ -41,6 +41,7 @@ const RUNNER_LABELS: Record<Runner, string> = {
   claude: 'Claude',
   'claude-grok': 'Grok',
   codex: 'Codex',
+  cursor: 'Cursor',
   qwen: 'Qwen',
   tclaude: 'tClaude',
   tcodex: 'tCodex',

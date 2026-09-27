@@ -4,17 +4,19 @@ import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
 
-export type Runner = 'claude' | 'claude-grok' | 'codex' | 'qwen' | 'tclaude' | 'tcodex';
+export type Runner = 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
 
 const execFileAsync = promisify(execFile);
 const RUNNER_COMMANDS: Record<Runner, string> = {
   claude: 'claude',
   'claude-grok': 'claude-grok',
   codex: 'codex',
+  cursor: 'agent',
   qwen: 'qwen',
   tclaude: 'tclaude',
   tcodex: 'tcodex',
 };
+const CURSOR_SDK_MIN_NODE = [22, 13] as const;
 const CLAUDE_ALIAS_PATTERN = /'([a-z][a-z0-9-]*)'/g;
 const TCLAUDE_UNAVAILABLE_MODEL = '__ccmanager_model_probe__';
 const CAPABILITY_CACHE_TTL_MS = 30 * 60 * 1000;
@@ -76,6 +78,12 @@ interface RunnerModelCatalog {
 
 function normalizeModels(models: string[]): string[] {
   return Array.from(new Set(models.map((model) => model.trim()).filter(Boolean)));
+}
+
+function cursorSdkNodeSupported(version = process.versions.node): boolean {
+  const [major = 0, minor = 0] = version.split('.').map(Number);
+  return major > CURSOR_SDK_MIN_NODE[0]
+    || (major === CURSOR_SDK_MIN_NODE[0] && minor >= CURSOR_SDK_MIN_NODE[1]);
 }
 
 async function runCli(
@@ -218,6 +226,29 @@ async function listQwenModels(): Promise<string[]> {
   return [];
 }
 
+async function listCursorModels(): Promise<string[]> {
+  // The SDK is Cursor's stable integration surface; unlike CLI text parsing it
+  // returns the account's canonical model IDs directly.
+  if (!cursorSdkNodeSupported()) {
+    const error = new Error(
+      `Cursor SDK requires Node.js ${CURSOR_SDK_MIN_NODE.join('.')} or newer (current: ${process.versions.node})`
+    ) as NodeJS.ErrnoException;
+    error.code = 'ENOTSUP';
+    throw error;
+  }
+  const { Cursor } = await import('@cursor/sdk');
+  if (!process.env.CURSOR_API_KEY) {
+    const auth = await Cursor.auth.status();
+    if (auth.status !== 'logged-in') {
+      const error = new Error('Configure CURSOR_API_KEY or run the Cursor SDK login on this agent');
+      error.name = 'AuthenticationError';
+      throw error;
+    }
+  }
+  const models = await Cursor.models.list();
+  return normalizeModels(models.map((model) => model.id));
+}
+
 export function parseClaudeGrokSettings(payload: unknown): string[] {
   if (!payload || typeof payload !== 'object') return [];
   const overrides = (payload as { modelOverrides?: unknown }).modelOverrides;
@@ -291,6 +322,8 @@ async function listRunnerModels(runner: Runner): Promise<string[]> {
       return listCodexModels(runner);
     case 'tclaude':
       return listTClaudeModels();
+    case 'cursor':
+      return listCursorModels();
     case 'claude':
       return listClaudeModels();
     case 'claude-grok':
@@ -307,7 +340,8 @@ async function listRunnerModels(runner: Runner): Promise<string[]> {
  */
 export type ProbeOutcome =
   | { kind: 'models'; models: string[] }
-  | { kind: 'missing' }
+  | { kind: 'missing'; message?: string }
+  | { kind: 'unavailable'; message: string }
   | { kind: 'transient'; message: string };
 
 export function buildRunnerCatalog(runner: Runner, outcome: ProbeOutcome): RunnerModelCatalog {
@@ -318,8 +352,12 @@ export function buildRunnerCatalog(runner: Runner, outcome: ProbeOutcome): Runne
     return {
       installed: false,
       models: [],
-      message: `Install or expose the local ${RUNNER_COMMANDS[runner]} command on this agent`,
+      message: outcome.message ??
+        `Install or expose the local ${RUNNER_COMMANDS[runner]} command on this agent`,
     };
+  }
+  if (outcome.kind === 'unavailable') {
+    return { installed: false, models: [], message: outcome.message };
   }
   // Installed, but the catalog could not be read this time. Advertising an empty
   // list keeps the runner selectable; the manager accepts unverified models.
@@ -346,6 +384,21 @@ async function probeRunner(runner: Runner): Promise<ProbeOutcome> {
         ? (error as NodeJS.ErrnoException).code
         : undefined;
       if (code === 'ENOENT') return { kind: 'missing' };
+      if (code === 'ENOTSUP') {
+        return { kind: 'unavailable', message: error instanceof Error ? error.message : String(error) };
+      }
+      if (
+        runner === 'cursor' &&
+        (error instanceof Error && (
+          error.name === 'AuthenticationError' ||
+          /api key|authenticat|logged.?out|unauthorized/i.test(error.message)
+        ))
+      ) {
+        return {
+          kind: 'unavailable',
+          message: 'Configure CURSOR_API_KEY or run the Cursor SDK login on this agent',
+        };
+      }
 
       const message = error instanceof Error ? error.message : String(error);
       if (attempt === 0) {

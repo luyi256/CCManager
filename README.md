@@ -11,10 +11,10 @@ CCManager is a self-hosted control plane for running coding-agent tasks across m
 ## What It Supports
 
 - **Conversation workspace** — Each project has a persistent conversation sidebar, live timeline, follow-up composer, status controls, summaries, and runner/model metadata.
-- **Multiple coding runners** — Claude, Claude Grok, Codex, Qwen, etc. can be selected per task or follow-up.
+- **Multiple coding runners** — Claude, Claude Grok, Codex, Cursor, Qwen, etc. can be selected per task or follow-up.
 - **Agent-discovered models** — Each agent reports the models actually available on that machine; the server validates named model selections before dispatch.
 - **Reliable live output** — Versioned stream events, persisted snapshots, replay after reconnect, duplicate suppression, tool-call grouping, Markdown/GFM, math, tables, and code blocks.
-- **Existing CLI sessions** — Browse active or historical sessions from Claude, Claude Grok, Codex, Qwen, etc., including Docker sessions; search messages, inspect merged chains, adopt a session, or continue it with the original runner.
+- **Existing sessions** — Browse active or historical sessions from Claude, Claude Grok, Codex, Cursor SDK, Qwen, etc., including Docker sessions; search messages, inspect merged chains, adopt a session, or continue it with the original runner.
 - **Task orchestration** — Parallel tasks, dependencies, cancellation, retry, waiting states, Plan Mode, permission prompts, and orphan-task recovery after reconnect.
 - **Rich prompts** — Paste or upload images, add images to follow-ups, and optionally dictate prompts through an OpenAI-compatible Whisper endpoint.
 - **Isolation options** — Run plain Claude tasks locally or in hardened Docker containers; optionally create a Git worktree per task and merge or clean it up from the UI.
@@ -101,6 +101,7 @@ Runner availability is machine-specific. At startup, each agent probes its insta
 | Claude | `claude` | Claude CLI help/settings | Local or Docker |
 | Claude Grok | `claude-grok` | `~/.config/distill-grok/claude-settings.json` | Host |
 | Codex | `codex` | Codex model catalog/config | Host |
+| Cursor | official `@cursor/sdk` | Cursor account model catalog | Host |
 | Qwen | `qwen` | CLI availability; default model | Host |
 | etc. | Other compatible local commands | Agent-reported model catalog | Host |
 
@@ -117,6 +118,8 @@ Docker execution currently wraps the plain `claude` runner. The other runners us
 | [Docker](https://www.docker.com/) | Optional | Plain Claude container execution |
 
 Authenticate each runner on the machine where its agent runs. Docker-mode Claude can reuse `~/.claude/.credentials.json` or receive `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` from the agent environment.
+
+The Cursor runner uses the official TypeScript SDK instead of parsing the `agent` command. Set `CURSOR_API_KEY` in the agent environment, or complete the SDK's interactive login once so credentials are stored in `~/.cursor/sdk/auth.json`. Cursor SDK local execution requires Node.js 22.13 or newer.
 
 ## Quick Start
 
@@ -345,6 +348,7 @@ packages/
     ├── connection.ts             reconnect, heartbeat, parallel task dispatch
     ├── executor.ts               Claude-family and Qwen execution
     ├── codexExecutor.ts          Codex-compatible runner execution
+    ├── cursorExecutor.ts         Cursor SDK execution
     ├── runnerModels.ts           installed-runner/model discovery
     ├── sessions.ts               multi-runner local/Docker session discovery
     ├── docker.ts                 hardened plain-Claude containers
