@@ -3,11 +3,22 @@
 import fs from 'fs';
 import path from 'path';
 import readline from 'readline';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
 import { AgentConnection } from './connection.js';
 import { discoverRunnerModelCapabilities } from './runnerModels.js';
 import type { AgentConfig } from './types.js';
 
 const CONFIG_PATH = path.join(process.env.HOME || '', '.ccm-agent.json');
+const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
+
+// The production entrypoint lives in packages/agent/dist while the shared
+// deployment environment lives at the repository root.
+dotenv.config({ path: path.resolve(PACKAGE_DIR, '../../../.env'), quiet: true });
+dotenv.config({ path: path.resolve(PACKAGE_DIR, '../.env'), quiet: true });
+if (!process.env.CURSOR_API_KEY && process.env.CURSOR_API) {
+  process.env.CURSOR_API_KEY = process.env.CURSOR_API;
+}
 
 function loadConfig(): AgentConfig {
   // Check command line argument

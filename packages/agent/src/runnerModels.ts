@@ -100,7 +100,32 @@ async function runCli(
 }
 
 export function parseCodexCatalog(raw: string): string[] {
-  const parsed = JSON.parse(raw) as { models?: CodexModel[] };
+  // Wrappers such as tCodex can print an update notice before/after the JSON
+  // payload. Parse the first complete object containing `models` rather than
+  // requiring stdout to be pure JSON.
+  const marker = raw.indexOf('{"models"');
+  if (marker < 0) throw new SyntaxError('Model catalog JSON not found');
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  let end = -1;
+  for (let index = marker; index < raw.length; index++) {
+    const char = raw[index];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') inString = false;
+      continue;
+    }
+    if (char === '"') inString = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) {
+      end = index + 1;
+      break;
+    }
+  }
+  if (end < 0) throw new SyntaxError('Model catalog JSON is incomplete');
+  const parsed = JSON.parse(raw.slice(marker, end)) as { models?: CodexModel[] };
   if (!Array.isArray(parsed.models)) return [];
   return normalizeModels(parsed.models
     .filter((model) => model.visibility === 'list' && model.supported_in_api === true)

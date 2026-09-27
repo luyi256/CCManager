@@ -58,6 +58,23 @@ test('filters Codex catalog entries to selectable API-supported models', () => {
   assert.deepEqual(parseCodexCatalog(raw), ['gpt-visible']);
 });
 
+test('parses a tCodex catalog surrounded by update notices', () => {
+  const raw = [
+    'Update available: 0.0.16 → 0.1.4, Run tcodex update to update.',
+    '',
+    JSON.stringify({
+      models: [
+        { slug: 'gpt-6-astra', visibility: 'list', supported_in_api: true },
+        { slug: 'gpt-hidden', visibility: 'hide', supported_in_api: false },
+      ],
+    }),
+    '',
+    'Update available: 0.0.16 → 0.1.4.',
+  ].join('\n');
+
+  assert.deepEqual(parseCodexCatalog(raw), ['gpt-6-astra']);
+});
+
 test('reads selectable Claude aliases from the local Grok router settings', () => {
   const settings = {
     modelOverrides: {

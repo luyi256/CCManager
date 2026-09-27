@@ -119,7 +119,7 @@ Docker execution currently wraps the plain `claude` runner. The other runners us
 
 Authenticate each runner on the machine where its agent runs. Docker-mode Claude can reuse `~/.claude/.credentials.json` or receive `CLAUDE_CODE_OAUTH_TOKEN` / `ANTHROPIC_API_KEY` from the agent environment.
 
-The Cursor runner uses the official TypeScript SDK instead of parsing the `agent` command. Set `CURSOR_API_KEY` in the agent environment, or complete the SDK's interactive login once so credentials are stored in `~/.cursor/sdk/auth.json`. Cursor SDK local execution requires Node.js 22.13 or newer.
+The Cursor runner uses the official TypeScript SDK instead of parsing the `agent` command. Set `CURSOR_API_KEY` (or the compatibility alias `CURSOR_API`) in the agent environment, or complete the SDK's interactive login once so credentials are stored in `~/.cursor/sdk/auth.json`. Cursor SDK local execution requires Node.js 22.13 or newer.
 
 ## Quick Start
 

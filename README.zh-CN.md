@@ -119,7 +119,7 @@ Runner 是否可用取决于每台 Agent 机器。Agent 启动时会探测已安
 
 请在 Agent 所在机器上完成各 Runner 的登录。Docker 模式的 Claude 可复用 `~/.claude/.credentials.json`，也可从 Agent 进程环境读取 `CLAUDE_CODE_OAUTH_TOKEN` 或 `ANTHROPIC_API_KEY`。
 
-Cursor Runner 使用官方 TypeScript SDK，而不是解析 `agent` 命令输出。请在 Agent 环境中设置 `CURSOR_API_KEY`，或先完成一次 SDK 交互式登录，将凭据保存到 `~/.cursor/sdk/auth.json`。Cursor SDK 本地执行要求 Node.js 22.13 或更高版本。
+Cursor Runner 使用官方 TypeScript SDK，而不是解析 `agent` 命令输出。请在 Agent 环境中设置 `CURSOR_API_KEY`（也兼容 `CURSOR_API`），或先完成一次 SDK 交互式登录，将凭据保存到 `~/.cursor/sdk/auth.json`。Cursor SDK 本地执行要求 Node.js 22.13 或更高版本。
 
 ## 快速开始
 

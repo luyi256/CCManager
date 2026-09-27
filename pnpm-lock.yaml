@@ -23,6 +23,9 @@ importers:
       '@cursor/sdk':
         specifier: 1.0.32
         version: 1.0.32
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
       socket.io-client:
         specifier: ^4.7.5
         version: 4.8.3
