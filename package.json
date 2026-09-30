@@ -12,6 +12,11 @@
     "build:server": "pnpm --filter @ccmanager/server build",
     "build:agent": "pnpm --filter @ccmanager/agent build",
     "start": "pnpm --filter @ccmanager/server start",
+    "test": "pnpm -r test && pnpm run test:contracts",
+    "test:contracts": "node scripts/check-runner-contract.mjs",
+    "verify:web-bundle": "node scripts/check-web-bundle.mjs",
+    "verify:public": "node scripts/verify-public-deployment.mjs",
+    "deploy:rack": "bash scripts/deploy-rack.sh",
     "lint": "pnpm -r lint",
     "typecheck": "pnpm -r typecheck"
   },

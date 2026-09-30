@@ -3,6 +3,9 @@
 ## Repository-specific agent rules
 
 - Do not use `curl` against any remote server. Remote service checks and operations must use another explicitly permitted mechanism. `curl` is allowed only for local loopback services such as `127.0.0.1` or `localhost`.
+- **Production is the Rack server, not the local machine.** The production host is `root@107.174.67.124`; the app runs as user `CC` from `/home/CC/CCManager`. Local PM2 is development/testing only and must never be reported as a completed production deployment.
+- After code changes, deploy production by updating `/home/CC/CCManager` on Rack, building there, restarting both `ccm-server` and `ccm-agent` under the `CC` user's PM2, checking Rack loopback health, and verifying the exact public bundle at `https://luyi256.top/ccm/`.
+- A feature is not deployed until `scripts/verify-public-deployment.mjs` confirms the public JavaScript hash matches the local production build.
 
 Multi-device task management system for Claude Code — manage Claude Code task execution across multiple devices via Web UI.
 
@@ -123,25 +126,27 @@ pnpm run typecheck            # Type check
 
 Build locally and restart the service after code changes.
 
-### Quick Deploy (Recommended)
+### Production Deploy (Rack)
 
 ```bash
-pnpm run build && pm2 restart ccm-server
+pnpm run deploy:rack
 ```
 
-`pnpm run build` builds all three packages. If the change touched
-`packages/agent`, also restart the agent so it picks up the new build —
-`pm2 restart ccm-agent`, and on any remote machines running their own agent.
+`pnpm run deploy:rack` updates `/home/CC/CCManager` on the Rack server, installs
+dependencies, builds all packages, restarts both production PM2 processes,
+checks Rack loopback health, and verifies the exact public `/ccm/` bundle.
 
 ### Claude Code Workflow
 
 **Important**: After code changes, always run the deploy pipeline automatically without asking for confirmation.
 
 After completing code changes, Claude should automatically execute the following steps (do not ask):
-1. Build the project (`pnpm run build`)
-2. Restart the service (`pm2 restart ccm-server`)
-3. Verify the service is running (`curl http://localhost:3001/api/health`)
+1. Run the full regression suite (`pnpm test`)
+2. Build the project (`pnpm run build`)
+3. Verify the production bundle (`pnpm run verify:web-bundle`)
 4. Push code to GitHub (`git push origin main`)
+5. Deploy to Rack (`pnpm run deploy:rack`)
+6. Verify Rack loopback health and the public bundle (`pnpm run verify:public -- https://luyi256.top/ccm/`)
 
 ## Service Management
 
