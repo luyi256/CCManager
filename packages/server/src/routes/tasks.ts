@@ -10,7 +10,7 @@ import { enqueue, queueSize, hasQueued, peekAll, clear as clearFollowUpQueue } f
 import { drainFollowUps, isTaskActive } from '../services/followUpDispatch.js';
 import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
-import { bindAttachmentsToLog, getTaskImages, replaceTaskImages, validateTaskImages, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
+import { bindAttachmentsToLog, getTaskImagesForDispatch, replaceTaskImages, validateTaskImages, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
@@ -365,7 +365,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: buildTaskAllowedPaths(project),
-      images: getTaskImages(task.id),
+      images: getTaskImagesForDispatch(task.id, continueSession),
       startedAt,
       attempt: task.attemptCount,
     });

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { validateTaskImages } from './taskAttachments.js';
+import { getTaskImagesForDispatch, validateTaskImages } from './taskAttachments.js';
 
 const png = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB';
 const jpeg = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD';
@@ -29,5 +29,9 @@ describe('task image validation', () => {
     ]).toString('base64')}`;
     const images = validateTaskImages([largePng]);
     assert.ok(images[0].byteSize > 10 * 1024 * 1024);
+  });
+
+  it('does not resend images when resuming an existing session', () => {
+    assert.equal(getTaskImagesForDispatch(-1, true), undefined);
   });
 });

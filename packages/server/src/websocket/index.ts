@@ -8,7 +8,7 @@ import { drainFollowUps } from '../services/followUpDispatch.js';
 import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import { buildTaskStreamSnapshot, taskLogToStreamEvent } from '../services/taskStream.js';
-import { getTaskImages } from '../services/taskAttachments.js';
+import { getTaskImagesForDispatch } from '../services/taskAttachments.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -72,6 +72,11 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
     // a larger acknowledgement arrives, which made large tCodex histories
     // appear to hang and then time out.
     maxHttpBufferSize: 32 * 1024 * 1024,
+    // The default Engine.IO timeout is only 20 seconds. Large session payloads
+    // and slower cross-region links can legitimately delay a pong, so leave a
+    // wider margin before declaring an otherwise healthy agent dead.
+    pingTimeout: 120000,
+    pingInterval: 25000,
     cors: {
       origin: false,
     },
@@ -197,7 +202,7 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
               postTaskHook: project.postTaskHook,
               extraMounts: project.extraMounts,
               allowedPaths: buildTaskAllowedPaths(project),
-              images: getTaskImages(task.id),
+              images: getTaskImagesForDispatch(task.id, continueSession),
               startedAt: task.startedAt,
               attempt: task.attemptCount,
               recovery: true,

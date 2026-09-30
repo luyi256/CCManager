@@ -192,6 +192,12 @@ export class AgentConnection {
         token: this.config.authToken,
         agentId: this.config.agentId,
       },
+      // Agents keep a long-lived connection and can receive multi-megabyte task
+      // payloads. Starting with HTTP long-polling makes those payloads contend
+      // with Engine.IO heartbeat requests on slow or NAT-changing links, which
+      // can trigger a ping-timeout reconnect loop. Use the direct WebSocket
+      // transport instead.
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: this.maxReconnectAttempts,
       reconnectionDelay: 1000,

@@ -320,7 +320,10 @@ class AgentPool {
 
     this.heartbeatInterval = setInterval(() => {
       const now = Date.now();
-      const timeout = 60000; // 60 seconds
+      // Keep this above the agent's 20-second status interval and Engine.IO's
+      // transport timeout. A transient slow transfer must not turn every
+      // running task into an orphan and start a recovery storm.
+      const timeout = 180000; // 3 minutes
 
       for (const [agentId, agent] of this.agents.entries()) {
         if (now - agent.lastHeartbeat > timeout) {

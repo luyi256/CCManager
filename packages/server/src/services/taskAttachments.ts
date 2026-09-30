@@ -126,6 +126,22 @@ export function getTaskImages(taskId: number): string[] {
   return rows.map((row) => row.data_url);
 }
 
+/**
+ * Returns images only when a dispatch is starting a fresh CLI session.
+ *
+ * A resumed session already contains the images from the original user turn.
+ * Re-sending them during retry/recovery can produce a multi-megabyte Socket.IO
+ * packet, delay transport heartbeats on slow links, and cause another recovery.
+ */
+export function getTaskImagesForDispatch(
+  taskId: number,
+  continueSession: boolean
+): string[] | undefined {
+  if (continueSession) return undefined;
+  const images = getTaskImages(taskId);
+  return images.length > 0 ? images : undefined;
+}
+
 /** Metadata for every generation, for display. Never returns base64. */
 export function listTaskAttachments(taskId: number): AttachmentMeta[] {
   const rows = db.prepare(`

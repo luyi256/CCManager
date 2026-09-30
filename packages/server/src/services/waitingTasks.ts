@@ -1,6 +1,6 @@
 import cron from 'node-cron';
 import * as storage from './storage.js';
-import { ATTACHMENT_RETENTION_DAYS, getTaskImages, pruneStaleAttachments } from './taskAttachments.js';
+import { ATTACHMENT_RETENTION_DAYS, getTaskImagesForDispatch, pruneStaleAttachments } from './taskAttachments.js';
 import { agentPool } from './agentPool.js';
 import { broadcast } from '../websocket/index.js';
 import { buildTaskAllowedPaths } from './pathValidation.js';
@@ -154,7 +154,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
     allowedPaths: buildTaskAllowedPaths(project),
-    images: getTaskImages(task.id),
+    images: getTaskImagesForDispatch(task.id, Boolean(sessionId)),
     startedAt: task.startedAt,
     attempt: task.attemptCount,
   });
@@ -228,7 +228,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
             allowedPaths: buildTaskAllowedPaths(project),
-            images: getTaskImages(currentTask.id),
+            images: getTaskImagesForDispatch(currentTask.id, false),
             startedAt,
             attempt: currentTask.attemptCount,
           });
