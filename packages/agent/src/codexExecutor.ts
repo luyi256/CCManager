@@ -51,23 +51,7 @@ export class CodexExecutor extends EventEmitter {
       }
     }
 
-    let args: string[];
-
-    if (task.continueSession && task.sessionId) {
-      // Resume a previous session
-      args = ['exec', 'resume', task.sessionId, task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox'];
-      args.push(...imageArgs);
-    } else {
-      args = ['exec', task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox', '-C', workingDir];
-      args.push(...imageArgs);
-    }
-
-    if (task.model) {
-      args.push('--model', task.model);
-    }
-    if (task.reasoningEffort) {
-      args.push('--config', `model_reasoning_effort="${task.reasoningEffort}"`);
-    }
+    const args = buildCodexArgs(task, workingDir, imageArgs);
 
     try {
       await this.runCodex(args, workingDir);
@@ -327,4 +311,26 @@ export class CodexExecutor extends EventEmitter {
   get taskId(): number | null {
     return this.currentTaskId;
   }
+}
+
+export function buildCodexArgs(
+  task: TaskRequest,
+  workingDir: string,
+  imageArgs: string[] = [],
+): string[] {
+  // Codex configuration overrides are global options and must appear before
+  // the `exec` subcommand. Putting --config after the prompt can bypass a
+  // wrapper's configured provider and accidentally route to api.openai.com.
+  const args: string[] = [];
+  if (task.reasoningEffort) {
+    args.push('--config', `model_reasoning_effort="${task.reasoningEffort}"`);
+  }
+  if (task.continueSession && task.sessionId) {
+    args.push('exec', 'resume', task.sessionId, task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox');
+  } else {
+    args.push('exec', task.prompt, '--json', '--dangerously-bypass-approvals-and-sandbox', '-C', workingDir);
+  }
+  args.push(...imageArgs);
+  if (task.model) args.push('--model', task.model);
+  return args;
 }
