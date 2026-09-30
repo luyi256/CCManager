@@ -5,7 +5,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const root = path.resolve(import.meta.dirname, '..');
-const baseUrl = (process.argv[2] || process.env.CCM_PUBLIC_URL || '').replace(/\/?$/, '/');
+const cliArgs = process.argv.slice(2).filter((argument) => argument !== '--');
+const baseUrl = (cliArgs[0] || process.env.CCM_PUBLIC_URL || '').replace(/\/?$/, '/');
 if (!baseUrl) throw new Error('Usage: node scripts/verify-public-deployment.mjs https://host/ccm/');
 
 const headers = { 'cache-control': 'no-cache', pragma: 'no-cache' };
