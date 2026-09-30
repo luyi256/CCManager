@@ -211,6 +211,8 @@ export interface ServerToAgentEvents {
     extraMounts?: ExtraMount[];
     allowedPaths?: string[];
     images?: string[];
+    /** Large image sets are downloaded over HTTP instead of riding in this packet. */
+    imagesRef?: { id: string; count: number; bytes: number };
     startedAt?: string;
     attempt?: number;
     recovery?: boolean;

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { createServer, type Server as HttpServer } from 'node:http';
+import { createServer, type IncomingMessage, type Server as HttpServer, type ServerResponse } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -47,8 +47,10 @@ async function listenHttp(server: HttpServer, port = 0): Promise<string> {
   return `http://127.0.0.1:${address.port}`;
 }
 
-async function createSocketServer(onConnection: (socket: Socket) => void, port = 0): Promise<TestSocketServer> {
-  const httpServer = createServer();
+type RequestHandler = (request: IncomingMessage, response: ServerResponse) => void;
+
+async function createSocketServer(onConnection: (socket: Socket) => void, port = 0, onRequest?: RequestHandler): Promise<TestSocketServer> {
+  const httpServer = onRequest ? createServer(onRequest) : createServer();
   const io = new SocketIOServer(httpServer, { serveClient: false });
   io.of('/agent').on('connection', onConnection);
   const url = await listenHttp(httpServer, port);
@@ -287,7 +289,10 @@ interface RunnerTestServer extends TestSocketServer {
 }
 
 /** Mirrors the real server: applies each (task, run, seq) at most once and acknowledges the cursor. */
-async function createRunnerTestServer(onRegister?: (socket: Socket, count: number) => void): Promise<RunnerTestServer> {
+async function createRunnerTestServer(
+  onRegister?: (socket: Socket, count: number) => void,
+  onRequest?: RequestHandler
+): Promise<RunnerTestServer> {
   const cursors = new Map<string, number>();
   const applied: AppliedEvent[] = [];
   const registrations: RunnerTestServer['registrations'] = [];
@@ -310,7 +315,7 @@ async function createRunnerTestServer(onRegister?: (socket: Socket, count: numbe
       cursors.set(key, seq);
       ack?.({ seq });
     });
-  });
+  }, 0, onRequest);
   return { ...server, applied, registrations, sockets };
 }
 
@@ -417,6 +422,46 @@ test('a task keeps running across an agent restart and its result is delivered e
   assert.equal(completions.length, 1);
   assert.equal(completions[0].data.sessionId, 'sess-1');
   assert.equal(completions[0].data.startedAt, 'run-5');
+});
+
+test('downloads large dispatch images over HTTP before starting the runner', async (t) => {
+  const { release, projectPath } = installFakeClaude(t);
+  const image = `data:image/png;base64,${Buffer.alloc(16).toString('base64')}`;
+  let authorization = '';
+  const server = await createRunnerTestServer((socket, count) => {
+    if (count !== 1) return;
+    socket.emit('task:execute', {
+      taskId: 7,
+      projectId: 'project',
+      projectPath,
+      prompt: 'look at these',
+      isPlanMode: false,
+      runner: 'claude',
+      startedAt: 'run-7',
+      imagesRef: { id: 'staged-7', count: 2, bytes: image.length * 2 },
+    });
+  }, (request, response) => {
+    if (request.url !== '/api/agent/dispatch-images/staged-7') return;
+    authorization = request.headers.authorization || '';
+    response.writeHead(200, { 'content-type': 'application/json' });
+    response.end(JSON.stringify({ images: [image, image] }));
+  });
+  t.after(() => closeSocketServer(server));
+
+  const runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'));
+  const connection = new AgentConnection(config(server.url, tmpdir(), runsDir));
+  t.after(() => connection.disconnect());
+  connection.connect();
+
+  await waitFor(() => outputs(server.applied).includes('working'), 'runner did not start after the image download', 20000);
+  const [runName] = readdirSync(runsDir);
+  const request = JSON.parse(readFileSync(path.join(runsDir, runName, 'request.json'), 'utf8'));
+  assert.equal(authorization, 'Bearer test-token');
+  assert.deepEqual(request.task.images, [image, image]);
+  assert.equal(request.task.imagesRef, undefined);
+
+  writeFileSync(release, '');
+  await waitFor(() => server.applied.some((item) => item.event === 'task:completed'), 'task did not complete', 10000);
 });
 
 test('cancelling a task stops its runner without reporting a failure', async (t) => {

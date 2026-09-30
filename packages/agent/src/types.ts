@@ -49,6 +49,7 @@ export interface TaskRequest {
   }>;
   allowedPaths?: string[]; // Per-project allowed paths override
   images?: string[]; // base64 data URLs for screenshots
+  imagesRef?: { id: string; count: number; bytes: number }; // large image sets fetched over HTTP
   startedAt?: string; // Dispatch timestamp for stale event detection
   attempt?: number;
   recovery?: boolean;

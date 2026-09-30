@@ -15,6 +15,7 @@ const { db } = await import('../services/database.js');
 const { getTaskById, createAgentToken } = await import('../services/storage.js');
 const { hashToken } = await import('../services/auth.js');
 const { agentPool } = await import('../services/agentPool.js');
+const { getStagedDispatchImages } = await import('../services/dispatchImages.js');
 const { setupWebSocket } = await import('./index.js');
 
 // socket.io-client is only a dependency of the agent package.
@@ -51,6 +52,13 @@ test('agent reconnect syncs state silently and only recovers tasks the agent los
     INSERT INTO task_attachments (task_id, position, mime_type, byte_size, data_url, active)
     VALUES (5, 0, 'image/png', 4, 'data:image/png;base64,AAAA', 1)
   `).run();
+  seedTask(6, 'running', 'run-6', 'session-6'); // an interrupted follow-up with large images
+  db.prepare(`UPDATE tasks SET continue_prompt = 'large figures' WHERE id = 6`).run();
+  const largeImage = `data:image/png;base64,${'A'.repeat(300 * 1024)}`;
+  db.prepare(`
+    INSERT INTO task_attachments (task_id, position, mime_type, byte_size, data_url, active)
+    VALUES (6, 0, 'image/png', ?, ?, 1)
+  `).run(largeImage.length, largeImage);
 
   const httpServer = createServer();
   const io = setupWebSocket(httpServer);
@@ -70,7 +78,14 @@ test('agent reconnect syncs state silently and only recovers tasks the agent los
   });
   t.after(() => client.disconnect());
 
-  type Dispatch = { taskId: number; recovery?: boolean; continueSession?: boolean; prompt: string; images?: string[] };
+  type Dispatch = {
+    taskId: number;
+    recovery?: boolean;
+    continueSession?: boolean;
+    prompt: string;
+    images?: string[];
+    imagesRef?: { id: string; count: number; bytes: number };
+  };
   const dispatched: Dispatch[] = [];
   client.on('task:execute', (task: Dispatch) => dispatched.push(task));
   await new Promise<void>((resolve, reject) => {
@@ -108,9 +123,12 @@ test('agent reconnect syncs state silently and only recovers tasks the agent los
   assert.equal(lost?.recoveryCount, 1);
   assert.deepEqual(
     dispatched.map((task) => [task.taskId, task.recovery, task.continueSession]),
-    [[4, true, true], [5, true, true]],
+    [[4, true, true], [5, true, true], [6, true, true]],
     'only tasks unknown to the agent are re-dispatched'
   );
+  assert.equal(dispatched[2].images, undefined, 'large images must not ride in the Socket.IO packet');
+  assert.equal(dispatched[2].imagesRef?.count, 1);
+  assert.deepEqual(getStagedDispatchImages(dispatched[2].imagesRef!.id, 'a1'), [largeImage]);
   assert.match(dispatched[0].prompt, /^Continue the interrupted task/);
   assert.equal(dispatched[0].images, undefined);
   assert.match(dispatched[1].prompt, /Latest user message:\nFig\. 1 ~ Fig\. 8$/);

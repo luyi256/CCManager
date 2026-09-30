@@ -36,6 +36,7 @@ import agentsRouter from './routes/agents.js';
 import transcribeRouter from './routes/transcribe.js';
 import sessionsRouter from './routes/sessions.js';
 import authRouter from './routes/auth.js';
+import { agentDispatchImagesHandler } from './routes/agentDispatch.js';
 import { setupWebSocket } from './websocket/index.js';
 import { startWaitingTaskChecker, startAttachmentRetention } from './services/waitingTasks.js';
 import { agentPool } from './services/agentPool.js';
@@ -142,6 +143,10 @@ const apiAuthMiddleware: express.RequestHandler = (req, res, next) => {
   updateDeviceLastUsed(tokenHash);
   next();
 };
+// Agents authenticate with their own tokens, not device tokens.
+app.get('/api/agent/dispatch-images/:id', agentDispatchImagesHandler);
+app.get('/ccm/api/agent/dispatch-images/:id', agentDispatchImagesHandler);
+
 app.use('/api', apiAuthMiddleware);
 app.use('/ccm/api', apiAuthMiddleware);
 

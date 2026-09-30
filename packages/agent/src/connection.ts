@@ -36,6 +36,8 @@ const EVENT_ACK_TIMEOUT_MS = 30000;
 // starve Engine.IO heartbeats on slow links.
 const EVENT_BATCH_MAX_RECORDS = 200;
 const EVENT_BATCH_MAX_BYTES = 512 * 1024;
+const IMAGE_DOWNLOAD_ATTEMPTS = 3;
+const IMAGE_DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -156,6 +158,8 @@ export class AgentConnection {
   private stoppingExecutors: Map<number, Executor> = new Map();
   /** Every run with a live runner or undelivered events, keyed by run directory. */
   private runs: Map<string, TaskRun> = new Map();
+  /** Dispatches still preparing (e.g. downloading images) before their runner exists. */
+  private launching: Map<number, TaskRequest> = new Map();
   /** Runs with an event batch awaiting server acknowledgement. */
   private deliveriesInFlight: Set<string> = new Set();
   private runsRoot: string;
@@ -297,6 +301,7 @@ export class AgentConnection {
     });
 
     socket.on('task:cancel', (data: { taskId: number }) => {
+      this.launching.delete(data.taskId);
       const executor = this.executors.get(data.taskId);
       if (executor) {
         executor.cancel();
@@ -464,6 +469,9 @@ export class AgentConnection {
         startedAt: 'runId' in executor ? executor.runId : undefined,
       });
     }
+    for (const [taskId, task] of this.launching) {
+      if (!reported.has(taskId)) reported.set(taskId, { taskId, startedAt: task.startedAt });
+    }
     for (const run of this.runs.values()) {
       if (reported.has(run.taskId) || run.cancelRequested || run.terminal?.event === 'runner:cancelled') continue;
       reported.set(run.taskId, {
@@ -492,6 +500,7 @@ export class AgentConnection {
       this.registered = true;
       // Tasks the user cancelled while this agent was unreachable.
       for (const taskId of data?.cancelTaskIds || []) {
+        this.launching.delete(taskId);
         const executor = this.executors.get(taskId);
         if (!executor) continue;
         console.log(`Task ${taskId}: cancelled on the server while disconnected, stopping`);
@@ -697,6 +706,11 @@ export class AgentConnection {
     console.log(`Received task ${task.taskId}: ${task.prompt.substring(0, 50)}...`);
     console.log(`Task ${task.taskId} projectPath: ${task.projectPath}`);
 
+    if (this.launching.get(task.taskId)?.startedAt === task.startedAt) {
+      console.log(`Task ${task.taskId}: Already starting this run, skipping duplicate dispatch`);
+      return;
+    }
+
     // If this task is already running, handle based on context
     if (this.executors.has(task.taskId)) {
       if (task.continueSession || task.isRetry) {
@@ -722,7 +736,19 @@ export class AgentConnection {
       await this.waitForStoppingExecutor(task.taskId, SESSION_RESUME_GRACE_MS);
     }
 
+    // The newest dispatch of a task wins if one arrives while this one starts.
+    this.launching.set(task.taskId, task);
     try {
+      if (task.imagesRef) {
+        console.log(`Task ${task.taskId}: downloading ${task.imagesRef.count} image(s) (${task.imagesRef.bytes} bytes)`);
+        task.images = await this.fetchDispatchImages(task.imagesRef);
+        task.imagesRef = undefined;
+      }
+      if (this.launching.get(task.taskId) !== task) {
+        console.log(`Task ${task.taskId}: superseded by a newer dispatch while starting`);
+        return;
+      }
+
       // Validate path (use project-level allowedPaths if provided)
       const effectiveConfig = task.allowedPaths?.length
         ? { ...this.config, allowedPaths: [...this.config.allowedPaths, ...task.allowedPaths] }
@@ -760,7 +786,36 @@ export class AgentConnection {
         error: message,
         startedAt: task.startedAt,
       });
+    } finally {
+      if (this.launching.get(task.taskId) === task) this.launching.delete(task.taskId);
     }
+  }
+
+  /** Download images staged by the server for a dispatch, off the Socket.IO connection. */
+  private async fetchDispatchImages(ref: NonNullable<TaskRequest['imagesRef']>): Promise<string[]> {
+    const url = `${this.currentUrl}/api/agent/dispatch-images/${encodeURIComponent(ref.id)}`;
+    let lastError = '';
+    for (let attempt = 1; attempt <= IMAGE_DOWNLOAD_ATTEMPTS; attempt++) {
+      try {
+        const response = await fetch(url, {
+          headers: { Authorization: `Bearer ${this.config.authToken}` },
+          signal: AbortSignal.timeout(IMAGE_DOWNLOAD_TIMEOUT_MS),
+        });
+        if (response.status === 404) throw new Error('images expired on the server');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const body = await response.json() as { images?: unknown };
+        if (!Array.isArray(body.images) || body.images.length !== ref.count) {
+          throw new Error('unexpected image payload');
+        }
+        return body.images as string[];
+      } catch (error) {
+        lastError = error instanceof Error ? error.message : String(error);
+        console.warn(`Image download attempt ${attempt} failed: ${lastError}`);
+        if (lastError === 'images expired on the server') break;
+        if (attempt < IMAGE_DOWNLOAD_ATTEMPTS) await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+      }
+    }
+    throw new Error(`Failed to download ${ref.count} attached image(s): ${lastError}`);
   }
 
   private async discoverUrl(): Promise<string | null> {

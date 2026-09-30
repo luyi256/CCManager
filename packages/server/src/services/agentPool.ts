@@ -1,6 +1,7 @@
 import type { Socket, Namespace } from 'socket.io';
 import { db } from './database.js';
 import { validateRunnerSelection } from './runnerModels.js';
+import { INLINE_IMAGE_BYTES, imagesByteSize, stageDispatchImages } from './dispatchImages.js';
 import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
@@ -214,7 +215,19 @@ class AgentPool {
       }
     }
 
-    agent.socket.emit('task:execute', task);
+    const payload: typeof task & { imagesRef?: { id: string; count: number; bytes: number } } = { ...task };
+    if (task.images?.length) {
+      const bytes = imagesByteSize(task.images);
+      if (bytes > INLINE_IMAGE_BYTES) {
+        payload.images = undefined;
+        payload.imagesRef = {
+          id: stageDispatchImages(agentId, task.taskId, task.images),
+          count: task.images.length,
+          bytes,
+        };
+      }
+    }
+    agent.socket.emit('task:execute', payload);
     // Add task to running tasks list
     if (!agent.runningTasks.includes(task.taskId)) {
       agent.runningTasks.push(task.taskId);
