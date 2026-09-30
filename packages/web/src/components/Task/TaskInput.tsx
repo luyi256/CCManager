@@ -7,19 +7,21 @@ import type { Runner, Task } from '../../types';
 import { readImageFiles, type PendingImage } from '../../utils/images';
 
 interface TaskInputProps {
-  onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
+  onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; reasoningEffort?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
   isSubmitting: boolean;
   tasks: Task[];
   lastModel?: string;
+  lastReasoningEffort?: string;
   lastRunner?: Runner;
   agentId?: string;
 }
 
-export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, lastRunner, agentId }: TaskInputProps) {
+export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, lastReasoningEffort, lastRunner, agentId }: TaskInputProps) {
   const [prompt, setPrompt] = useState('');
   const [isPlanMode, setIsPlanMode] = useState(false);
   const [runner, setRunner] = useState<Runner>(lastRunner || 'claude');
   const [model, setModel] = useState(lastModel || '');
+  const [reasoningEffort, setReasoningEffort] = useState(lastReasoningEffort || '');
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
   const [images, setImages] = useState<PendingImage[]>([]);
@@ -31,7 +33,8 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
   // Update model when lastModel prop changes (project switch)
   useEffect(() => {
     setModel(lastModel || '');
-  }, [lastModel]);
+    setReasoningEffort(lastReasoningEffort || '');
+  }, [lastModel, lastReasoningEffort]);
 
   useEffect(() => {
     if (lastRunner) {
@@ -124,6 +127,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
         isPlanMode,
         runner,
         model: model || undefined,
+        reasoningEffort: reasoningEffort || undefined,
         dependsOn,
         images: imageBase64s,
       });
@@ -229,8 +233,10 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
         <ModelSwitcher
           selectedRunner={runner}
           selectedModel={model}
+          selectedEffort={reasoningEffort}
           onRunnerChange={setRunner}
           onModelChange={setModel}
+          onEffortChange={setReasoningEffort}
           agentId={agentId}
         />
 

@@ -169,6 +169,7 @@ class AgentPool {
     isPlanMode: boolean;
     runner?: Runner;
     model?: string;
+    reasoningEffort?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;

@@ -24,7 +24,7 @@ export function useCreateTask(projectId: string) {
   const queryClient = useQueryClient();
 
   return useMutation({
-    mutationFn: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; dependsOn?: number; images?: string[] }) =>
+    mutationFn: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; reasoningEffort?: string; dependsOn?: number; images?: string[] }) =>
       api.createTask(projectId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['tasks', projectId] });
@@ -79,13 +79,15 @@ export function useContinueTask() {
       images,
       runner,
       model,
+      reasoningEffort,
     }: {
       taskId: number;
       prompt: string;
       images?: string[];
       runner?: Runner;
       model?: string;
-    }) => api.continueTask(taskId, prompt, images, runner, model),
+      reasoningEffort?: string;
+    }) => api.continueTask(taskId, prompt, images, runner, model, reasoningEffort),
     onSuccess: (task) => {
       // Immediately update the task cache with new data
       queryClient.setQueryData(['task', task.id], task);

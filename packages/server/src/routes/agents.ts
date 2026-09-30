@@ -54,6 +54,7 @@ router.get('/:id/models', async (req, res) => {
   res.json({
     runner: typedRunner,
     models: catalog?.models ?? [],
+    modelOptions: catalog?.modelOptions ?? [],
     available: catalog?.installed ?? false,
     source: 'agent',
     ...(catalog?.message ? {

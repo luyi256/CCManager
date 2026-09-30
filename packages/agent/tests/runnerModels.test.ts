@@ -3,9 +3,11 @@ import { test } from 'node:test';
 import {
   buildRunnerCatalog,
   capabilityCacheTtl,
+  isCurrentCapability,
   parseClaudeHelpModels,
   parseClaudeGrokSettings,
   parseCodexCatalog,
+  parseCodexModelOptions,
   parseTClaudeAvailableModels,
   resolveClaudeGrokModel,
 } from '../src/runnerModels.js';
@@ -15,8 +17,20 @@ test('never caches transient probe failures or empty catalogs', () => {
   // model for the whole TTL, taking their uploaded images down with it.
   assert.equal(capabilityCacheTtl({ kind: 'transient', message: 'ETIMEDOUT' }), null);
   assert.equal(capabilityCacheTtl({ kind: 'models', models: [] }), null);
-  assert.equal(capabilityCacheTtl({ kind: 'models', models: ['gpt-5.6-sol'] }), 30 * 60 * 1000);
+  assert.equal(capabilityCacheTtl({ kind: 'models', models: [{ id: 'gpt-5.6-sol' }] }), 30 * 60 * 1000);
   assert.equal(capabilityCacheTtl({ kind: 'missing' }), 5 * 60 * 1000);
+});
+
+test('invalidates positive model caches created before effort metadata existed', () => {
+  assert.equal(isCurrentCapability(
+    'models:tcodex:{"installed":true,"models":["gpt-5.6-sol"]}'
+  ), false);
+  assert.equal(isCurrentCapability(
+    'models:tcodex:{"installed":true,"models":["gpt-5.6-sol"],"modelOptions":[{"id":"gpt-5.6-sol","efforts":["low","high"]}]}'
+  ), true);
+  assert.equal(isCurrentCapability(
+    'models:qwen:{"installed":false,"models":[],"message":"Install qwen"}'
+  ), true);
 });
 
 test('keeps a runner selectable when its catalog could not be read', () => {
@@ -56,6 +70,28 @@ test('filters Codex catalog entries to selectable API-supported models', () => {
   });
 
   assert.deepEqual(parseCodexCatalog(raw), ['gpt-visible']);
+});
+
+test('preserves per-model reasoning efforts from the Codex catalog', () => {
+  const raw = JSON.stringify({
+    models: [{
+      slug: 'gpt-6-astra',
+      visibility: 'list',
+      supported_in_api: true,
+      supported_reasoning_levels: [
+        { effort: 'low' },
+        { effort: 'high' },
+        { effort: 'max' },
+      ],
+      default_reasoning_level: 'high',
+    }],
+  });
+
+  assert.deepEqual(parseCodexModelOptions(raw), [{
+    id: 'gpt-6-astra',
+    efforts: ['low', 'high', 'max'],
+    defaultEffort: 'high',
+  }]);
 });
 
 test('parses a tCodex catalog surrounded by update notices', () => {

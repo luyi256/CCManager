@@ -113,6 +113,7 @@ db.exec(`
     images TEXT,
     runner TEXT,
     model TEXT,
+    reasoning_effort TEXT,
     created_at TEXT DEFAULT (datetime('now')),
     FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE
   );
@@ -227,6 +228,12 @@ try {
 } catch {
   // Column already exists, ignore
 }
+try {
+  db.exec(`ALTER TABLE tasks ADD COLUMN reasoning_effort TEXT`);
+  console.log('Migration: Added reasoning_effort column to tasks table');
+} catch {
+  // Column already exists, ignore
+}
 
 for (const migration of [
   ['session_id', 'TEXT'],
@@ -278,6 +285,7 @@ try {
 // covers legacy rows that predate log binding, keeping a retried drain from
 // re-inserting the same images every time.
 for (const migration of [
+  ['reasoning_effort', 'TEXT'],
   ['log_id', 'INTEGER'],
   ['attachment_ids', 'TEXT'],
 ] as const) {

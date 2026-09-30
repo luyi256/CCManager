@@ -70,6 +70,7 @@ export default function ProjectPage() {
     isPlanMode: boolean;
     runner?: Runner;
     model?: string;
+    reasoningEffort?: string;
     dependsOn?: number;
     images?: string[];
   }) => {
@@ -188,6 +189,7 @@ export default function ProjectPage() {
                 isSubmitting={createTask.isPending}
                 tasks={tasks}
                 lastModel={lastTaskSelection?.model}
+                lastReasoningEffort={lastTaskSelection?.reasoningEffort}
                 lastRunner={lastTaskSelection?.runner}
                 agentId={project.agentId}
               />

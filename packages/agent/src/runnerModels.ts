@@ -29,6 +29,27 @@ const CAPABILITY_CACHE_PATH = process.env.CCM_MODEL_CACHE_PATH ||
   path.join(os.homedir(), '.ccm-agent-model-capabilities.json');
 const capabilityCache = new Map<Runner, { expiresAt: number; capability: string }>();
 
+export function isCurrentCapability(capability: string): boolean {
+  const separator = capability.indexOf(':', 'models:'.length);
+  if (!capability.startsWith('models:') || separator < 0) return false;
+  try {
+    const catalog = JSON.parse(capability.slice(separator + 1)) as {
+      installed?: unknown;
+      models?: unknown;
+      modelOptions?: unknown;
+    };
+    if (catalog.installed !== true || !Array.isArray(catalog.models) || catalog.models.length === 0) {
+      return true;
+    }
+    // Model metadata was introduced with reasoning-effort selection. Reject
+    // older positive cache entries so an upgraded agent immediately re-probes
+    // instead of hiding effort controls for the previous 30-minute TTL.
+    return Array.isArray(catalog.modelOptions);
+  } catch {
+    return false;
+  }
+}
+
 function loadCapabilityCache(): void {
   try {
     const parsed = JSON.parse(fs.readFileSync(CAPABILITY_CACHE_PATH, 'utf8')) as
@@ -37,7 +58,8 @@ function loadCapabilityCache(): void {
       if (
         value &&
         typeof value.expiresAt === 'number' &&
-        typeof value.capability === 'string'
+        typeof value.capability === 'string' &&
+        isCurrentCapability(value.capability)
       ) {
         capabilityCache.set(runner as Runner, {
           expiresAt: value.expiresAt,
@@ -68,11 +90,20 @@ interface CodexModel {
   slug?: unknown;
   visibility?: unknown;
   supported_in_api?: unknown;
+  supported_reasoning_levels?: unknown;
+  default_reasoning_level?: unknown;
+}
+
+export interface ModelOption {
+  id: string;
+  efforts?: string[];
+  defaultEffort?: string;
 }
 
 interface RunnerModelCatalog {
   installed: boolean;
   models: string[];
+  modelOptions?: ModelOption[];
   message?: string;
 }
 
@@ -99,7 +130,7 @@ async function runCli(
   return { stdout, stderr };
 }
 
-export function parseCodexCatalog(raw: string): string[] {
+function extractCodexCatalog(raw: string): CodexModel[] {
   // Wrappers such as tCodex can print an update notice before/after the JSON
   // payload. Parse the first complete object containing `models` rather than
   // requiring stdout to be pure JSON.
@@ -126,10 +157,39 @@ export function parseCodexCatalog(raw: string): string[] {
   }
   if (end < 0) throw new SyntaxError('Model catalog JSON is incomplete');
   const parsed = JSON.parse(raw.slice(marker, end)) as { models?: CodexModel[] };
-  if (!Array.isArray(parsed.models)) return [];
-  return normalizeModels(parsed.models
-    .filter((model) => model.visibility === 'list' && model.supported_in_api === true)
-    .map((model) => typeof model.slug === 'string' ? model.slug : ''));
+  return Array.isArray(parsed.models) ? parsed.models : [];
+}
+
+export function parseCodexCatalog(raw: string): string[] {
+  return parseCodexModelOptions(raw).map((model) => model.id);
+}
+
+export function parseCodexModelOptions(raw: string): ModelOption[] {
+  return extractCodexCatalog(raw)
+    .filter((model) =>
+      model.visibility === 'list' &&
+      model.supported_in_api === true &&
+      typeof model.slug === 'string' &&
+      model.slug.trim()
+    )
+    .map((model) => {
+      const levels = Array.isArray(model.supported_reasoning_levels)
+        ? model.supported_reasoning_levels
+          .map((level) => level && typeof level === 'object'
+            ? (level as { effort?: unknown }).effort
+            : undefined)
+          .filter((effort): effort is string => typeof effort === 'string' && Boolean(effort))
+        : [];
+      const option: ModelOption = { id: (model.slug as string).trim() };
+      if (levels.length > 0) option.efforts = normalizeModels(levels);
+      if (
+        typeof model.default_reasoning_level === 'string' &&
+        levels.includes(model.default_reasoning_level)
+      ) {
+        option.defaultEffort = model.default_reasoning_level;
+      }
+      return option;
+    });
 }
 
 function readCodexConfig(runner: 'codex' | 'tcodex'): {
@@ -150,20 +210,21 @@ function readCodexConfig(runner: 'codex' | 'tcodex'): {
   }
 }
 
-async function listCodexModels(runner: 'codex' | 'tcodex'): Promise<string[]> {
+async function listCodexModels(runner: 'codex' | 'tcodex'): Promise<ModelOption[]> {
   const configured = readCodexConfig(runner);
   // A custom provider has no standard remote model catalog. Its configured
   // model is the only locally verified slug; the bundled OpenAI catalog would
   // otherwise advertise models that the custom gateway may reject.
   if (configured.modelProvider && configured.modelProvider !== 'openai') {
-    return configured.model ? [configured.model] : [];
+    return configured.model ? [{ id: configured.model }] : [];
   }
 
   const { stdout } = await runCli(runner, ['debug', 'models'], CODEX_MODELS_TIMEOUT_MS);
-  return normalizeModels([
-    ...(configured.model ? [configured.model] : []),
-    ...parseCodexCatalog(stdout),
-  ]);
+  const options = parseCodexModelOptions(stdout);
+  if (configured.model && !options.some((option) => option.id === configured.model)) {
+    options.unshift({ id: configured.model });
+  }
+  return options;
 }
 
 function getTClaudeDaemonPort(): number | null {
@@ -251,7 +312,7 @@ async function listQwenModels(): Promise<string[]> {
   return [];
 }
 
-async function listCursorModels(): Promise<string[]> {
+async function listCursorModels(): Promise<ModelOption[]> {
   // The SDK is Cursor's stable integration surface; unlike CLI text parsing it
   // returns the account's canonical model IDs directly.
   if (!cursorSdkNodeSupported()) {
@@ -271,7 +332,21 @@ async function listCursorModels(): Promise<string[]> {
     }
   }
   const models = await Cursor.models.list();
-  return normalizeModels(models.map((model) => model.id));
+  return models.map((model) => {
+    const parameter = model.parameters?.find((candidate) =>
+      candidate.id === 'effort' || candidate.id === 'reasoning'
+    );
+    const defaultVariant = model.variants?.find((variant) => variant.isDefault);
+    const defaultEffort = defaultVariant?.params.find((param) =>
+      param.id === 'effort' || param.id === 'reasoning'
+    )?.value;
+    const option: ModelOption = { id: model.id };
+    if (parameter?.values?.length) {
+      option.efforts = parameter.values.map((value) => value.value);
+    }
+    if (defaultEffort) option.defaultEffort = defaultEffort;
+    return option;
+  });
 }
 
 export function parseClaudeGrokSettings(payload: unknown): string[] {
@@ -340,21 +415,27 @@ async function listClaudeGrokModels(): Promise<string[]> {
   }
 }
 
-async function listRunnerModels(runner: Runner): Promise<string[]> {
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+function optionsFromModels(models: string[], efforts?: string[]): ModelOption[] {
+  return models.map((id) => ({ id, ...(efforts?.length ? { efforts } : {}) }));
+}
+
+async function listRunnerModels(runner: Runner): Promise<ModelOption[]> {
   switch (runner) {
     case 'codex':
     case 'tcodex':
       return listCodexModels(runner);
     case 'tclaude':
-      return listTClaudeModels();
+      return optionsFromModels(await listTClaudeModels(), CLAUDE_EFFORTS);
     case 'cursor':
       return listCursorModels();
     case 'claude':
-      return listClaudeModels();
+      return optionsFromModels(await listClaudeModels(), CLAUDE_EFFORTS);
     case 'claude-grok':
-      return listClaudeGrokModels();
+      return optionsFromModels(await listClaudeGrokModels(), CLAUDE_EFFORTS);
     case 'qwen':
-      return listQwenModels();
+      return optionsFromModels(await listQwenModels());
   }
 }
 
@@ -364,14 +445,18 @@ async function listRunnerModels(runner: Runner): Promise<string[]> {
  * model for the whole TTL, which previously discarded uploaded images with it.
  */
 export type ProbeOutcome =
-  | { kind: 'models'; models: string[] }
+  | { kind: 'models'; models: ModelOption[] }
   | { kind: 'missing'; message?: string }
   | { kind: 'unavailable'; message: string }
   | { kind: 'transient'; message: string };
 
 export function buildRunnerCatalog(runner: Runner, outcome: ProbeOutcome): RunnerModelCatalog {
   if (outcome.kind === 'models') {
-    return { installed: true, models: outcome.models };
+    return {
+      installed: true,
+      models: outcome.models.map((model) => model.id),
+      modelOptions: outcome.models,
+    };
   }
   if (outcome.kind === 'missing') {
     return {

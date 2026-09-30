@@ -115,6 +115,11 @@ export async function getOnlineAgents(): Promise<Agent[]> {
 export interface RunnerModelsResponse {
   runner: Runner;
   models: string[];
+  modelOptions: Array<{
+    id: string;
+    efforts?: string[];
+    defaultEffort?: string;
+  }>;
   available: boolean;
   source?: 'agent';
   message?: string;
@@ -139,6 +144,7 @@ export async function createTask(projectId: string, data: {
   isPlanMode: boolean;
   runner?: Runner;
   model?: string;
+  reasoningEffort?: string;
   dependsOn?: number;
   images?: string[];
 }): Promise<Task> {
@@ -172,11 +178,12 @@ export async function continueTask(
   prompt: string,
   images?: string[],
   runner?: Runner,
-  model?: string
+  model?: string,
+  reasoningEffort?: string,
 ): Promise<Task> {
   return request(`/tasks/${taskId}/continue`, {
     method: 'POST',
-    body: JSON.stringify({ prompt, images, runner, model }),
+    body: JSON.stringify({ prompt, images, runner, model, reasoningEffort }),
   });
 }
 
@@ -186,6 +193,7 @@ export interface QueuedFollowUp {
   imageCount: number;
   runner?: Runner;
   model?: string;
+  reasoningEffort?: string;
 }
 
 export async function getTaskFollowUps(

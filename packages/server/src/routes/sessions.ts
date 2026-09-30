@@ -6,6 +6,7 @@ import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, m
 import type { SessionListItem, SessionDetail, SessionTimelineEntry } from '../services/sessionBrowser.js';
 import type { Runner } from '../types/index.js';
 import { replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
+import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 
 const router = Router();
 const VALID_RUNNERS = new Set<Runner>(['claude', 'claude-grok', 'codex', 'cursor', 'qwen', 'tclaude', 'tcodex']);
@@ -315,7 +316,7 @@ router.get('/projects/:projectId/sessions/:sessionId', async (req, res) => {
 // Resume a CLI session as a new task
 router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res) => {
   try {
-    const { prompt, images, runner, model } = req.body;
+    const { prompt, images, runner, model, reasoningEffort } = req.body;
     const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
     if (!normalizedPrompt && (!images || images.length === 0)) {
       return res.status(400).json({ message: 'Prompt required' });
@@ -345,6 +346,19 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
     if (!agent) {
       return res.status(503).json({ message: `Agent ${project.agentId} is not connected` });
     }
+    const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
+    if (selectedModel.error) {
+      return res.status(400).json({ message: selectedModel.error });
+    }
+    const selectedEffort = validateReasoningEffort(
+      agent.capabilities,
+      selectedRunner,
+      selectedModel.model,
+      reasoningEffort,
+    );
+    if (selectedEffort.error) {
+      return res.status(400).json({ message: selectedEffort.error });
+    }
 
     // Create a new task with sessionId pre-set
     const task = await storage.createTask(project.id, {
@@ -353,7 +367,8 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       status: 'pending',
       isPlanMode: false,
       runner: selectedRunner,
-      model: typeof model === 'string' && model.trim() ? model.trim() : undefined,
+      model: selectedModel.model,
+      reasoningEffort: selectedEffort.reasoningEffort,
       createdAt: new Date().toISOString(),
     });
 
@@ -377,6 +392,7 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
       isPlanMode: false,
       runner: selectedRunner,
       model: task.model,
+      reasoningEffort: task.reasoningEffort,
       executor: project.executor,
       dockerImage: project.dockerImage,
       continueSession: true,

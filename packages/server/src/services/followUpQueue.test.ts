@@ -9,6 +9,7 @@ const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ccm-followup-'));
 process.env.DATA_PATH = dataDir;
 
 const { db } = await import('./database.js');
+const { createTask, getTaskById, saveTask } = await import('./storage.js');
 const { enqueue, peekAll, removeByIds, queueSize, hasQueued } = await import('./followUpQueue.js');
 const {
   replaceTaskImages,
@@ -41,7 +42,7 @@ test('peekAll reads queued follow-ups without consuming them', () => {
   // was even possible, which silently discarded the user's images.
   const taskId = 9001;
   seedTask(taskId);
-  enqueue(taskId, 'first', ['data:image/png;base64,AAAA'], 'tcodex', 'gpt-5.6-sol');
+  enqueue(taskId, 'first', ['data:image/png;base64,AAAA'], 'tcodex', 'gpt-5.6-sol', undefined, 'xhigh');
   enqueue(taskId, 'second');
 
   const first = peekAll(taskId);
@@ -52,6 +53,7 @@ test('peekAll reads queued follow-ups without consuming them', () => {
   assert.equal(queueSize(taskId), 2, 'peeking must not drain the queue');
   assert.deepEqual(first[0].images, ['data:image/png;base64,AAAA']);
   assert.equal(first[0].runner, 'tcodex');
+  assert.equal(first[0].reasoningEffort, 'xhigh');
   assert.equal(first[1].images, undefined);
 });
 
@@ -74,6 +76,25 @@ test('removeByIds deletes exactly the rows that were dispatched', () => {
 
 test('removeByIds tolerates an empty list', () => {
   assert.doesNotThrow(() => removeByIds([]));
+});
+
+test('reasoning effort survives task creation and updates', async () => {
+  seedTask(9010);
+  const created = await createTask('p1', {
+    projectId: 'p1',
+    prompt: 'effort persistence',
+    status: 'pending',
+    isPlanMode: false,
+    runner: 'tcodex',
+    model: 'gpt-6-astra',
+    reasoningEffort: 'max',
+    createdAt: new Date().toISOString(),
+  });
+  assert.equal((await getTaskById(created.id))?.reasoningEffort, 'max');
+
+  created.reasoningEffort = 'high';
+  await saveTask('p1', created);
+  assert.equal((await getTaskById(created.id))?.reasoningEffort, 'high');
 });
 
 test('a new attachment generation keeps earlier messages viewable', () => {

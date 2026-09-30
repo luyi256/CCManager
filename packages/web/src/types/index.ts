@@ -118,6 +118,7 @@ export interface Task {
   isPlanMode: boolean;
   runner?: Runner;
   model?: string;
+  reasoningEffort?: string;
   dependsOn?: number;
   worktreeBranch?: string;
   createdAt: string;

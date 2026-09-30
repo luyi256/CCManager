@@ -45,23 +45,41 @@ async function loadCursorSdk(): Promise<typeof import('@cursor/sdk')> {
   }
 }
 
-export function selectCursorModel(models: SDKModel[], requested: string | undefined): ModelSelection | null {
-  if (requested && requested !== 'auto-smart') return { id: requested };
+export function selectCursorModel(
+  models: SDKModel[],
+  requested: string | undefined,
+  reasoningEffort?: string,
+): ModelSelection | null {
   const selected = requested === 'auto-smart'
     ? models.find((model) => model.id === requested)
-    : models.find((model) => model.id !== 'auto-smart') ?? models[0];
+    : requested
+      ? models.find((model) => model.id === requested)
+      : models.find((model) => model.id !== 'auto-smart') ?? models[0];
+  if (requested && !selected && !reasoningEffort) return { id: requested };
   if (!selected) return null;
   const defaultVariant = selected.variants?.find((variant) => variant.isDefault);
+  const params = [...(defaultVariant?.params || [])];
+  if (reasoningEffort) {
+    const parameter = selected.parameters?.find((candidate) =>
+      candidate.id === 'effort' || candidate.id === 'reasoning'
+    );
+    if (!parameter?.values.some((value) => value.value === reasoningEffort)) {
+      throw new Error(`Effort "${reasoningEffort}" is not supported by Cursor model "${selected.id}"`);
+    }
+    const index = params.findIndex((param) => param.id === parameter.id);
+    const value = { id: parameter.id, value: reasoningEffort };
+    if (index >= 0) params[index] = value;
+    else params.push(value);
+  }
   return {
     id: selected.id,
-    ...(defaultVariant?.params?.length ? { params: defaultVariant.params } : {}),
+    ...(params.length ? { params } : {}),
   };
 }
 
-async function resolveModel(requested: string | undefined): Promise<ModelSelection> {
-  if (requested && requested !== 'auto-smart') return { id: requested };
+async function resolveModel(requested: string | undefined, reasoningEffort?: string): Promise<ModelSelection> {
   const { Cursor } = await loadCursorSdk();
-  const selected = selectCursorModel(await Cursor.models.list(), requested);
+  const selected = selectCursorModel(await Cursor.models.list(), requested, reasoningEffort);
   if (!selected) throw new Error('Cursor did not return any models for this account');
   return selected;
 }
@@ -91,7 +109,7 @@ export class CursorExecutor extends EventEmitter {
     this.activeToolCalls.clear();
 
     const { Agent } = await loadCursorSdk();
-    const model = await resolveModel(task.model);
+    const model = await resolveModel(task.model, task.reasoningEffort);
     const options = {
       model,
       local: { cwd: workingDir, enableAgentRetries: true },

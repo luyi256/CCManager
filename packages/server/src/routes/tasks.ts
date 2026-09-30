@@ -8,7 +8,7 @@ import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { errorResponse } from '../utils/errorResponse.js';
 import { enqueue, queueSize, hasQueued, peekAll, clear as clearFollowUpQueue } from '../services/followUpQueue.js';
 import { drainFollowUps, isTaskActive } from '../services/followUpDispatch.js';
-import { validateRunnerSelection } from '../services/runnerModels.js';
+import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
 import { bindAttachmentsToLog, getTaskImages, replaceTaskImages, validateTaskImages, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
@@ -75,7 +75,7 @@ router.get('/tasks/:id', async (req, res) => {
 // Create task
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
-    const { prompt, isPlanMode, runner, model, dependsOn, images } = req.body;
+    const { prompt, isPlanMode, runner, model, reasoningEffort, dependsOn, images } = req.body;
     const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
     const selectedRunner = parseRunner(runner) ?? 'claude';
     const projectId = req.params.projectId;
@@ -111,6 +111,15 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
     if (selectedModel.error) {
       return res.status(400).json({ message: selectedModel.error });
     }
+    const selectedEffort = validateReasoningEffort(
+      agent.capabilities,
+      selectedRunner,
+      selectedModel.model,
+      reasoningEffort,
+    );
+    if (selectedEffort.error) {
+      return res.status(400).json({ message: selectedEffort.error });
+    }
 
     const effectivePrompt = normalizedPrompt ||
       `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
@@ -122,6 +131,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
       isPlanMode: isPlanMode || false,
       runner: selectedRunner,
       model: selectedModel.model,
+      reasoningEffort: selectedEffort.reasoningEffort,
       dependsOn,
       createdAt: new Date().toISOString(),
     });
@@ -149,6 +159,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
         isPlanMode: task.isPlanMode,
         runner: task.runner,
         model: task.model,
+        reasoningEffort: task.reasoningEffort,
         executor: project.executor,
         dockerImage: project.dockerImage,
         worktreeBranch: task.worktreeBranch,
@@ -343,6 +354,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       isPlanMode: task.isPlanMode,
       runner: task.runner,
       model: task.model,
+      reasoningEffort: task.reasoningEffort,
       skipModelValidation: true,
       executor: project.executor,
       dockerImage: project.dockerImage,
@@ -381,7 +393,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
 router.post('/tasks/:id/continue', async (req, res) => {
   try {
     const taskId = parseInt(req.params.id, 10);
-    const { prompt, images, runner, model } = req.body;
+    const { prompt, images, runner, model, reasoningEffort } = req.body;
     const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
 
     if (!normalizedPrompt && (!images || images.length === 0)) {
@@ -439,6 +451,19 @@ router.post('/tasks/:id/continue', async (req, res) => {
     let nextModel = modelWasProvided
       ? selectedModel.model
       : runnerChanged ? undefined : task.model;
+    const effortWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'reasoningEffort');
+    const selectedEffort = validateReasoningEffort(
+      agent.capabilities,
+      nextRunner,
+      nextModel,
+      reasoningEffort,
+    );
+    if (selectedEffort.error) {
+      return res.status(400).json({ message: selectedEffort.error });
+    }
+    let nextEffort = effortWasProvided
+      ? selectedEffort.reasoningEffort
+      : runnerChanged || modelWasProvided ? undefined : task.reasoningEffort;
 
     // If task is currently active (running/waiting/etc.), queue instead of dispatching
     const isQueued = isTaskActive(task.status);
@@ -456,7 +481,15 @@ router.post('/tasks/:id/continue', async (req, res) => {
     bindAttachmentsToLog(stored.ids, userLog.id);
 
     if (isQueued) {
-      enqueue(taskId, effectivePrompt, validatedImages.length > 0 ? validatedImages : undefined, nextRunner, nextModel, userLog.id);
+      enqueue(
+        taskId,
+        effectivePrompt,
+        validatedImages.length > 0 ? validatedImages : undefined,
+        nextRunner,
+        nextModel,
+        userLog.id,
+        nextEffort,
+      );
       const queued = queueSize(taskId);
       console.log(`Task ${taskId}: Follow-up queued (${queued} pending), will merge when current execution finishes`);
       // Broadcast queue info to frontend
@@ -478,6 +511,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       });
     }
     if (modelWasProvided && !nextModel) nextModel = task.model;
+    if (effortWasProvided && !nextEffort) nextEffort = task.reasoningEffort;
 
     // Task is completed/failed — dispatch immediately as a continue session
     // Update task status BEFORE dispatching to avoid race condition
@@ -490,6 +524,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
     task.continuePrompt = effectivePrompt;
     task.runner = nextRunner;
     task.model = nextModel;
+    task.reasoningEffort = nextEffort;
     task.startedAt = startedAt;
     task.completedAt = undefined;
     task.error = undefined;
@@ -506,6 +541,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       isPlanMode: task.isPlanMode,
       runner: task.runner,
       model: task.model,
+      reasoningEffort: task.reasoningEffort,
       executor: project.executor,
       dockerImage: project.dockerImage,
       worktreeBranch: task.worktreeBranch,
@@ -674,6 +710,7 @@ router.get('/tasks/:id/followups', async (req, res) => {
       imageCount: message.images?.length ?? 0,
       runner: message.runner,
       model: message.model,
+      reasoningEffort: message.reasoningEffort,
     }));
     res.json({ queueSize: items.length, items });
   } catch (error) {

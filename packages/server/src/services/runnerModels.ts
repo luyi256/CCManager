@@ -5,6 +5,7 @@ const MODEL_CAPABILITY_PREFIX = 'models:';
 export interface RunnerModelCatalog {
   installed: boolean;
   models: string[];
+  modelOptions?: Array<{ id: string; efforts?: string[]; defaultEffort?: string }>;
   message?: string;
 }
 
@@ -32,7 +33,8 @@ export function getRunnerModelCatalog(
       typeof parsed.installed !== 'boolean' ||
       !Array.isArray(parsed.models) ||
       parsed.models.some((model: unknown) => typeof model !== 'string') ||
-      (parsed.message !== undefined && typeof parsed.message !== 'string')
+      (parsed.message !== undefined && typeof parsed.message !== 'string') ||
+      (parsed.modelOptions !== undefined && !Array.isArray(parsed.modelOptions))
     ) {
       return null;
     }
@@ -43,10 +45,55 @@ export function getRunnerModelCatalog(
       )),
     };
     if (parsed.message !== undefined) catalog.message = parsed.message;
+    if (Array.isArray(parsed.modelOptions)) {
+      catalog.modelOptions = parsed.modelOptions.flatMap((option: unknown) => {
+        if (!option || typeof option !== 'object') return [];
+        const item = option as { id?: unknown; efforts?: unknown; defaultEffort?: unknown };
+        if (typeof item.id !== 'string' || !item.id.trim()) return [];
+        const normalized: { id: string; efforts?: string[]; defaultEffort?: string } = {
+          id: item.id.trim(),
+        };
+        if (Array.isArray(item.efforts)) {
+          normalized.efforts = Array.from(new Set(item.efforts
+            .filter((effort): effort is string => typeof effort === 'string')
+            .map((effort) => effort.trim())
+            .filter(Boolean)));
+        }
+        if (typeof item.defaultEffort === 'string' && item.defaultEffort.trim()) {
+          normalized.defaultEffort = item.defaultEffort.trim();
+        }
+        return [normalized];
+      });
+    }
     return catalog;
   } catch {
     return null;
   }
+}
+
+export function validateReasoningEffort(
+  capabilities: string[],
+  runner: Runner,
+  model: string | undefined,
+  value: unknown,
+): { reasoningEffort?: string; error?: string } {
+  if (value === undefined || value === null || value === '') return {};
+  if (typeof value !== 'string' || !value.trim()) {
+    return { error: 'Effort must be a non-empty string' };
+  }
+  const effort = value.trim();
+  const catalog = getRunnerModelCatalog(capabilities, runner);
+  if (!catalog?.installed || !model) {
+    return { reasoningEffort: effort };
+  }
+  const option = catalog.modelOptions?.find((item) => item.id === model);
+  if (!option?.efforts?.length) {
+    return { error: `Model "${model}" does not expose selectable effort on ${runner}` };
+  }
+  if (!option.efforts.includes(effort)) {
+    return { error: `Effort "${effort}" is not supported by model "${model}"` };
+  }
+  return { reasoningEffort: effort };
 }
 
 function acceptRequestedModel(value: unknown): { model?: string; error?: string } {

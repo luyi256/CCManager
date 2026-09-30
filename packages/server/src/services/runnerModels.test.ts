@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { getRunnerModelCatalog, validateRunnerSelection } from './runnerModels.js';
+import { getRunnerModelCatalog, validateReasoningEffort, validateRunnerSelection } from './runnerModels.js';
 
 test('parses an installed runner catalog from agent capabilities', () => {
   const capabilities = [
@@ -68,4 +68,34 @@ test('preserves local wrapper setup guidance for unavailable Claude Grok', () =>
     validateRunnerSelection(capabilities, 'claude-grok', 'claude-opus-5').error || '',
     /Install claude-grok/
   );
+});
+
+test('validates effort against the selected model metadata', () => {
+  const capabilities = [
+    'models:tcodex:{"installed":true,"models":["gpt-6-astra"],"modelOptions":[{"id":"gpt-6-astra","efforts":["low","high","max"],"defaultEffort":"high"}]}',
+  ];
+  assert.deepEqual(validateReasoningEffort(
+    capabilities,
+    'tcodex',
+    'gpt-6-astra',
+    'max',
+  ), { reasoningEffort: 'max' });
+  assert.match(validateReasoningEffort(
+    capabilities,
+    'tcodex',
+    'gpt-6-astra',
+    'xhigh',
+  ).error || '', /not supported/);
+});
+
+test('rejects effort selection for a model without selectable effort', () => {
+  const capabilities = [
+    'models:cursor:{"installed":true,"models":["composer-2.5"],"modelOptions":[{"id":"composer-2.5"}]}',
+  ];
+  assert.match(validateReasoningEffort(
+    capabilities,
+    'cursor',
+    'composer-2.5',
+    'high',
+  ).error || '', /does not expose/);
 });

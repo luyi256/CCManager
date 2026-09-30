@@ -182,6 +182,7 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
               isPlanMode: task.isPlanMode,
               runner: task.runner,
               model: task.model,
+              reasoningEffort: task.reasoningEffort,
               skipModelValidation: true,
               executor: project.executor,
               dockerImage: project.dockerImage,

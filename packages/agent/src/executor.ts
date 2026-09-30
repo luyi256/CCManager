@@ -131,6 +131,9 @@ export class ClaudeExecutor extends EventEmitter {
         : task.model;
       args.push('--model', model);
     }
+    if (!isQwen && task.reasoningEffort) {
+      args.push('--effort', task.reasoningEffort);
+    }
 
     if (!isQwen && task.isPlanMode) {
       args.push('--permission-mode', 'plan');

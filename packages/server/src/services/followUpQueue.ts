@@ -10,6 +10,7 @@ interface QueuedMessage {
   images?: string[];
   runner?: Runner;
   model?: string;
+  reasoningEffort?: string;
   /** The user_message log this follow-up was written for, if known. */
   logId?: number;
   /** Attachment rows already stored for this row (legacy rows without a logId). */
@@ -22,17 +23,19 @@ export function enqueue(
   images?: string[],
   runner?: Runner,
   model?: string,
-  logId?: number
+  logId?: number,
+  reasoningEffort?: string,
 ): void {
   db.prepare(`
-    INSERT INTO task_followups (task_id, prompt, images, runner, model, log_id)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO task_followups (task_id, prompt, images, runner, model, reasoning_effort, log_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `).run(
     taskId,
     prompt,
     images?.length ? JSON.stringify(images) : null,
     runner || null,
     model || null,
+    reasoningEffort || null,
     logId ?? null,
   );
 }
@@ -45,7 +48,7 @@ export function enqueue(
  */
 export function peekAll(taskId: number): QueuedMessage[] {
   const rows = db.prepare(`
-    SELECT id, prompt, images, runner, model, log_id, attachment_ids
+    SELECT id, prompt, images, runner, model, reasoning_effort, log_id, attachment_ids
     FROM task_followups
     WHERE task_id = ?
     ORDER BY id ASC
@@ -55,6 +58,7 @@ export function peekAll(taskId: number): QueuedMessage[] {
     images: string | null;
     runner: Runner | null;
     model: string | null;
+    reasoning_effort: string | null;
     log_id: number | null;
     attachment_ids: string | null;
   }>;
@@ -80,6 +84,7 @@ export function peekAll(taskId: number): QueuedMessage[] {
       images,
       runner: row.runner || undefined,
       model: row.model || undefined,
+      reasoningEffort: row.reasoning_effort || undefined,
       logId: row.log_id ?? undefined,
       attachmentIds,
     };

@@ -120,6 +120,7 @@ export interface Task {
   isPlanMode: boolean;
   runner?: Runner;
   model?: string;
+  reasoningEffort?: string;
   dependsOn?: number;
   worktreeBranch?: string;
   createdAt: string;
@@ -199,6 +200,7 @@ export interface ServerToAgentEvents {
     isPlanMode: boolean;
     runner?: Runner;
     model?: string;
+    reasoningEffort?: string;
     executor?: 'local' | 'docker';
     dockerImage?: string;
     worktreeBranch?: string;

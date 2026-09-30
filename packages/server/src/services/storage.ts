@@ -342,6 +342,7 @@ function rowToTask(row: {
   is_plan_mode: number;
   runner: string | null;
   model: string | null;
+  reasoning_effort: string | null;
   depends_on: number | null;
   worktree_branch: string | null;
   created_at: string;
@@ -371,6 +372,7 @@ function rowToTask(row: {
     isPlanMode: row.is_plan_mode === 1,
     runner: (row.runner as Task['runner']) || 'claude',
     model: row.model || undefined,
+    reasoningEffort: row.reasoning_effort || undefined,
     dependsOn: row.depends_on || undefined,
     worktreeBranch: row.worktree_branch || undefined,
     createdAt: row.created_at,
@@ -398,15 +400,16 @@ function rowToTask(row: {
 export async function saveTask(projectId: string, task: Task): Promise<void> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      id, project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
+      id, project_id, prompt, status, is_plan_mode, runner, model, reasoning_effort, depends_on, worktree_branch,
       created_at, started_at, completed_at, error, waiting_until, wait_reason,
       check_command, continue_prompt, git_info, summary, security_warnings, pending_permission,
       session_id, session_runner, attempt_count, recovery_count, last_progress_at, last_recovery_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET
       status = excluded.status,
       runner = excluded.runner,
       model = excluded.model,
+      reasoning_effort = excluded.reasoning_effort,
       started_at = excluded.started_at,
       completed_at = excluded.completed_at,
       error = excluded.error,
@@ -433,6 +436,7 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
     task.isPlanMode ? 1 : 0,
     task.runner || 'claude',
     task.model || null,
+    task.reasoningEffort || null,
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,
@@ -462,11 +466,11 @@ export async function saveTask(projectId: string, task: Task): Promise<void> {
 export async function createTask(projectId: string, task: Omit<Task, 'id'>): Promise<Task> {
   const stmt = db.prepare(`
     INSERT INTO tasks (
-      project_id, prompt, status, is_plan_mode, runner, model, depends_on, worktree_branch,
+      project_id, prompt, status, is_plan_mode, runner, model, reasoning_effort, depends_on, worktree_branch,
       created_at, started_at, completed_at, error, session_id, session_runner,
       attempt_count, recovery_count,
       last_progress_at, last_recovery_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
   const result = stmt.run(
     projectId,
@@ -475,6 +479,7 @@ export async function createTask(projectId: string, task: Omit<Task, 'id'>): Pro
     task.isPlanMode ? 1 : 0,
     task.runner || 'claude',
     task.model || null,
+    task.reasoningEffort || null,
     task.dependsOn || null,
     task.worktreeBranch || null,
     task.createdAt,

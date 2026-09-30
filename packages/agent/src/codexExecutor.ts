@@ -65,6 +65,9 @@ export class CodexExecutor extends EventEmitter {
     if (task.model) {
       args.push('--model', task.model);
     }
+    if (task.reasoningEffort) {
+      args.push('--config', `model_reasoning_effort="${task.reasoningEffort}"`);
+    }
 
     try {
       await this.runCodex(args, workingDir);

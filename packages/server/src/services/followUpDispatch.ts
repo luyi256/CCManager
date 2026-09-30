@@ -83,12 +83,13 @@ export async function drainFollowUps(taskId: number): Promise<DrainResult> {
   }
 
   const merged = mergeQueued(queued, task);
-  let { runner, model } = merged;
+  let { runner, model, reasoningEffort } = merged;
   // A resumed session belongs to the coding agent that created it.
   if (sessionRunner && runner !== sessionRunner) {
     console.log(`Task ${taskId}: keeping queued follow-up on original ${sessionRunner} session runner`);
     runner = sessionRunner;
     model = task.model;
+    reasoningEffort = task.reasoningEffort;
   }
 
   const previousStatus = task.status;
@@ -99,6 +100,7 @@ export async function drainFollowUps(taskId: number): Promise<DrainResult> {
   task.continuePrompt = merged.prompt;
   task.runner = runner;
   task.model = model;
+  task.reasoningEffort = reasoningEffort;
   task.startedAt = startedAt;
   task.completedAt = undefined;
   task.error = undefined;
@@ -135,6 +137,7 @@ export async function drainFollowUps(taskId: number): Promise<DrainResult> {
     isPlanMode: task.isPlanMode,
     runner: task.runner,
     model: task.model,
+    reasoningEffort: task.reasoningEffort,
     skipModelValidation: true,
     executor: project.executor,
     dockerImage: project.dockerImage,
@@ -171,19 +174,23 @@ function mergeQueued(queued: QueuedMessage[], task: Task): {
   images: string[];
   runner: Runner | undefined;
   model: string | undefined;
+  reasoningEffort: string | undefined;
 } {
   const images: string[] = [];
   let runner = task.runner;
   let model = task.model;
+  let reasoningEffort = task.reasoningEffort;
   for (const message of queued) {
     if (message.images) images.push(...message.images);
     if (message.runner) runner = message.runner;
     if (message.model !== undefined) model = message.model;
+    if (message.reasoningEffort !== undefined) reasoningEffort = message.reasoningEffort;
   }
   return {
     prompt: queued.map((message) => message.prompt).join('\n\n'),
     images,
     runner,
     model,
+    reasoningEffort,
   };
 }

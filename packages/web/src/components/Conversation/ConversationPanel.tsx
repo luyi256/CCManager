@@ -129,6 +129,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     task.runner || 'claude'
   );
   const [followUpModel, setFollowUpModel] = useState(task.model || '');
+  const [followUpReasoningEffort, setFollowUpReasoningEffort] = useState(task.reasoningEffort || '');
   const sessionRunner = useMemo<Runner | undefined>(() => {
     if (task.sessionId) return task.sessionRunner || task.runner || 'claude';
     if (!task.gitInfo) return undefined;
@@ -150,7 +151,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   useEffect(() => {
     setFollowUpRunner(runnerLocked && sessionRunner ? sessionRunner : task.runner || 'claude');
     setFollowUpModel(task.model || '');
-  }, [task.id, task.runner, task.model, sessionRunner, runnerLocked]);
+    setFollowUpReasoningEffort(task.reasoningEffort || '');
+  }, [task.id, task.runner, task.model, task.reasoningEffort, sessionRunner, runnerLocked]);
 
   const handleFollowUpPaste = useCallback(async (e: React.ClipboardEvent) => {
     const files = Array.from(e.clipboardData?.items || [])
@@ -739,6 +741,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     images: imageBase64s,
                     runner: followUpRunner,
                     model: followUpModel,
+                    reasoningEffort: followUpReasoningEffort || undefined,
                   }, {
                     onSuccess: () => {
                       setContinuePrompt('');
@@ -816,8 +819,10 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     <ModelSwitcher
                       selectedRunner={followUpRunner}
                       selectedModel={followUpModel}
+                      selectedEffort={followUpReasoningEffort}
                       onRunnerChange={setFollowUpRunner}
                       onModelChange={setFollowUpModel}
+                      onEffortChange={setFollowUpReasoningEffort}
                       agentId={agentId}
                       compact
                       lockRunner={runnerLocked}

@@ -13,13 +13,16 @@ const RUNNERS: Array<{ id: Runner; label: string; accent: string }> = [
   { id: 'qwen', label: 'Qwen', accent: 'text-amber-400' },
 ];
 
-type Step = 'runner' | 'models';
+type Step = 'runner' | 'models' | 'effort';
+type ModelOption = api.RunnerModelsResponse['modelOptions'][number];
 
 interface ModelSwitcherProps {
   selectedRunner: Runner;
   selectedModel: string;
+  selectedEffort: string;
   onRunnerChange: (runner: Runner) => void;
   onModelChange: (model: string) => void;
+  onEffortChange: (effort: string) => void;
   agentId?: string;
   compact?: boolean;
   lockRunner?: boolean;
@@ -36,8 +39,10 @@ function shortModelName(model: string): string {
 export default function ModelSwitcher({
   selectedRunner,
   selectedModel,
+  selectedEffort,
   onRunnerChange,
   onModelChange,
+  onEffortChange,
   agentId,
   compact = false,
   lockRunner = false,
@@ -46,6 +51,8 @@ export default function ModelSwitcher({
   const [step, setStep] = useState<Step>('runner');
   const [draftRunner, setDraftRunner] = useState<Runner>(selectedRunner);
   const [models, setModels] = useState<string[]>([]);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+  const [draftModel, setDraftModel] = useState(selectedModel);
   const [isLoading, setIsLoading] = useState(false);
   const [runnerAvailable, setRunnerAvailable] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +72,7 @@ export default function ModelSwitcher({
     setOpen(false);
     setStep('runner');
     setDraftRunner(selectedRunner);
+    setDraftModel(selectedModel);
     setError(null);
   };
 
@@ -83,6 +91,7 @@ export default function ModelSwitcher({
       // Drop stale responses if the user switched runner meanwhile.
       if (requestedRunnerRef.current !== runner) return;
       setModels(result.models);
+      setModelOptions(result.modelOptions || []);
       setRunnerAvailable(result.available);
       if (!result.available) {
         setError(result.message || `This agent has not reported ${runner} models`);
@@ -92,6 +101,7 @@ export default function ModelSwitcher({
     } catch (err) {
       if (requestedRunnerRef.current !== runner) return;
       setModels([]);
+      setModelOptions([]);
       setRunnerAvailable(false);
       setError(err instanceof Error ? err.message : 'Failed to load models');
     } finally {
@@ -102,6 +112,7 @@ export default function ModelSwitcher({
   useEffect(() => {
     if (!open) return;
     setDraftRunner(selectedRunner);
+    setDraftModel(selectedModel);
     if (lockRunner) {
       setStep('models');
       setModels([]);
@@ -116,6 +127,7 @@ export default function ModelSwitcher({
     if (runnerAvailable === false) return;
     onRunnerChange(draftRunner);
     onModelChange('');
+    onEffortChange('');
     close();
   };
 
@@ -123,9 +135,32 @@ export default function ModelSwitcher({
     setDraftRunner(runner);
     setStep('models');
     setModels([]);
+    setModelOptions([]);
     setRunnerAvailable(null);
     void loadModels(runner);
   };
+
+  const selectModel = (model: string) => {
+    const option = modelOptions.find((item) => item.id === model);
+    setDraftModel(model);
+    if (option?.efforts?.length) {
+      setStep('effort');
+      return;
+    }
+    onRunnerChange(draftRunner);
+    onModelChange(model);
+    onEffortChange('');
+    close();
+  };
+
+  const applyEffort = (effort: string) => {
+    onRunnerChange(draftRunner);
+    onModelChange(draftModel);
+    onEffortChange(effort);
+    close();
+  };
+
+  const selectedOption = modelOptions.find((item) => item.id === draftModel);
 
   return (
     <div className="relative">
@@ -145,6 +180,11 @@ export default function ModelSwitcher({
         {selectedModel && (
           <span className="max-w-[90px] truncate text-dark-500">
             {shortModelName(selectedModel)}
+          </span>
+        )}
+        {selectedEffort && (
+          <span className="rounded bg-dark-700 px-1 text-[10px] uppercase text-dark-400">
+            {selectedEffort}
           </span>
         )}
       </button>
@@ -220,11 +260,7 @@ export default function ModelSwitcher({
                     <button
                       key={model}
                       type="button"
-                      onClick={() => {
-                        onRunnerChange(draftRunner);
-                        onModelChange(model);
-                        close();
-                      }}
+                      onClick={() => selectModel(model)}
                       className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
                     >
                       <span className="w-4">{selectedRunner === draftRunner && selectedModel === model && <Check size={14} />}</span>
@@ -239,6 +275,49 @@ export default function ModelSwitcher({
                   {error}
                 </div>
               )}
+            </div>
+          )}
+
+          {step === 'effort' && (
+            <div className="p-2">
+              <div className="flex items-center justify-between px-1 pb-2">
+                <button
+                  type="button"
+                  onClick={() => setStep('models')}
+                  className="text-xs text-dark-400 hover:text-dark-200"
+                >
+                  ← {shortModelName(draftModel)}
+                </button>
+                <span className="text-xs uppercase text-dark-500">Reasoning effort</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => applyEffort('')}
+                className="mb-1 w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
+              >
+                <span className="w-4">{selectedRunner === draftRunner && selectedModel === draftModel && !selectedEffort && <Check size={14} />}</span>
+                <span className="flex-1">
+                  Model default
+                  {selectedOption?.defaultEffort && (
+                    <span className="ml-1 text-dark-500">({selectedOption.defaultEffort})</span>
+                  )}
+                </span>
+              </button>
+              <div className="max-h-64 overflow-y-auto py-1">
+                {(selectedOption?.efforts || []).map((effort) => (
+                  <button
+                    key={effort}
+                    type="button"
+                    onClick={() => applyEffort(effort)}
+                    className="w-full flex items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-dark-300 hover:bg-dark-800"
+                  >
+                    <span className="w-4">
+                      {selectedRunner === draftRunner && selectedModel === draftModel && selectedEffort === effort && <Check size={14} />}
+                    </span>
+                    <span className="capitalize">{effort === 'xhigh' ? 'Extra high' : effort}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>

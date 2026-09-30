@@ -150,6 +150,9 @@ export class DockerExecutor extends EventEmitter {
     if (task.model) {
       args.push('--model', task.model);
     }
+    if (task.reasoningEffort) {
+      args.push('--effort', task.reasoningEffort);
+    }
 
     if (task.isPlanMode) {
       args.push('--permission-mode', 'plan');

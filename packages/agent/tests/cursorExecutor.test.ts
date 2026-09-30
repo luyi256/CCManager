@@ -50,3 +50,37 @@ test('adds the default Router mode when it is explicitly selected', () => {
     params: [{ id: 'optimize_for', value: 'intelligence' }],
   });
 });
+
+test('overrides the Cursor model default with the selected reasoning effort', () => {
+  assert.deepEqual(selectCursorModel([{
+    id: 'gpt-5.6-sol',
+    displayName: 'GPT-5.6 Sol',
+    parameters: [{
+      id: 'reasoning',
+      displayName: 'Reasoning',
+      values: [{ value: 'medium' }, { value: 'xhigh' }],
+    }],
+    variants: [{
+      displayName: 'Default',
+      isDefault: true,
+      params: [
+        { id: 'context', value: '1m' },
+        { id: 'reasoning', value: 'medium' },
+      ],
+    }],
+  }], 'gpt-5.6-sol', 'xhigh'), {
+    id: 'gpt-5.6-sol',
+    params: [
+      { id: 'context', value: '1m' },
+      { id: 'reasoning', value: 'xhigh' },
+    ],
+  });
+});
+
+test('rejects an effort not supported by the Cursor model', () => {
+  assert.throws(() => selectCursorModel([{
+    id: 'composer-2.5',
+    displayName: 'Composer',
+    parameters: [],
+  }], 'composer-2.5', 'high'), /not supported/);
+});

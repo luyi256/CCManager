@@ -33,6 +33,7 @@ export interface TaskRequest {
   isPlanMode: boolean;
   runner?: 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
   model?: string;
+  reasoningEffort?: string;
   executor?: 'local' | 'docker';
   dockerImage?: string;
   worktreeBranch?: string;

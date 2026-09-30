@@ -21,6 +21,7 @@ const markers = [
   { label: 'Cursor runner label', pattern: /label:"Cursor"/ },
   { label: 'tCodex runner id', pattern: /id:"tcodex"/ },
   { label: 'Claude runner id', pattern: /id:"claude"/ },
+  { label: 'reasoning effort selector', pattern: /Reasoning effort/ },
 ];
 
 for (const marker of markers) {
