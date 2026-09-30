@@ -67,6 +67,11 @@ async function persistAndBroadcastPhase(
 export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server {
   io = new Server(server, {
     path,
+    // Session detail callbacks can contain multi-megabyte coding transcripts.
+    // Socket.IO defaults to 1 MB and silently drops the agent connection when
+    // a larger acknowledgement arrives, which made large tCodex histories
+    // appear to hang and then time out.
+    maxHttpBufferSize: 32 * 1024 * 1024,
     cors: {
       origin: false,
     },
