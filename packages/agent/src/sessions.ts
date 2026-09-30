@@ -775,14 +775,29 @@ async function findSessionFiles(
   const wanted = new Set(sessionIds);
   const result = new Map<string, SessionFile>();
   const sources = await discoverSessionFiles(projectPath, options);
-  for (const source of sources) {
-    if (source.runner && source.runner !== runner) continue;
-    if (source.format !== 'codex') {
-      const id = basename(source.filePath).replace(/\.jsonl$/, '');
-      if (!wanted.has(id)) continue;
+  const candidates = sources.filter((source) => {
+    if (source.runner && source.runner !== runner) return false;
+    if (source.format === 'codex') return true;
+    const id = basename(source.filePath).replace(/\.jsonl$/, '');
+    return wanted.has(id);
+  });
+
+  // Codex stores are date-partitioned and the session id is only present in
+  // metadata. Reading every candidate serially can exceed the server's 15s
+  // detail timeout on a large history store, so resolve metadata in batches.
+  const concurrency = 30;
+  for (let index = 0; index < candidates.length; index += concurrency) {
+    const batch = candidates.slice(index, index + concurrency);
+    const matches = await Promise.all(batch.map(async (source) => {
+      const metadata = await loadSessionMetadata(source);
+      return metadata?.runner === runner && wanted.has(metadata.sessionId)
+        ? { sessionId: metadata.sessionId, source }
+        : null;
+    }));
+    for (const match of matches) {
+      if (match) result.set(match.sessionId, match.source);
     }
-    const metadata = await loadSessionMetadata(source);
-    if (metadata?.runner === runner && wanted.has(metadata.sessionId)) result.set(metadata.sessionId, source);
+    if (result.size === wanted.size) break;
   }
   return result;
 }
