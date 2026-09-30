@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -164,5 +164,60 @@ describe('multi-runner session browsing', () => {
     const search = await searchSessions(projectPath, 'Qwen prompt', options);
     assert.equal(search.length, 1);
     assert.equal(search[0].runner, 'qwen');
+  });
+
+  it('matches tClaude and tCodex history through an equivalent project symlink', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'ccm-session-alias-'));
+    const realProject = join(homeDir, 'projects', 'video_reward');
+    const aliasProject = join(homeDir, 'video_reward-link');
+    await mkdir(realProject, { recursive: true });
+    await symlink(realProject, aliasProject);
+    const projectHash = realProject.replace(/[^a-zA-Z0-9]/g, '-');
+    const timestamp = '2026-09-30T12:00:00.000Z';
+
+    await writeJsonl(join(
+      homeDir,
+      '.tclaude',
+      'projects',
+      projectHash,
+      '88888888-8888-4888-8888-888888888888.jsonl',
+    ), [{
+      type: 'user',
+      sessionId: '88888888-8888-4888-8888-888888888888',
+      timestamp,
+      cwd: realProject,
+      message: { content: 'Aliased tClaude prompt' },
+    }]);
+    await writeJsonl(join(
+      homeDir,
+      '.tcodex',
+      'sessions',
+      '2026',
+      '09',
+      '30',
+      'rollout-alias.jsonl',
+    ), [
+      {
+        type: 'session_meta',
+        timestamp,
+        payload: {
+          session_id: '99999999-9999-4999-8999-999999999999',
+          cwd: realProject,
+        },
+      },
+      {
+        type: 'event_msg',
+        timestamp,
+        payload: { type: 'user_message', message: 'Aliased tCodex prompt' },
+      },
+    ]);
+
+    const sessions = await listSessions(aliasProject, { homeDir });
+    assert.ok(sessions.some((session) =>
+      session.runner === 'tclaude' && session.firstPrompt === 'Aliased tClaude prompt'
+    ));
+    assert.ok(sessions.some((session) =>
+      session.runner === 'tcodex' && session.firstPrompt === 'Aliased tCodex prompt'
+    ));
   });
 });

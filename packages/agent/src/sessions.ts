@@ -13,8 +13,13 @@ import { createReadStream, existsSync } from 'fs';
 import { readdir, readFile, stat } from 'fs/promises';
 import { createInterface } from 'readline';
 import { homedir } from 'os';
-import { basename, join, resolve } from 'path';
+import { basename, join } from 'path';
 import type { Runner } from './runnerModels.js';
+import {
+  equivalentProjectPaths,
+  pathBelongsToProject,
+  projectPathToStoreName,
+} from './projectPaths.js';
 
 export interface SessionListItem {
   sessionId: string;
@@ -90,10 +95,6 @@ const CODEX_INTERNAL_USER_PREFIXES = [
 
 function isSafeSessionId(sessionId: string): boolean {
   return SESSION_ID_REGEX.test(sessionId);
-}
-
-function projectPathToHash(projectPath: string): string {
-  return projectPath.replace(/[^a-zA-Z0-9]/g, '-');
 }
 
 function cleanTitleText(text: string): string {
@@ -180,17 +181,6 @@ function inferClaudeRunner(model: string | undefined, fixedRunner?: Runner): Run
   return model && /(?:^|[/_-])(grok|xai)(?:[/_.-]|$)/i.test(model)
     ? 'claude-grok'
     : 'claude';
-}
-
-function belongsToProject(cwd: string | undefined, acceptedCwds: string[]): boolean {
-  if (!cwd) return true;
-  const resolvedCwd = resolve(cwd);
-  return acceptedCwds.some((candidate) => {
-    const root = resolve(candidate);
-    return resolvedCwd === root ||
-      resolvedCwd.startsWith(`${root}/.worktrees/`) ||
-      resolvedCwd.startsWith(`${root}/.qwen/worktrees/`);
-  });
 }
 
 async function readHeadLines(filePath: string, maxLines = 160): Promise<string[]> {
@@ -386,10 +376,13 @@ async function collectProjectStoreFiles(
   acceptedCwds = [projectPath],
 ): Promise<SessionFile[]> {
   if (!existsSync(baseDir)) return [];
-  const hash = projectPathToHash(projectPath);
+  const hashes = acceptedCwds.map((candidate) => projectPathToStoreName(candidate));
+  const suffixes = hashes.map((hash) => hash.split('-').slice(-2).join('-'));
   const candidateDirs = (await listDirectories(baseDir)).filter((dir) => {
     const name = basename(dir);
-    return name === hash || name.startsWith(`${hash}-`) || name.endsWith(hash.split('-').slice(-2).join('-'));
+    return hashes.some((hash, index) =>
+      name === hash || name.startsWith(`${hash}-`) || name.endsWith(suffixes[index])
+    );
   });
   const results: SessionFile[] = [];
   for (const candidate of candidateDirs) {
@@ -434,7 +427,7 @@ async function collectCodexFiles(root: string, runner: 'codex' | 'tcodex', accep
 
 async function discoverSessionFiles(projectPath: string, options: SessionQueryOptions = {}): Promise<SessionFile[]> {
   const home = options.homeDir || homedir();
-  const acceptedCwds = [projectPath];
+  const acceptedCwds = await equivalentProjectPaths(projectPath);
   const claudeHome = options.homeDir
     ? join(home, '.claude')
     : process.env.CLAUDE_CONFIG_DIR || join(home, '.claude');
@@ -448,9 +441,9 @@ async function discoverSessionFiles(projectPath: string, options: SessionQueryOp
     ? join(home, '.tcodex')
     : process.env.TCODEX_HOME || join(home, '.tcodex');
   const files = [
-    ...await collectProjectStoreFiles(join(claudeHome, 'projects'), projectPath, 'claude'),
-    ...await collectProjectStoreFiles(join(home, '.tclaude', 'projects'), projectPath, 'claude', 'tclaude'),
-    ...await collectProjectStoreFiles(join(qwenHome, 'projects'), projectPath, 'qwen', 'qwen'),
+    ...await collectProjectStoreFiles(join(claudeHome, 'projects'), projectPath, 'claude', undefined, acceptedCwds),
+    ...await collectProjectStoreFiles(join(home, '.tclaude', 'projects'), projectPath, 'claude', 'tclaude', acceptedCwds),
+    ...await collectProjectStoreFiles(join(qwenHome, 'projects'), projectPath, 'qwen', 'qwen', acceptedCwds),
     ...await collectCodexFiles(codexHome, 'codex', acceptedCwds),
     ...await collectCodexFiles(tcodexHome, 'tcodex', acceptedCwds),
   ];
@@ -474,7 +467,11 @@ async function discoverSessionFiles(projectPath: string, options: SessionQueryOp
 
 async function loadSessionMetadata(source: SessionFile): Promise<SessionMetadata | null> {
   const metadata = parseMetadata(source.format, parseJsonLines(await readHeadLines(source.filePath)), source.runner);
-  if (!metadata || !isSafeSessionId(metadata.sessionId) || !belongsToProject(metadata.cwd, source.acceptedCwds)) return null;
+  if (
+    !metadata ||
+    !isSafeSessionId(metadata.sessionId) ||
+    !await pathBelongsToProject(metadata.cwd, source.acceptedCwds)
+  ) return null;
   return metadata;
 }
 
