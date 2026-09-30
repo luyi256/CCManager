@@ -84,7 +84,10 @@ packages/
 │   └── types/index.ts
 ├── agent/src/
 │   ├── index.ts              # CLI entry, config loading and validation
-│   ├── connection.ts         # WebSocket connection, heartbeat (30s), concurrent task Map
+│   ├── connection.ts         # WebSocket connection, heartbeat, reconnect reconciliation, run event forwarding
+│   ├── taskRunner.ts         # Detached per-task runner process; survives agent restarts
+│   ├── taskRun.ts            # Run directory protocol (~/.ccm-agent/runs): events, control, delivery cursor
+│   ├── executors.ts          # Executor selection by runner/executor
 │   ├── executor.ts           # spawn claude CLI (stream-json, 4-hour timeout)
 │   ├── docker.ts             # Docker container execution (mount /workspace, credential injection, HOME=/home/ccm)
 │   ├── security.ts           # Path validation (incl. symlink check), env var whitelist

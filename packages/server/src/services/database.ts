@@ -106,6 +106,16 @@ db.exec(`
     UNIQUE(task_id, position)
   );
 
+  -- Highest agent event sequence applied per task run. Agents resend
+  -- unacknowledged events after reconnects and restarts; this makes that safe.
+  CREATE TABLE IF NOT EXISTS task_event_cursors (
+    task_id INTEGER NOT NULL,
+    run_id TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now')),
+    PRIMARY KEY (task_id, run_id)
+  );
+
   CREATE TABLE IF NOT EXISTS task_followups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     task_id INTEGER NOT NULL,

@@ -274,6 +274,20 @@ export function touchTaskProgress(taskId: number, timestamp = new Date().toISOSt
   `).run(timestamp, taskId);
 }
 
+export function getTaskEventCursor(taskId: number, runId: string): number {
+  const row = db.prepare(`SELECT seq FROM task_event_cursors WHERE task_id = ? AND run_id = ?`)
+    .get(taskId, runId) as { seq: number } | undefined;
+  return row?.seq ?? 0;
+}
+
+export function setTaskEventCursor(taskId: number, runId: string, seq: number): void {
+  db.prepare(`
+    INSERT INTO task_event_cursors (task_id, run_id, seq, updated_at)
+    VALUES (?, ?, ?, datetime('now'))
+    ON CONFLICT(task_id, run_id) DO UPDATE SET seq = excluded.seq, updated_at = excluded.updated_at
+  `).run(taskId, runId, seq);
+}
+
 // Get all running tasks for a specific agent (for recovery after restart)
 export async function getRunningTasksForAgent(agentId: string): Promise<Array<{ task: Task; project: Project }>> {
   const stmt = db.prepare(`

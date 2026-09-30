@@ -18,6 +18,8 @@ class AgentPool {
   private agents: Map<string, ConnectedAgent> = new Map();
   private agentNamespace: Namespace | null = null;
   private heartbeatInterval: NodeJS.Timeout | null = null;
+  /** User input (plan answers, permission responses) sent while the agent was unreachable. */
+  private pendingInputs: Map<string, Array<{ taskId: number; input: string }>> = new Map();
 
   setNamespace(ns: Namespace): void {
     this.agentNamespace = ns;
@@ -29,7 +31,7 @@ class AgentPool {
     agentName: string;
     capabilities: string[];
     executor?: 'local' | 'docker';
-    runningTasks?: Array<{ taskId: number; sessionId?: string }>;
+    runningTasks?: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
   }): void {
     const agent: ConnectedAgent = {
       socket,
@@ -222,8 +224,27 @@ class AgentPool {
 
   sendInput(agentId: string, taskId: number, input: string): void {
     const agent = this.agents.get(agentId);
-    if (agent && agent.runningTasks.includes(taskId)) {
+    if (!agent || !agent.socket.connected) {
+      const queued = this.pendingInputs.get(agentId) || [];
+      queued.push({ taskId, input });
+      this.pendingInputs.set(agentId, queued);
+      return;
+    }
+    if (agent.runningTasks.includes(taskId)) {
       agent.socket.emit('task:input', { taskId, input });
+    }
+  }
+
+  /** Deliver input queued while offline to tasks that survived the disconnect. */
+  flushPendingInputs(agentId: string, runningTaskIds: Set<number>): void {
+    const queued = this.pendingInputs.get(agentId);
+    this.pendingInputs.delete(agentId);
+    const agent = this.agents.get(agentId);
+    if (!queued || !agent) return;
+    for (const { taskId, input } of queued) {
+      if (runningTaskIds.has(taskId)) {
+        agent.socket.emit('task:input', { taskId, input });
+      }
     }
   }
 

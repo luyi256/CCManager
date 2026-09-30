@@ -23,6 +23,7 @@ export interface AgentConfig {
   allowedPaths: string[];
   blockedPaths?: string[];
   capabilities?: string[];
+  runsDir?: string; // Task run state; defaults to ~/.ccm-agent/runs/<agentId>
 }
 
 export interface TaskRequest {
@@ -72,7 +73,7 @@ export interface AgentInfo {
   capabilities: string[];
   executor?: 'local' | 'docker';
   status: 'online' | 'busy';
-  runningTasks?: Array<{ taskId: number; sessionId?: string }>;
+  runningTasks?: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
 }
 
 export interface MergeResult {

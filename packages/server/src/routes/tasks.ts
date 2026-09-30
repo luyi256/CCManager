@@ -365,7 +365,7 @@ router.post('/tasks/:id/retry', async (req, res) => {
       postTaskHook: project.postTaskHook,
       extraMounts: project.extraMounts,
       allowedPaths: buildTaskAllowedPaths(project),
-      images: getTaskImagesForDispatch(task.id, continueSession),
+      images: getTaskImagesForDispatch(task.id, !continueSession || Boolean(task.continuePrompt)),
       startedAt,
       attempt: task.attemptCount,
     });

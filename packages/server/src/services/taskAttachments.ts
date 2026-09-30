@@ -127,17 +127,19 @@ export function getTaskImages(taskId: number): string[] {
 }
 
 /**
- * Returns images only when a dispatch is starting a fresh CLI session.
+ * Returns the active images only when the dispatch re-sends the user message
+ * they belong to.
  *
- * A resumed session already contains the images from the original user turn.
- * Re-sending them during retry/recovery can produce a multi-megabyte Socket.IO
- * packet, delay transport heartbeats on slow links, and cause another recovery.
+ * A generic "continue" resume must not carry them: the session already has
+ * that turn, and a multi-megabyte packet can delay transport heartbeats on
+ * slow links. A re-sent follow-up must carry them, because an interrupted
+ * follow-up may never have reached the session at all.
  */
 export function getTaskImagesForDispatch(
   taskId: number,
-  continueSession: boolean
+  resendsUserMessage: boolean
 ): string[] | undefined {
-  if (continueSession) return undefined;
+  if (!resendsUserMessage) return undefined;
   const images = getTaskImages(taskId);
   return images.length > 0 ? images : undefined;
 }

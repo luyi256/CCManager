@@ -31,7 +31,7 @@ describe('task image validation', () => {
     assert.ok(images[0].byteSize > 10 * 1024 * 1024);
   });
 
-  it('does not resend images when resuming an existing session', () => {
-    assert.equal(getTaskImagesForDispatch(-1, true), undefined);
+  it('does not resend images with a generic continue prompt', () => {
+    assert.equal(getTaskImagesForDispatch(-1, false), undefined);
   });
 });

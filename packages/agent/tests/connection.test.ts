@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer, type Server as HttpServer } from 'node:http';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
@@ -21,7 +22,7 @@ interface TestSocketServer {
   closed: boolean;
 }
 
-function config(managerUrl: string, dataPath: string): AgentConfig {
+function config(managerUrl: string, dataPath: string, runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'))): AgentConfig {
   return {
     agentId: 'test-agent',
     agentName: 'Test Agent',
@@ -29,6 +30,7 @@ function config(managerUrl: string, dataPath: string): AgentConfig {
     managerUrl,
     authToken: 'test-token',
     allowedPaths: [tmpdir()],
+    runsDir,
   };
 }
 
@@ -119,6 +121,32 @@ test('reconnects after a server-initiated disconnect, sends immediate status, an
   assert.equal(fakeCancelCalls, 0, 'duplicate recovery should not replace an active executor');
   assert.equal(internals.executors.has(42), true);
   assert.equal(connection.isConnected, true);
+});
+
+test('stops tasks the server reports as cancelled while the agent was disconnected', async (t) => {
+  let cancelCalls = 0;
+  const server = await createSocketServer((socket) => {
+    socket.on('register', (_info, ack?: (data: unknown) => void) => {
+      ack?.({ runningTasks: [], cancelTaskIds: [42] });
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const connection = new AgentConnection(config(server.url, tmpdir()));
+  const internals = connection as unknown as {
+    executors: Map<number, { cancel(): void; isRunning: boolean }>;
+  };
+  internals.executors.set(42, {
+    cancel: () => {
+      cancelCalls++;
+    },
+    isRunning: false,
+  });
+  t.after(() => connection.disconnect());
+
+  connection.connect();
+  await waitFor(() => cancelCalls === 1, 'cancelled task was not stopped after reconnect');
+  assert.equal(internals.executors.has(42), false);
 });
 
 test('reconnects and re-registers after a transient server restart at the same URL', async (t) => {
@@ -245,4 +273,203 @@ test('local URL discovery reads server-url.txt and never silently switches to lo
 
   assert.equal(discovered, 'https://remote.example.test/ccm');
   assert.equal(fetchCalls, 0);
+});
+
+interface AppliedEvent {
+  event: string;
+  data: Record<string, unknown>;
+}
+
+interface RunnerTestServer extends TestSocketServer {
+  applied: AppliedEvent[];
+  registrations: Array<{ runningTasks?: Array<{ taskId: number; startedAt?: string }> }>;
+  sockets: Socket[];
+}
+
+/** Mirrors the real server: applies each (task, run, seq) at most once and acknowledges the cursor. */
+async function createRunnerTestServer(onRegister?: (socket: Socket, count: number) => void): Promise<RunnerTestServer> {
+  const cursors = new Map<string, number>();
+  const applied: AppliedEvent[] = [];
+  const registrations: RunnerTestServer['registrations'] = [];
+  const sockets: Socket[] = [];
+  const server = await createSocketServer((socket) => {
+    sockets.push(socket);
+    socket.on('register', (info, ack?: (data: unknown) => void) => {
+      registrations.push(info);
+      ack?.({ runningTasks: [], cancelTaskIds: [] });
+      onRegister?.(socket, registrations.length);
+    });
+    socket.on('task:events', (batch: { taskId: number; runId?: string; events: Array<{ seq: number } & AppliedEvent> }, ack?: (data: unknown) => void) => {
+      const key = `${batch.taskId}:${batch.runId ?? ''}`;
+      let seq = cursors.get(key) ?? 0;
+      for (const record of batch.events) {
+        if (record.seq <= seq) continue;
+        applied.push({ event: record.event, data: record.data });
+        seq = record.seq;
+      }
+      cursors.set(key, seq);
+      ack?.({ seq });
+    });
+  });
+  return { ...server, applied, registrations, sockets };
+}
+
+/** A stand-in `claude` CLI that streams stream-json and waits for a release file. */
+function installFakeClaude(t: { after(fn: () => void): void }): { release: string; projectPath: string } {
+  const root = mkdtempSync(path.join(tmpdir(), 'ccm-fake-claude-'));
+  const bin = path.join(root, 'bin');
+  const projectPath = path.join(root, 'project');
+  const release = path.join(root, 'release');
+  mkdirSync(bin, { recursive: true });
+  mkdirSync(projectPath, { recursive: true });
+  const script = path.join(bin, 'claude');
+  writeFileSync(script, [
+    '#!/bin/sh',
+    `echo '{"type":"system","subtype":"init","session_id":"sess-1"}'`,
+    `echo '{"type":"content_block_delta","delta":{"type":"text_delta","text":"working"}}'`,
+    `while [ ! -f "${release}" ]; do sleep 0.05; done`,
+    `echo '{"type":"content_block_delta","delta":{"type":"text_delta","text":"done"}}'`,
+    `echo '{"type":"result","session_id":"sess-1"}'`,
+    '',
+  ].join('\n'));
+  chmodSync(script, 0o755);
+  const originalPath = process.env.PATH;
+  process.env.PATH = `${bin}${path.delimiter}${originalPath}`;
+  t.after(() => {
+    process.env.PATH = originalPath;
+    writeFileSync(release, '');
+  });
+  return { release, projectPath };
+}
+
+function runnerPids(runsDir: string): number[] {
+  if (!existsSync(runsDir)) return [];
+  return readdirSync(runsDir).flatMap((name) => {
+    try {
+      return [JSON.parse(readFileSync(path.join(runsDir, name, 'runner.json'), 'utf8')).pid as number];
+    } catch {
+      return [];
+    }
+  });
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function outputs(applied: AppliedEvent[]): string[] {
+  return applied.filter((item) => item.event === 'task:output').map((item) => String(item.data.text));
+}
+
+test('a task keeps running across an agent restart and its result is delivered exactly once', async (t) => {
+  const { release, projectPath } = installFakeClaude(t);
+  const server = await createRunnerTestServer((socket, count) => {
+    if (count !== 1) return;
+    socket.emit('task:execute', {
+      taskId: 5,
+      projectId: 'project',
+      projectPath,
+      prompt: 'long task',
+      isPlanMode: false,
+      runner: 'claude',
+      startedAt: 'run-5',
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'));
+  const first = new AgentConnection(config(server.url, tmpdir(), runsDir));
+  first.connect();
+  await waitFor(() => outputs(server.applied).includes('working'), 'runner output did not reach the server', 20000);
+
+  // Simulate stopping the agent process (PM2 restart / upgrade).
+  first.disconnect();
+  const [pid] = runnerPids(runsDir);
+  assert.ok(pid && processAlive(pid), 'runner must survive the agent stopping');
+  if (existsSync(`/proc/${pid}/stat`)) {
+    // Process managers kill the agent's descendants; the runner must not be one.
+    const parentPid = Number(readFileSync(`/proc/${pid}/stat`, 'utf8').split(') ')[1].split(' ')[1]);
+    assert.notEqual(parentPid, process.pid);
+  }
+
+  writeFileSync(release, '');
+  await waitFor(() => !processAlive(pid), 'runner did not finish', 10000);
+
+  const second = new AgentConnection(config(server.url, tmpdir(), runsDir));
+  t.after(() => second.disconnect());
+  second.connect();
+
+  await waitFor(() => server.applied.some((item) => item.event === 'task:completed'), 'completion was not delivered after restart', 10000);
+  await waitFor(() => readdirSync(runsDir).length === 0, 'finished run directory was not cleaned up');
+
+  assert.deepEqual(
+    server.registrations[1].runningTasks?.map((task) => [task.taskId, task.startedAt]),
+    [[5, 'run-5']],
+    'a finished but undelivered run is reported as running so the server does not recover it'
+  );
+  assert.deepEqual(outputs(server.applied), ['working', 'done']);
+  const completions = server.applied.filter((item) => item.event === 'task:completed');
+  assert.equal(completions.length, 1);
+  assert.equal(completions[0].data.sessionId, 'sess-1');
+  assert.equal(completions[0].data.startedAt, 'run-5');
+});
+
+test('cancelling a task stops its runner without reporting a failure', async (t) => {
+  const { projectPath } = installFakeClaude(t);
+  const server = await createRunnerTestServer((socket, count) => {
+    if (count !== 1) return;
+    socket.emit('task:execute', {
+      taskId: 6,
+      projectId: 'project',
+      projectPath,
+      prompt: 'cancel me',
+      isPlanMode: false,
+      runner: 'claude',
+      startedAt: 'run-6',
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'));
+  const connection = new AgentConnection(config(server.url, tmpdir(), runsDir));
+  t.after(() => connection.disconnect());
+  connection.connect();
+  await waitFor(() => outputs(server.applied).includes('working'), 'runner output did not reach the server', 20000);
+  const [pid] = runnerPids(runsDir);
+
+  server.sockets[0].emit('task:cancel', { taskId: 6 });
+  await waitFor(() => !processAlive(pid), 'cancelled runner did not exit', 10000);
+  await waitFor(() => readdirSync(runsDir).length === 0, 'cancelled run directory was not cleaned up');
+
+  assert.equal(
+    server.applied.some((item) => item.event === 'task:completed' || item.event === 'task:failed'),
+    false
+  );
+});
+
+test('a run whose runner died while the agent was down is left to server recovery', async (t) => {
+  const server = await createRunnerTestServer();
+  t.after(() => closeSocketServer(server));
+
+  const runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'));
+  const runDir = path.join(runsDir, '9-run-9-abc');
+  mkdirSync(runDir, { recursive: true });
+  writeFileSync(path.join(runDir, 'request.json'), JSON.stringify({
+    task: { taskId: 9, projectId: 'p', projectPath: tmpdir(), prompt: 'x', isPlanMode: false, startedAt: 'run-9' },
+    executionPath: tmpdir(),
+  }));
+  writeFileSync(path.join(runDir, 'runner.json'), JSON.stringify({ pid: 2 ** 22 - 3 }));
+
+  const connection = new AgentConnection(config(server.url, tmpdir(), runsDir));
+  t.after(() => connection.disconnect());
+  connection.connect();
+
+  await waitFor(() => server.registrations.length === 1, 'agent did not register');
+  assert.deepEqual(server.registrations[0].runningTasks, []);
+  assert.equal(existsSync(runDir), false);
 });

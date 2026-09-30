@@ -2,20 +2,17 @@ import { io, Socket } from 'socket.io-client';
 import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import { promisify } from 'util';
-import { ClaudeExecutor } from './executor.js';
-import { CodexExecutor } from './codexExecutor.js';
-import { CursorExecutor } from './cursorExecutor.js';
-import { DockerExecutor } from './docker.js';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import { parseClaudeGrokSettings } from './runnerModels.js';
+import { TaskRun, defaultRunsRoot, type RunRecord } from './taskRun.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
 import { getCursorSessionDetail, listCursorSessions, searchCursorSessions } from './cursorSessions.js';
 
 const execAsync = promisify(exec);
 
-type Executor = ClaudeExecutor | CodexExecutor | CursorExecutor | DockerExecutor;
+type Executor = TaskRun;
 type Runner = 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
 
 interface BufferedEvent {
@@ -31,6 +28,14 @@ const HEARTBEAT_FILE = process.env.CCM_AGENT_HEARTBEAT_FILE || '/tmp/ccm-agent-h
 // --resume starts. Only elapses if the old process is genuinely still running.
 const SESSION_RESUME_GRACE_MS = 5000;
 const STOPPING_EXECUTOR_TTL_MS = 30000;
+const RUN_POLL_INTERVAL_MS = 200;
+const RUN_HEARTBEAT_INTERVAL_MS = 15000;
+const RUN_HEARTBEAT_MIN_GAP_MS = 1000;
+const EVENT_ACK_TIMEOUT_MS = 30000;
+// Keep batches small enough that a catch-up after a long disconnect does not
+// starve Engine.IO heartbeats on slow links.
+const EVENT_BATCH_MAX_RECORDS = 200;
+const EVENT_BATCH_MAX_BYTES = 512 * 1024;
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -149,6 +154,14 @@ export class AgentConnection {
   private executors: Map<number, Executor> = new Map();
   /** Cancelled executors whose process may still be shutting down. */
   private stoppingExecutors: Map<number, Executor> = new Map();
+  /** Every run with a live runner or undelivered events, keyed by run directory. */
+  private runs: Map<string, TaskRun> = new Map();
+  /** Runs with an event batch awaiting server acknowledgement. */
+  private deliveriesInFlight: Set<string> = new Set();
+  private runsRoot: string;
+  private runPumpInterval: NodeJS.Timeout | null = null;
+  /** Events are forwarded only after the server has reconciled this connection. */
+  private registered = false;
   private config: AgentConfig;
   private currentUrl: string;
   private reconnectAttempts = 0;
@@ -166,10 +179,36 @@ export class AgentConnection {
     this.config = config;
     this.currentUrl = normalizeManagerUrl(config.managerUrl!);
     this.config.managerUrl = this.currentUrl;
+    this.runsRoot = config.runsDir || defaultRunsRoot(config.agentId);
+    this.adoptExistingRuns();
+  }
+
+  /** Take over runs whose runners outlived a previous agent process. */
+  private adoptExistingRuns(): void {
+    for (const run of TaskRun.attachAll(this.runsRoot)) {
+      const alive = run.isRunning;
+      run.poll();
+      if (!alive && !run.terminal) {
+        // The runner died too (e.g. machine reboot). Not reporting the task
+        // lets the server resume its session.
+        console.log(`Task ${run.taskId}: runner from a previous agent is gone; leaving recovery to the server`);
+        run.remove();
+        continue;
+      }
+      this.runs.set(run.dir, run);
+      if (alive && !run.terminal && !run.cancelRequested) {
+        const current = this.executors.get(run.taskId);
+        if (!current || (run.runId ?? '') > (current.runId ?? '')) {
+          this.executors.set(run.taskId, run);
+        }
+        console.log(`Task ${run.taskId}: re-attached to running runner (pid ${run.pid})`);
+      }
+    }
   }
 
   connect(): void {
     this.shuttingDown = false;
+    this.startRunPump();
     if (this.socket) {
       if (!this.socket.connected) {
         this.socket.connect();
@@ -212,12 +251,14 @@ export class AgentConnection {
       this.reconnectAttempts = 0;
       this.consecutiveErrors = 0;
       this.lastDiscoveryAt = 0;
+      this.registered = false;
       this.register(socket);
     });
 
     socket.on('disconnect', (reason) => {
       if (this.socket !== socket) return;
       console.log(`Disconnected from manager: ${reason}`);
+      this.registered = false;
       this.stopHeartbeat();
 
       if (this.shuttingDown) return;
@@ -409,22 +450,55 @@ export class AgentConnection {
     socket.connect();
   }
 
+  /**
+   * Tasks the server must keep as running: active runs, plus runs that
+   * finished while the server was unreachable but whose result has not been
+   * delivered yet (it will be, right after registration).
+   */
+  private reportedRunningTasks(): NonNullable<AgentInfo['runningTasks']> {
+    const reported = new Map<number, { taskId: number; sessionId?: string; startedAt?: string }>();
+    for (const [taskId, executor] of this.executors) {
+      reported.set(taskId, {
+        taskId,
+        sessionId: 'getSessionId' in executor ? executor.getSessionId() || undefined : undefined,
+        startedAt: 'runId' in executor ? executor.runId : undefined,
+      });
+    }
+    for (const run of this.runs.values()) {
+      if (reported.has(run.taskId) || run.cancelRequested || run.terminal?.event === 'runner:cancelled') continue;
+      reported.set(run.taskId, {
+        taskId: run.taskId,
+        sessionId: run.getSessionId() || undefined,
+        startedAt: run.runId,
+      });
+    }
+    return Array.from(reported.values());
+  }
+
   private register(socket: Socket): void {
-    const runningTasks = Array.from(this.executors.entries()).map(([taskId, executor]) => ({
-      taskId,
-      sessionId: 'getSessionId' in executor ? executor.getSessionId() || undefined : undefined,
-    }));
     const info: AgentInfo = {
       agentId: this.config.agentId,
       agentName: this.config.agentName,
       capabilities: this.config.capabilities || [],
       status: 'online',
-      runningTasks,
+      runningTasks: this.reportedRunningTasks(),
     };
 
     socket.emit('register', info, (data?: {
       runningTasks?: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+      cancelTaskIds?: number[];
     }) => {
+      if (socket !== this.socket) return;
+      this.registered = true;
+      // Tasks the user cancelled while this agent was unreachable.
+      for (const taskId of data?.cancelTaskIds || []) {
+        const executor = this.executors.get(taskId);
+        if (!executor) continue;
+        console.log(`Task ${taskId}: cancelled on the server while disconnected, stopping`);
+        executor.cancel();
+        this.executors.delete(taskId);
+        this.trackStoppingExecutor(taskId, executor);
+      }
       if (!data?.runningTasks) return;
       for (const task of data.runningTasks) {
         const executor = this.executors.get(task.taskId);
@@ -465,6 +539,107 @@ export class AgentConnection {
     } catch (error) {
       console.warn('Failed to write agent heartbeat:', error instanceof Error ? error.message : error);
     }
+  }
+
+  /**
+   * Liveness-only events. They are dropped while offline instead of being
+   * buffered, so a long disconnect does not flush a burst of stale heartbeats.
+   */
+  private emitVolatile(event: string, payload: unknown): void {
+    this.socket?.volatile.emit(event, payload);
+  }
+
+  private startRunPump(): void {
+    if (this.runPumpInterval) return;
+    this.runPumpInterval = setInterval(() => {
+      try {
+        this.pumpRuns();
+      } catch (error) {
+        console.error('Run pump error:', error);
+      }
+    }, RUN_POLL_INTERVAL_MS);
+  }
+
+  private stopRunPump(): void {
+    if (this.runPumpInterval) {
+      clearInterval(this.runPumpInterval);
+      this.runPumpInterval = null;
+    }
+  }
+
+  /** Read runner output, forward it to the server, and retire finished runs. */
+  private pumpRuns(): void {
+    for (const run of this.runs.values()) {
+      const alive = run.isRunning;
+      for (const record of run.poll()) this.onRunRecord(run, record);
+      if (!alive && !run.terminal && this.executors.get(run.taskId) === run) {
+        console.error(`Task ${run.taskId}: runner exited without a result`);
+        this.onRunRecord(run, run.failUnexpectedly('Task runner exited unexpectedly'));
+      }
+      this.sendRunHeartbeat(run, false);
+
+      const delivering = this.deliveriesInFlight.has(run.dir);
+      if (run.pending.length > 0 && !delivering && this.registered && this.socket?.connected) {
+        this.deliverRunEvents(run, this.socket);
+      } else if (!alive && run.pending.length === 0 && !delivering) {
+        this.runs.delete(run.dir);
+        run.remove();
+      }
+    }
+  }
+
+  private onRunRecord(run: TaskRun, record: RunRecord): void {
+    if (record.event === 'task:output' || record.event === 'task:tool_result') {
+      run.phase = 'thinking';
+      this.sendRunHeartbeat(run, true);
+    } else if (record.event === 'task:tool_use') {
+      run.phase = 'tool';
+      this.sendRunHeartbeat(run, true);
+    }
+    if (record === run.terminal && this.executors.get(run.taskId) === run) {
+      this.executors.delete(run.taskId);
+      this.sendStatus();
+    }
+  }
+
+  private sendRunHeartbeat(run: TaskRun, phaseChanged: boolean): void {
+    if (this.executors.get(run.taskId) !== run) return;
+    const now = Date.now();
+    const elapsed = now - run.lastHeartbeatAt;
+    if (elapsed < RUN_HEARTBEAT_MIN_GAP_MS || (!phaseChanged && elapsed < RUN_HEARTBEAT_INTERVAL_MS)) return;
+    run.lastHeartbeatAt = now;
+    this.emitVolatile('task:stream', {
+      version: 1,
+      taskId: run.taskId,
+      eventId: `agent:${run.taskId}:${run.runId || 'run'}:${run.phase}:${now}`,
+      kind: 'phase',
+      timestamp: new Date(now).toISOString(),
+      runId: run.runId,
+      phase: run.phase,
+      heartbeat: true,
+    });
+  }
+
+  private deliverRunEvents(run: TaskRun, socket: Socket): void {
+    const events: RunRecord[] = [];
+    let bytes = 0;
+    for (const record of run.pending) {
+      const size = JSON.stringify(record).length;
+      if (events.length > 0 && (events.length >= EVENT_BATCH_MAX_RECORDS || bytes + size > EVENT_BATCH_MAX_BYTES)) break;
+      events.push(record);
+      bytes += size;
+    }
+    this.deliveriesInFlight.add(run.dir);
+    socket.timeout(EVENT_ACK_TIMEOUT_MS).emit(
+      'task:events',
+      { taskId: run.taskId, runId: run.runId, events },
+      (error: Error | null, result?: { seq?: number }) => {
+        this.deliveriesInFlight.delete(run.dir);
+        // Unacknowledged batches are resent; the server skips seen sequences.
+        if (error || typeof result?.seq !== 'number') return;
+        run.markDelivered(result.seq);
+      }
+    );
   }
 
   private startHeartbeat(): void {
@@ -547,21 +722,15 @@ export class AgentConnection {
       await this.waitForStoppingExecutor(task.taskId, SESSION_RESUME_GRACE_MS);
     }
 
-    let executor: Executor | undefined;
-    let executionPath = task.projectPath;
-    let progressTimer: NodeJS.Timeout | undefined;
-    let currentPhase: 'thinking' | 'tool' | 'recovering' = task.recovery ? 'recovering' : 'thinking';
-
     try {
       // Validate path (use project-level allowedPaths if provided)
-      console.log(`Task ${task.taskId}: Validating path...`);
       const effectiveConfig = task.allowedPaths?.length
         ? { ...this.config, allowedPaths: [...this.config.allowedPaths, ...task.allowedPaths] }
         : this.config;
       validatePath(task.projectPath, effectiveConfig);
-      console.log(`Task ${task.taskId}: Path validated, creating executor...`);
 
       // Create worktree if branch is specified
+      let executionPath = task.projectPath;
       if (task.worktreeBranch) {
         try {
           executionPath = await this.worktreeManager.create(task.projectPath, task.worktreeBranch);
@@ -573,209 +742,24 @@ export class AgentConnection {
         }
       }
 
-      // Create executor based on task runner first, then project executor.
-      // Docker execution currently wraps Claude Code only, so Codex uses the
-      // local Codex CLI even when the project executor is docker.
-      const taskExecutor = task.executor ?? this.config.executor ?? 'local';
-      if (task.runner === 'codex' || task.runner === 'tcodex') {
-        executor = new CodexExecutor(undefined, task.runner === 'tcodex' ? 'tcodex' : 'codex');
-      } else if (task.runner === 'cursor') {
-        // Use Cursor's supported SDK instead of scraping CLI output. It provides
-        // typed streaming, image inputs, durable agent IDs, and resume/cancel.
-        executor = new CursorExecutor();
-      } else if (task.runner === 'claude-grok') {
-        // claude-grok is a host-side Claude Code wrapper with its own local
-        // router/config, so it must not be replaced by the plain Docker image.
-        executor = new ClaudeExecutor(undefined, 'claude-grok');
-      } else if (task.runner === 'qwen') {
-        executor = new ClaudeExecutor(undefined, 'qwen');
-      } else if (task.runner === 'tclaude') {
-        executor = new ClaudeExecutor(undefined, 'tclaude');
-      } else if (taskExecutor === 'docker' && this.config.dockerConfig) {
-        const dockerConfig = task.dockerImage
-          ? { ...this.config.dockerConfig, image: task.dockerImage }
-          : this.config.dockerConfig;
-        executor = new DockerExecutor(dockerConfig);
-      } else {
-        executor = new ClaudeExecutor();
-      }
-
-      // Store executor for this task
-      this.executors.set(task.taskId, executor);
-
-      // Notify running tasks count
-      this.socket?.emit('status', {
-        status: 'online',
-        runningTasks: Array.from(this.executors.keys()),
-        taskCount: this.executors.size
+      const run = await TaskRun.launch(this.runsRoot, {
+        task,
+        executionPath,
+        executor: task.executor ?? this.config.executor ?? 'local',
+        dockerConfig: this.config.dockerConfig,
       });
-
-      // Set up event handlers
-      executor.on('output', (text: string) => {
-        currentPhase = 'thinking';
-        this.socket?.emit('task:stream', {
-          version: 1,
-          taskId: task.taskId,
-          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
-          kind: 'phase',
-          timestamp: new Date().toISOString(),
-          runId: task.startedAt,
-          phase: 'thinking',
-          heartbeat: true,
-        });
-        this.socket?.emit('task:output', { taskId: task.taskId, text, startedAt: task.startedAt });
-      });
-
-      executor.on('tool_use', (data) => {
-        currentPhase = 'tool';
-        this.socket?.emit('task:stream', {
-          version: 1,
-          taskId: task.taskId,
-          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:tool:${Date.now()}`,
-          kind: 'phase',
-          timestamp: new Date().toISOString(),
-          runId: task.startedAt,
-          phase: 'tool',
-          heartbeat: true,
-        });
-        this.socket?.emit('task:tool_use', { taskId: task.taskId, ...data, startedAt: task.startedAt });
-      });
-
-      executor.on('tool_result', (data) => {
-        currentPhase = 'thinking';
-        this.socket?.emit('task:stream', {
-          version: 1,
-          taskId: task.taskId,
-          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
-          kind: 'phase',
-          timestamp: new Date().toISOString(),
-          runId: task.startedAt,
-          phase: 'thinking',
-          heartbeat: true,
-        });
-        this.socket?.emit('task:tool_result', { taskId: task.taskId, ...data, startedAt: task.startedAt });
-      });
-
-      executor.on('plan_question', (data) => {
-        this.socket?.emit('task:plan_question', { taskId: task.taskId, question: data, startedAt: task.startedAt });
-      });
-
-      executor.on('permission_request', (data) => {
-        this.socket?.emit('task:permission_request', { taskId: task.taskId, request: data, startedAt: task.startedAt });
-      });
-
-      executor.on('error', (error: Error) => {
-        this.socket?.emit('task:error', { taskId: task.taskId, error: error.message, startedAt: task.startedAt });
-      });
-
-      executor.on('session_id', (sessionId: string) => {
-        this.socket?.emit('task:session_id', {
-          taskId: task.taskId,
-          sessionId,
-          runner: task.runner ?? 'claude',
-          startedAt: task.startedAt,
-          attempt: task.attempt,
-        });
-      });
-
-      // Execute task (use worktree path if available)
-      console.log(`Task ${task.taskId}: Starting execution in ${executionPath}...`);
-      this.socket?.emit('task:stream', {
-        version: 1,
-        taskId: task.taskId,
-        eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:thinking:${Date.now()}`,
-        kind: 'phase',
-        timestamp: new Date().toISOString(),
-        runId: task.startedAt,
-        phase: task.recovery ? 'recovering' : 'thinking',
-      });
-      progressTimer = setInterval(() => {
-        this.socket?.emit('task:stream', {
-          version: 1,
-          taskId: task.taskId,
-          eventId: `agent:${task.taskId}:${task.startedAt || 'run'}:heartbeat:${Date.now()}`,
-          kind: 'phase',
-          timestamp: new Date().toISOString(),
-          runId: task.startedAt,
-          phase: currentPhase,
-          heartbeat: true,
-        });
-      }, 15_000);
-      await executor.execute(task, executionPath);
-
-      // Check if this execution was superseded by a newer follow-up.
-      // If another handleTask call cancelled our executor and replaced it,
-      // we must NOT emit task:completed (the newer execution owns the lifecycle).
-      if (this.executors.get(task.taskId) !== executor) {
-        console.log(`Task ${task.taskId}: Execution superseded by follow-up, skipping completion`);
-        return;
-      }
-
-      console.log(`Task ${task.taskId}: Execution completed`);
-
-      // Run post-task hook if configured
-      if (task.postTaskHook) {
-        console.log(`Task ${task.taskId}: Running post-task hook...`);
-        this.socket?.emit('task:output', {
-          taskId: task.taskId,
-          text: `\n[Post-Task Hook] Running: ${task.postTaskHook}\n`,
-          startedAt: task.startedAt,
-        });
-        try {
-          const { stdout, stderr } = await execAsync(task.postTaskHook, {
-            cwd: executionPath,
-            timeout: 30000,
-          });
-          if (stdout) {
-            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stdout}`, startedAt: task.startedAt });
-          }
-          if (stderr) {
-            this.socket?.emit('task:output', { taskId: task.taskId, text: `[Post-Task Hook] ${stderr}`, startedAt: task.startedAt });
-          }
-          console.log(`Task ${task.taskId}: Post-task hook completed`);
-        } catch (hookError) {
-          const msg = hookError instanceof Error ? hookError.message : String(hookError);
-          console.error(`Task ${task.taskId}: Post-task hook failed:`, msg);
-          this.socket?.emit('task:output', {
-            taskId: task.taskId,
-            text: `[Post-Task Hook] Failed: ${msg}\n`,
-            startedAt: task.startedAt,
-          });
-        }
-      }
-
-      // Task completed - include sessionId so server can preserve it
-      const sessionId = 'getSessionId' in executor ? executor.getSessionId() : undefined;
-      this.socket?.emit('task:completed', {
-        taskId: task.taskId,
-        status: 'completed',
-        sessionId,
-        startedAt: task.startedAt,
-      });
+      this.runs.set(run.dir, run);
+      this.executors.set(task.taskId, run);
+      console.log(`Task ${task.taskId}: runner started (pid ${run.pid}) in ${executionPath}`);
+      this.sendStatus();
     } catch (error) {
-      // Don't report failure if this execution was superseded
-      if (executor && this.executors.get(task.taskId) !== executor) {
-        console.log(`Task ${task.taskId}: Superseded execution errored (ignored)`);
-        return;
-      }
       const message = error instanceof Error ? error.message : String(error);
-      console.error(`Task ${task.taskId} failed:`, message);
+      console.error(`Task ${task.taskId} failed to start:`, message);
       this.socket?.emit('task:failed', {
         taskId: task.taskId,
         error: message,
         startedAt: task.startedAt,
       });
-    } finally {
-      if (progressTimer) clearInterval(progressTimer);
-      // Only clean up if this is still the current executor for this task
-      if (executor && this.executors.get(task.taskId) === executor) {
-        this.executors.delete(task.taskId);
-        this.socket?.emit('status', {
-          status: 'online',
-          runningTasks: Array.from(this.executors.keys()),
-          taskCount: this.executors.size
-        });
-      }
     }
   }
 
@@ -882,12 +866,11 @@ export class AgentConnection {
 
   disconnect(): void {
     this.shuttingDown = true;
+    this.registered = false;
     this.stopHeartbeat();
-    // Cancel all running tasks
-    for (const executor of this.executors.values()) {
-      executor.cancel();
-    }
-    this.executors.clear();
+    // Runners are detached on purpose: stopping or upgrading the agent must
+    // not stop their work. The next agent process re-attaches to them.
+    this.stopRunPump();
     this.socket?.removeAllListeners();
     this.socket?.disconnect();
     this.socket = null;

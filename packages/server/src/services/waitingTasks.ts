@@ -154,7 +154,7 @@ If not completed, use the [WAITING]...[/WAITING] format to specify new wait time
     postTaskHook: project.postTaskHook,
     extraMounts: project.extraMounts,
     allowedPaths: buildTaskAllowedPaths(project),
-    images: getTaskImagesForDispatch(task.id, Boolean(sessionId)),
+    images: getTaskImagesForDispatch(task.id, !sessionId),
     startedAt: task.startedAt,
     attempt: task.attemptCount,
   });
@@ -228,7 +228,7 @@ export async function checkDependentTasks(completedTaskId: number): Promise<void
             postTaskHook: project.postTaskHook,
             extraMounts: project.extraMounts,
             allowedPaths: buildTaskAllowedPaths(project),
-            images: getTaskImagesForDispatch(currentTask.id, false),
+            images: getTaskImagesForDispatch(currentTask.id, true),
             startedAt,
             attempt: currentTask.attemptCount,
           });

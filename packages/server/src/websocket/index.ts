@@ -1,7 +1,7 @@
 import { Server, Socket, Namespace } from 'socket.io';
 import type { Server as HttpServer } from 'http';
 import { agentPool } from '../services/agentPool.js';
-import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed, touchTaskProgress } from '../services/storage.js';
+import { getTaskById, saveTask, getProject, appendTaskLog, getTaskLogs, getRunningTasksForAgent, findDeviceByHash, updateDeviceLastUsed, findAgentTokenByHash, updateAgentTokenLastUsed, touchTaskProgress, getTaskEventCursor, setTaskEventCursor } from '../services/storage.js';
 import { checkDependentTasks, cancelDependentTasks } from '../services/waitingTasks.js';
 import { hasQueued, queueSize } from '../services/followUpQueue.js';
 import { drainFollowUps } from '../services/followUpDispatch.js';
@@ -63,6 +63,366 @@ async function persistAndBroadcastPhase(
   const event = taskLogToStreamEvent(taskId, log, runId);
   if (event) broadcastToTask(taskId, 'task:stream', event);
 }
+
+interface TaskCompletionReport {
+  taskId: number;
+  status?: string;
+  summary?: string;
+  sessionId?: string;
+  startedAt?: string;
+}
+
+interface TaskFailureReport {
+  taskId: number;
+  error: string;
+  startedAt?: string;
+}
+
+type TaskOutcomeReport =
+  | ({ outcome: 'completed' } & TaskCompletionReport)
+  | ({ outcome: 'failed' } & TaskFailureReport);
+
+interface ReportedRunningTask {
+  taskId: number;
+  sessionId?: string;
+  startedAt?: string;
+}
+
+const TERMINAL_STATUSES = new Set(['completed', 'completed_with_warnings', 'failed', 'cancelled']);
+
+// An outcome can arrive twice: once live and once in the next register
+// payload when the acknowledgement was lost to a disconnect.
+const outcomesInFlight = new Map<string, Promise<void>>();
+
+function applyOutcomeOnce(kind: string, taskId: number, startedAt: string | undefined, apply: () => Promise<void>): Promise<void> {
+  const key = `${kind}:${taskId}:${startedAt ?? ''}`;
+  const existing = outcomesInFlight.get(key);
+  if (existing) return existing;
+  const running = apply().finally(() => {
+    if (outcomesInFlight.get(key) === running) outcomesInFlight.delete(key);
+  });
+  outcomesInFlight.set(key, running);
+  return running;
+}
+
+function applyTaskCompleted(data: TaskCompletionReport): Promise<void> {
+  return applyOutcomeOnce('completed', data.taskId, data.startedAt, async () => {
+    // Small delay to ensure session_id save completes first
+    await new Promise(resolve => setTimeout(resolve, 100));
+    const task = await getTaskById(data.taskId);
+    if (task) {
+      if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
+        console.log(`Ignoring stale completion for task ${data.taskId} run ${data.startedAt}`);
+        return;
+      }
+      if (TERMINAL_STATUSES.has(task.status)) return;
+      task.status = 'completed';
+      task.completedAt = new Date().toISOString();
+      if (data.summary) task.summary = data.summary;
+      // Preserve session_id if it exists
+      if (data.sessionId) {
+        const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
+        gitInfo.sessionId = data.sessionId;
+        gitInfo.sessionRunner = task.runner ?? 'claude';
+        task.gitInfo = JSON.stringify(gitInfo);
+        task.sessionId = data.sessionId;
+        task.sessionRunner = task.runner ?? 'claude';
+      }
+      await saveTask(task.projectId, task);
+    }
+
+    // Drain queued follow-up messages: merge all pending into one and resume
+    // session. Queue rows survive a blocked drain so nothing is lost.
+    if (task && hasQueued(data.taskId)) {
+      const result = await drainFollowUps(data.taskId);
+      if (result.status === 'dispatched') {
+        await persistAndBroadcastPhase(data.taskId, 'starting', result.startedAt);
+        broadcastToTask(data.taskId, 'task:status', {
+          taskId: data.taskId,
+          status: 'running',
+        });
+        return; // Skip the completed broadcast since we're continuing
+      }
+      if (result.status === 'blocked') {
+        console.warn(
+          `Task ${data.taskId}: ${result.count} queued follow-up(s) held (${result.reason})`
+        );
+        broadcastToTask(data.taskId, 'task:followup_pending', {
+          taskId: data.taskId,
+          queueSize: result.count,
+          reason: result.reason,
+        });
+      }
+    }
+
+    if (task) {
+      await persistAndBroadcastPhase(data.taskId, 'completed', task.startedAt);
+    }
+
+    // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
+    broadcastToTask(data.taskId, 'task:status', {
+      taskId: data.taskId,
+      status: 'completed',
+      summary: data.summary,
+    });
+
+    // Start any pending tasks that depend on this completed task
+    await checkDependentTasks(data.taskId);
+  });
+}
+
+function applyTaskFailed(data: TaskFailureReport): Promise<void> {
+  return applyOutcomeOnce('failed', data.taskId, data.startedAt, async () => {
+    const task = await getTaskById(data.taskId);
+    if (task) {
+      if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
+        console.log(`Ignoring stale failure for task ${data.taskId} run ${data.startedAt}`);
+        return;
+      }
+      if (TERMINAL_STATUSES.has(task.status)) return;
+      task.status = 'failed';
+      task.error = data.error;
+      task.completedAt = new Date().toISOString();
+      await saveTask(task.projectId, task);
+      await persistAndBroadcastPhase(data.taskId, 'failed', task.startedAt);
+    }
+
+    // Keep queued follow-ups on failure. Discarding them silently lost the
+    // user's images; surface them instead so they can resend or discard.
+    if (hasQueued(data.taskId)) {
+      broadcastToTask(data.taskId, 'task:followup_pending', {
+        taskId: data.taskId,
+        queueSize: queueSize(data.taskId),
+        reason: 'task_failed',
+      });
+    }
+
+    // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
+    broadcastToTask(data.taskId, 'task:status', {
+      taskId: data.taskId,
+      status: 'failed',
+      error: data.error,
+    });
+
+    // Cascade cancel any pending tasks that depend on this failed task
+    await cancelDependentTasks(data.taskId);
+  });
+}
+
+async function applyTaskOutcome(report: TaskOutcomeReport): Promise<void> {
+  if (report.outcome === 'completed') {
+    await applyTaskCompleted(report);
+  } else if (report.outcome === 'failed') {
+    await applyTaskFailed(report);
+  }
+}
+
+function recoveryPromptForFollowUp(message: string): string {
+  return [
+    'The previous run was interrupted before it finished. If you have not handled the latest user message below yet, handle it now; otherwise continue from where you left off and finish it.',
+    '',
+    'Latest user message:',
+    message,
+  ].join('\n');
+}
+
+/** Tasks the agent still runs although the user cancelled them while it was unreachable. */
+async function findCancelledWhileOffline(reported: ReportedRunningTask[]): Promise<number[]> {
+  const cancelled: number[] = [];
+  for (const { taskId } of reported) {
+    const task = await getTaskById(taskId);
+    if (!task || task.status === 'cancelled') cancelled.push(taskId);
+  }
+  return cancelled;
+}
+
+/**
+ * Handlers for task events an agent reports. They are reached both as
+ * individual Socket.IO events and replayed from `task:events` batches.
+ */
+const agentTaskEventHandlers: Record<string, (data: any) => Promise<void>> = {
+  'task:stream': async (data: TaskStreamEvent) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (!task) return;
+      if (data.runId && task.startedAt && data.runId !== task.startedAt) return;
+      touchTaskProgress(data.taskId, data.timestamp || new Date().toISOString());
+
+      if (data.kind === 'text' && data.text) {
+        const log = await appendTaskLog(task.projectId, data.taskId, {
+          type: 'output',
+          content: data.text,
+        });
+        const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+        return;
+      }
+
+      if (data.kind === 'phase' && data.phase) {
+        if (data.heartbeat) {
+          broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, data));
+          return;
+        }
+        await persistAndBroadcastPhase(data.taskId, data.phase, data.runId || task.startedAt);
+        return;
+      }
+
+      if (data.kind === 'tool' && data.tool) {
+        const type = data.tool.status === 'running' ? 'tool_use' : 'tool_result';
+        const content = data.tool.status === 'running'
+          ? {
+              taskId: data.taskId,
+              id: data.tool.id,
+              name: data.tool.name,
+              input: data.tool.input,
+            }
+          : {
+              taskId: data.taskId,
+              id: data.tool.id,
+              name: data.tool.name,
+              result: data.tool.result,
+              error: data.tool.status === 'failed',
+            };
+        const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
+        const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+        return;
+      }
+
+      if (data.kind === 'interaction' && data.interaction) {
+        const type = data.interaction.type;
+        const content = type === 'plan_question'
+          ? { taskId: data.taskId, question: data.interaction.data }
+          : { taskId: data.taskId, request: data.interaction.data };
+        const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
+        const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+        return;
+      }
+
+      broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
+        kind: data.kind,
+        runId: data.runId || task.startedAt,
+        blockId: data.blockId,
+        mode: data.mode,
+        offset: data.offset,
+        text: data.text,
+        tool: data.tool,
+        interaction: data.interaction,
+        error: data.error,
+        eventId: data.eventId,
+        timestamp: data.timestamp,
+      }));
+    } catch (error) {
+      console.error('Error handling task:stream:', error);
+    }
+  },
+  'task:output': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        touchTaskProgress(data.taskId);
+        const log = await appendTaskLog(task.projectId, data.taskId, { type: 'output', content: data.text });
+        const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+      }
+      broadcastToTask(data.taskId, 'task:output', { taskId: data.taskId, text: data.text });
+    } catch (error) {
+      console.error('Error handling task:output:', error);
+    }
+  },
+  'task:tool_use': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        touchTaskProgress(data.taskId);
+        const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_use', content: data });
+        const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+      }
+      broadcastToTask(data.taskId, 'task:tool_use', data);
+    } catch (error) {
+      console.error('Error handling task:tool_use:', error);
+    }
+  },
+  'task:tool_result': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        touchTaskProgress(data.taskId);
+        const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_result', content: data });
+        const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+      }
+      broadcastToTask(data.taskId, 'task:tool_result', data);
+    } catch (error) {
+      console.error('Error handling task:tool_result:', error);
+    }
+  },
+  'task:plan_question': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        touchTaskProgress(data.taskId);
+        const log = await appendTaskLog(task.projectId, data.taskId, { type: 'plan_question', content: data });
+        const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+      }
+      broadcastToTask(data.taskId, 'task:plan_question', data);
+    } catch (error) {
+      console.error('Error handling task:plan_question:', error);
+    }
+  },
+  'task:permission_request': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        touchTaskProgress(data.taskId);
+        const log = await appendTaskLog(task.projectId, data.taskId, { type: 'permission_request', content: data });
+        const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
+        if (event) broadcastToTask(data.taskId, 'task:stream', event);
+      }
+      broadcastToTask(data.taskId, 'task:permission_request', data);
+    } catch (error) {
+      console.error('Error handling task:permission_request:', error);
+    }
+  },
+  'task:session_id': async (data: any) => {
+    try {
+      const task = await getTaskById(data.taskId);
+      if (task) {
+        if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
+        // Store session_id in gitInfo field (reusing existing field)
+        const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
+        gitInfo.sessionId = data.sessionId;
+        gitInfo.sessionRunner = data.runner ?? task.runner ?? 'claude';
+        task.gitInfo = JSON.stringify(gitInfo);
+        task.sessionId = data.sessionId;
+        task.sessionRunner = data.runner ?? task.runner ?? 'claude';
+        task.lastProgressAt = new Date().toISOString();
+        await saveTask(task.projectId, task);
+      }
+    } catch (error) {
+      console.error('Error handling task:session_id:', error);
+    }
+  },
+  'task:completed': (data: TaskCompletionReport) => applyTaskCompleted(data),
+  'task:failed': (data: TaskFailureReport) => applyTaskFailed(data),
+  'task:error': async (data: any) => {
+    const task = await getTaskById(data.taskId);
+    if (data.startedAt && task?.startedAt && data.startedAt !== task.startedAt) return;
+    broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
+      kind: 'error',
+      error: data.error,
+    }));
+    broadcastToTask(data.taskId, 'task:failed', { taskId: data.taskId, error: data.error });
+  },
+};
 
 export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server {
   io = new Server(server, {
@@ -131,32 +491,57 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       agentName: string;
       capabilities: string[];
       executor?: 'local' | 'docker';
-      runningTasks?: Array<{ taskId: number; sessionId?: string }>;
+      runningTasks?: ReportedRunningTask[];
+      finishedTasks?: TaskOutcomeReport[];
     }, ack?: (data: {
       runningTasks: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+      cancelTaskIds: number[];
     }) => void) => {
       agentPool.register(socket, info);
       // Broadcast updated agent list to users
       broadcastAgentList();
 
-      // Recover orphaned running tasks for this agent
+      // Reconcile server state with what the agent actually did while the
+      // connection was down. A disconnect alone never interrupts execution:
+      // tasks the agent still runs or finished are synced silently, and only
+      // tasks the agent no longer knows about (process restart) are recovered.
       try {
+        for (const outcome of info.finishedTasks || []) {
+          try {
+            await applyTaskOutcome(outcome);
+          } catch (error) {
+            console.error(`Error applying offline outcome for task ${outcome.taskId}:`, error);
+          }
+        }
+
+        const reported = info.runningTasks || [];
+        const cancelTaskIds = await findCancelledWhileOffline(reported);
+        const reportedRuns = new Map(
+          reported
+            .filter((task) => !cancelTaskIds.includes(task.taskId))
+            .map((task) => [task.taskId, task])
+        );
+        agentPool.flushPendingInputs(info.agentId, new Set(reportedRuns.keys()));
+
         const runningTasks = await getRunningTasksForAgent(info.agentId);
-        const reportedRunning = new Set((info.runningTasks || []).map((task) => task.taskId));
         ack?.({
           runningTasks: runningTasks.map(({ task }) => ({
             taskId: task.id,
             sessionId: task.sessionId,
             startedAt: task.startedAt,
           })),
+          cancelTaskIds,
         });
-        if (runningTasks.length > 0) {
-          console.log(`Recovering ${runningTasks.length} orphaned task(s) for agent ${info.agentId}`);
-          for (const { task, project } of runningTasks) {
-            if (reportedRunning.has(task.id)) {
-              console.log(`  - Task ${task.id} is still active on the reconnected agent; skipping recovery`);
-              continue;
-            }
+
+        const orphaned = runningTasks.filter(({ task }) => {
+          const run = reportedRuns.get(task.id);
+          return !run || Boolean(run.startedAt && task.startedAt && run.startedAt !== task.startedAt);
+        });
+        if (orphaned.length > 0) {
+          console.log(`Recovering ${orphaned.length} orphaned task(s) for agent ${info.agentId}`);
+          for (const { task, project } of orphaned) {
+            // The agent runs a superseded run of this task; replace it.
+            const replacesStaleRun = reportedRuns.has(task.id);
             // Use continuePrompt if available (task was in follow-up mode)
             let prompt = task.continuePrompt || task.prompt;
             // Resume any running task whose CLI session ID was persisted. Initial
@@ -173,8 +558,13 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
                 continueSession = !!sessionId;
               } catch { /* ignore */ }
             }
+            // An interrupted follow-up may never have reached the session, so
+            // re-send it (with its images) instead of a bare "continue".
+            const resendsUserMessage = !continueSession || Boolean(task.continuePrompt);
             if (continueSession) {
-              prompt = 'Continue the interrupted task from where you left off and finish it.';
+              prompt = task.continuePrompt
+                ? recoveryPromptForFollowUp(task.continuePrompt)
+                : 'Continue the interrupted task from where you left off and finish it.';
             }
             const recoveredAt = new Date().toISOString();
             task.attemptCount = (task.attemptCount || 0) + 1;
@@ -202,10 +592,11 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
               postTaskHook: project.postTaskHook,
               extraMounts: project.extraMounts,
               allowedPaths: buildTaskAllowedPaths(project),
-              images: getTaskImagesForDispatch(task.id, continueSession),
+              images: getTaskImagesForDispatch(task.id, resendsUserMessage),
               startedAt: task.startedAt,
               attempt: task.attemptCount,
               recovery: true,
+              isRetry: replacesStaleRun,
             });
             if (dispatched) {
               console.log(`  - Task ${task.id} re-dispatched`);
@@ -232,297 +623,39 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       }
     });
 
-    socket.on('task:stream', async (data: TaskStreamEvent) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (!task) return;
-        if (data.runId && task.startedAt && data.runId !== task.startedAt) return;
-        touchTaskProgress(data.taskId, data.timestamp || new Date().toISOString());
-
-        if (data.kind === 'text' && data.text) {
-          const log = await appendTaskLog(task.projectId, data.taskId, {
-            type: 'output',
-            content: data.text,
-          });
-          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-          return;
+    for (const [event, handler] of Object.entries(agentTaskEventHandlers)) {
+      socket.on(event, async (data: unknown, ack?: () => void) => {
+        try {
+          await handler(data);
+        } catch (error) {
+          console.error(`Error handling ${event}:`, error);
         }
+        ack?.();
+      });
+    }
 
-        if (data.kind === 'phase' && data.phase) {
-          if (data.heartbeat) {
-            broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, data));
-            return;
-          }
-          await persistAndBroadcastPhase(data.taskId, data.phase, data.runId || task.startedAt);
-          return;
-        }
-
-        if (data.kind === 'tool' && data.tool) {
-          const type = data.tool.status === 'running' ? 'tool_use' : 'tool_result';
-          const content = data.tool.status === 'running'
-            ? {
-                taskId: data.taskId,
-                id: data.tool.id,
-                name: data.tool.name,
-                input: data.tool.input,
-              }
-            : {
-                taskId: data.taskId,
-                id: data.tool.id,
-                name: data.tool.name,
-                result: data.tool.result,
-                error: data.tool.status === 'failed',
-              };
-          const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
-          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-          return;
-        }
-
-        if (data.kind === 'interaction' && data.interaction) {
-          const type = data.interaction.type;
-          const content = type === 'plan_question'
-            ? { taskId: data.taskId, question: data.interaction.data }
-            : { taskId: data.taskId, request: data.interaction.data };
-          const log = await appendTaskLog(task.projectId, data.taskId, { type, content });
-          const event = taskLogToStreamEvent(data.taskId, log, data.runId || task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-          return;
-        }
-
-        broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
-          kind: data.kind,
-          runId: data.runId || task.startedAt,
-          blockId: data.blockId,
-          mode: data.mode,
-          offset: data.offset,
-          text: data.text,
-          tool: data.tool,
-          interaction: data.interaction,
-          error: data.error,
-          eventId: data.eventId,
-          timestamp: data.timestamp,
-        }));
-      } catch (error) {
-        console.error('Error handling task:stream:', error);
-      }
-    });
-
-    socket.on('task:output', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          touchTaskProgress(data.taskId);
-          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'output', content: data.text });
-          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-        }
-        broadcastToTask(data.taskId, 'task:output', { taskId: data.taskId, text: data.text });
-      } catch (error) {
-        console.error('Error handling task:output:', error);
-      }
-    });
-
-    socket.on('task:tool_use', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          touchTaskProgress(data.taskId);
-          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_use', content: data });
-          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-        }
-        broadcastToTask(data.taskId, 'task:tool_use', data);
-      } catch (error) {
-        console.error('Error handling task:tool_use:', error);
-      }
-    });
-
-    socket.on('task:tool_result', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          touchTaskProgress(data.taskId);
-          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'tool_result', content: data });
-          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-        }
-        broadcastToTask(data.taskId, 'task:tool_result', data);
-      } catch (error) {
-        console.error('Error handling task:tool_result:', error);
-      }
-    });
-
-    socket.on('task:plan_question', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          touchTaskProgress(data.taskId);
-          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'plan_question', content: data });
-          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-        }
-        broadcastToTask(data.taskId, 'task:plan_question', data);
-      } catch (error) {
-        console.error('Error handling task:plan_question:', error);
-      }
-    });
-
-    socket.on('task:permission_request', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          touchTaskProgress(data.taskId);
-          const log = await appendTaskLog(task.projectId, data.taskId, { type: 'permission_request', content: data });
-          const event = taskLogToStreamEvent(data.taskId, log, task.startedAt);
-          if (event) broadcastToTask(data.taskId, 'task:stream', event);
-        }
-        broadcastToTask(data.taskId, 'task:permission_request', data);
-      } catch (error) {
-        console.error('Error handling task:permission_request:', error);
-      }
-    });
-
-    socket.on('task:session_id', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) return;
-          // Store session_id in gitInfo field (reusing existing field)
-          const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
-          gitInfo.sessionId = data.sessionId;
-          gitInfo.sessionRunner = data.runner ?? task.runner ?? 'claude';
-          task.gitInfo = JSON.stringify(gitInfo);
-          task.sessionId = data.sessionId;
-          task.sessionRunner = data.runner ?? task.runner ?? 'claude';
-          task.lastProgressAt = new Date().toISOString();
-          await saveTask(task.projectId, task);
-        }
-      } catch (error) {
-        console.error('Error handling task:session_id:', error);
-      }
-    });
-
-    socket.on('task:completed', async (data) => {
-      try {
-        // Small delay to ensure session_id save completes first
-        await new Promise(resolve => setTimeout(resolve, 100));
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
-            console.log(`Ignoring stale completion for task ${data.taskId} run ${data.startedAt}`);
-            return;
-          }
-          task.status = 'completed';
-          task.completedAt = new Date().toISOString();
-          if (data.summary) task.summary = data.summary;
-          // Preserve session_id if it exists
-          if (data.sessionId) {
-            const gitInfo = task.gitInfo ? JSON.parse(task.gitInfo) : {};
-            gitInfo.sessionId = data.sessionId;
-            gitInfo.sessionRunner = task.runner ?? 'claude';
-            task.gitInfo = JSON.stringify(gitInfo);
-            task.sessionId = data.sessionId;
-            task.sessionRunner = task.runner ?? 'claude';
-          }
-          await saveTask(task.projectId, task);
-        }
-
-        // Drain queued follow-up messages: merge all pending into one and resume
-        // session. Queue rows survive a blocked drain so nothing is lost.
-        if (task && hasQueued(data.taskId)) {
-          const result = await drainFollowUps(data.taskId);
-          if (result.status === 'dispatched') {
-            await persistAndBroadcastPhase(data.taskId, 'starting', result.startedAt);
-            broadcastToTask(data.taskId, 'task:status', {
-              taskId: data.taskId,
-              status: 'running',
-            });
-            return; // Skip the completed broadcast since we're continuing
-          }
-          if (result.status === 'blocked') {
-            console.warn(
-              `Task ${data.taskId}: ${result.count} queued follow-up(s) held (${result.reason})`
-            );
-            broadcastToTask(data.taskId, 'task:followup_pending', {
-              taskId: data.taskId,
-              queueSize: result.count,
-              reason: result.reason,
-            });
+    // Durable event stream from detached task runners. Batches are resent
+    // until acknowledged, so apply each sequence number at most once.
+    socket.on('task:events', async (
+      batch: { taskId: number; runId?: string; events: Array<{ seq: number; event: string; data: unknown }> },
+      ack?: (result: { seq: number }) => void
+    ) => {
+      const runId = batch.runId ?? '';
+      let applied = getTaskEventCursor(batch.taskId, runId);
+      for (const record of batch.events || []) {
+        if (record.seq <= applied) continue;
+        const handler = agentTaskEventHandlers[record.event];
+        if (handler) {
+          try {
+            await handler(record.data);
+          } catch (error) {
+            console.error(`Error handling ${record.event} from task ${batch.taskId}:`, error);
           }
         }
-
-        if (task) {
-          await persistAndBroadcastPhase(data.taskId, 'completed', task.startedAt);
-        }
-
-        // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
-        broadcastToTask(data.taskId, 'task:status', {
-          taskId: data.taskId,
-          status: 'completed',
-          summary: data.summary,
-        });
-
-        // Start any pending tasks that depend on this completed task
-        await checkDependentTasks(data.taskId);
-      } catch (error) {
-        console.error('Error handling task:completed:', error);
+        applied = record.seq;
+        setTaskEventCursor(batch.taskId, runId, applied);
       }
-    });
-
-    socket.on('task:failed', async (data) => {
-      try {
-        const task = await getTaskById(data.taskId);
-        if (task) {
-          if (data.startedAt && task.startedAt && data.startedAt !== task.startedAt) {
-            console.log(`Ignoring stale failure for task ${data.taskId} run ${data.startedAt}`);
-            return;
-          }
-          task.status = 'failed';
-          task.error = data.error;
-          task.completedAt = new Date().toISOString();
-          await saveTask(task.projectId, task);
-          await persistAndBroadcastPhase(data.taskId, 'failed', task.startedAt);
-        }
-
-        // Keep queued follow-ups on failure. Discarding them silently lost the
-        // user's images; surface them instead so they can resend or discard.
-        if (hasQueued(data.taskId)) {
-          broadcastToTask(data.taskId, 'task:followup_pending', {
-            taskId: data.taskId,
-            queueSize: queueSize(data.taskId),
-            reason: 'task_failed',
-          });
-        }
-
-        // Bug #14 fix: Only broadcast task:status with full info, remove duplicate event
-        broadcastToTask(data.taskId, 'task:status', {
-          taskId: data.taskId,
-          status: 'failed',
-          error: data.error,
-        });
-
-        // Cascade cancel any pending tasks that depend on this failed task
-        await cancelDependentTasks(data.taskId);
-      } catch (error) {
-        console.error('Error handling task:failed:', error);
-      }
-    });
-
-    socket.on('task:error', async (data) => {
-      const task = await getTaskById(data.taskId);
-      if (data.startedAt && task?.startedAt && data.startedAt !== task.startedAt) return;
-      broadcastToTask(data.taskId, 'task:stream', liveStreamEvent(data.taskId, {
-        kind: 'error',
-        error: data.error,
-      }));
-      broadcastToTask(data.taskId, 'task:failed', { taskId: data.taskId, error: data.error });
+      ack?.({ seq: applied });
     });
 
     socket.on('task:merge-result', async (data) => {

@@ -227,8 +227,15 @@ export interface AgentToServerEvents {
     agentName: string;
     capabilities: string[];
     executor?: 'local' | 'docker';
-    runningTasks?: Array<{ taskId: number; sessionId?: string }>;
-  }, ack?: (data: { runningTasks: Array<{ taskId: number; sessionId?: string; startedAt?: string }> }) => void) => void;
+    runningTasks?: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+    finishedTasks?: Array<
+      | { outcome: 'completed'; taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }
+      | { outcome: 'failed'; taskId: number; error: string; startedAt?: string }
+    >;
+  }, ack?: (data: {
+    runningTasks: Array<{ taskId: number; sessionId?: string; startedAt?: string }>;
+    cancelTaskIds: number[];
+  }) => void) => void;
   status: (data: { status: 'online' | 'busy'; taskId?: number; runningTasks?: number[]; taskCount?: number }) => void;
   'task:stream': (data: TaskStreamEvent) => void;
   'task:output': (data: { taskId: number; text: string; startedAt?: string }) => void;
@@ -237,9 +244,13 @@ export interface AgentToServerEvents {
   'task:plan_question': (data: { taskId: number; question: unknown; startedAt?: string }) => void;
   'task:permission_request': (data: { taskId: number; request: unknown; startedAt?: string }) => void;
   'task:session_id': (data: { taskId: number; sessionId: string; runner?: Runner; startedAt?: string; attempt?: number }) => void;
-  'task:completed': (data: { taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }) => void;
-  'task:failed': (data: { taskId: number; error: string; startedAt?: string }) => void;
+  'task:completed': (data: { taskId: number; status: string; summary?: string; sessionId?: string; startedAt?: string }, ack?: () => void) => void;
+  'task:failed': (data: { taskId: number; error: string; startedAt?: string }, ack?: () => void) => void;
   'task:error': (data: { taskId: number; error: string; startedAt?: string }) => void;
+  'task:events': (
+    batch: { taskId: number; runId?: string; events: Array<{ seq: number; event: string; data: unknown }> },
+    ack?: (result: { seq: number }) => void
+  ) => void;
   'task:merge-result': (data: { taskId: number; success: boolean; mergeCommit?: string; conflicts?: string[]; error?: string }) => void;
   'task:worktree-cleaned': (data: { taskId: number; branch: string }) => void;
 }
