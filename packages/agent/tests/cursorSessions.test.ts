@@ -63,17 +63,17 @@ describe('Cursor history browsing', () => {
       updatedAtMs: 1_790_000_001_000,
     }));
 
-    const sessions = await listCursorSessions(aliasProject, false, { homeDir, includeSdk: false });
+    const sessions = await listCursorSessions(aliasProject, false, { homeDir });
     assert.equal(sessions.length, 1);
     assert.equal(sessions[0].runner, 'cursor');
     assert.equal(sessions[0].title, 'Cursor title');
     assert.equal(sessions[0].firstPrompt, 'Cursor prompt');
 
-    const detail = await getCursorSessionDetail(aliasProject, sessionId, { homeDir, includeSdk: false });
+    const detail = await getCursorSessionDetail(aliasProject, sessionId, { homeDir });
     assert.ok(detail?.some((entry) => entry.type === 'output' && entry.content === 'Cursor answer'));
     assert.ok(detail?.some((entry) => entry.type === 'tool_use' && entry.toolName === 'Shell'));
 
-    const search = await searchCursorSessions(aliasProject, 'Cursor prompt', { homeDir, includeSdk: false });
+    const search = await searchCursorSessions(aliasProject, 'Cursor prompt', { homeDir });
     assert.equal(search.length, 1);
     assert.equal(search[0].sessionId, sessionId);
   });

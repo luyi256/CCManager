@@ -308,9 +308,13 @@ export async function listCursorSessions(
 ): Promise<SessionListItem[]> {
   const [ideSessions, sdkSessions] = await Promise.all([
     listCursorIdeSessions(projectPath, activeOnly, options.homeDir),
-    options.includeSdk === false
-      ? Promise.resolve([])
-      : settleWithin(listCursorSdkSessions(projectPath, activeOnly), 5_000, []).catch(() => []),
+    // Cursor SDK sessions are also persisted under agent-transcripts, which is
+    // the fast path above. Loading @cursor/sdk can synchronously block Node for
+    // over 10 seconds on a cold start, exceeding the server's request timeout.
+    // Keep direct SDK-store discovery as an explicit legacy fallback only.
+    options.includeSdk === true
+      ? settleWithin(listCursorSdkSessions(projectPath, activeOnly), 5_000, []).catch(() => [])
+      : Promise.resolve([]),
   ]);
   const unique = new Map<string, SessionListItem>();
   for (const session of [...ideSessions, ...sdkSessions]) {
@@ -357,7 +361,7 @@ export async function getCursorSessionDetail(
       return null;
     }
   }
-  if (options.includeSdk === false) return null;
+  if (options.includeSdk !== true) return null;
 
   const Agent = await cursorAgent();
   let messages: AgentMessage[];
