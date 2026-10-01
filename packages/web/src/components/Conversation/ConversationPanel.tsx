@@ -35,7 +35,7 @@ import {
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
 import { getTimestamp } from '../../utils/dateTime';
 import { useWebSocket } from '../../contexts/WebSocketContext';
-import { readImageFiles, type PendingImage } from '../../utils/images';
+import { defaultAttachmentPrompt, readAttachmentFiles, type PendingAttachment } from '../../utils/attachments';
 import { useTaskAttachments } from '../../hooks/useAttachmentUrl';
 
 function formatDate(date: unknown): string {
@@ -117,11 +117,11 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     : followUps?.queueSize ?? 0;
   const queuedImageCount = followUps?.items.reduce((sum, item) => sum + item.imageCount, 0) ?? 0;
   const [continuePrompt, setContinuePrompt] = useState('');
-  const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
+  const [followUpImages, setFollowUpImages] = useState<PendingAttachment[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isReadingImages, setIsReadingImages] = useState(false);
-  const followUpImagesRef = useRef<PendingImage[]>([]);
-  const followUpImageReadPromiseRef = useRef<Promise<PendingImage[]> | null>(null);
+  const followUpImagesRef = useRef<PendingAttachment[]>([]);
+  const followUpImageReadPromiseRef = useRef<Promise<PendingAttachment[]> | null>(null);
   const followUpFileInputRef = useRef<HTMLInputElement>(null);
 
   // Model switching state for follow-up
@@ -162,7 +162,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     if (files.length === 0) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    const readPromise = readImageFiles(files, followUpImagesRef.current).then((result) => {
+    const readPromise = readAttachmentFiles(files, followUpImagesRef.current).then((result) => {
       followUpImagesRef.current = result.images;
       setFollowUpImages(result.images);
       setImageError(result.error || null);
@@ -172,7 +172,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     try {
       await readPromise;
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : 'Could not read image');
+      setImageError(error instanceof Error ? error.message : 'Could not read file');
     } finally {
       if (followUpImageReadPromiseRef.current === readPromise) {
         followUpImageReadPromiseRef.current = null;
@@ -186,7 +186,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     if (!files) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    const readPromise = readImageFiles(files, followUpImagesRef.current).then((result) => {
+    const readPromise = readAttachmentFiles(files, followUpImagesRef.current).then((result) => {
       followUpImagesRef.current = result.images;
       setFollowUpImages(result.images);
       setImageError(result.error || null);
@@ -196,7 +196,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     try {
       await readPromise;
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : 'Could not read image');
+      setImageError(error instanceof Error ? error.message : 'Could not read file');
     } finally {
       if (followUpImageReadPromiseRef.current === readPromise) {
         followUpImageReadPromiseRef.current = null;
@@ -721,7 +721,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   e.preventDefault();
                   const prompt = continuePrompt.trim();
                   if (continueTask.isPending) return;
-                  let readyImages: PendingImage[];
+                  let readyImages: PendingAttachment[];
                   try {
                     readyImages = followUpImageReadPromiseRef.current
                       ? await followUpImageReadPromiseRef.current
@@ -731,7 +731,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   }
                   if (!prompt && readyImages.length === 0) return;
                   const effectivePrompt = prompt ||
-                    `Please analyze the ${readyImages.length} attached image${readyImages.length === 1 ? '' : 's'}.`;
+                    defaultAttachmentPrompt(readyImages);
                   const imageBase64s = readyImages.length > 0 ? readyImages.map(img => img.dataUrl) : undefined;
                   const optimistic = { content: effectivePrompt, timestamp: Date.now() };
                   setSentMessages(prev => [...prev, optimistic]);
@@ -827,13 +827,13 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                       compact
                       lockRunner={runnerLocked}
                     />
-                    <input ref={followUpFileInputRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple className="hidden" onChange={handleFollowUpFileSelect} />
+                    <input ref={followUpFileInputRef} type="file" multiple className="hidden" onChange={handleFollowUpFileSelect} />
                     <button
                       type="button"
                       onClick={() => followUpFileInputRef.current?.click()}
                       disabled={continueTask.isPending || isReadingImages}
                       className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
-                      title="Attach images"
+                      title="Attach files"
                     >
                       <Paperclip size={14} />
                     </button>
@@ -854,6 +854,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                         key={img.id}
                         src={img.dataUrl}
                         alt={img.name}
+                        isImage={img.isImage}
                         onRemove={() => removeFollowUpImage(img.id)}
                       />
                     ))}

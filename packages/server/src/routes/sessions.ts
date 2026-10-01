@@ -5,7 +5,7 @@ import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { listSessions, listActiveSessions, getSessionDetail, getLinkedTaskIds, mergeSessions, searchSessions, cleanUserMessage, isCommandMessage, isContinuationMessage } from '../services/sessionBrowser.js';
 import type { SessionListItem, SessionDetail, SessionTimelineEntry } from '../services/sessionBrowser.js';
 import type { Runner } from '../types/index.js';
-import { replaceTaskImages, validateTaskImages } from '../services/taskAttachments.js';
+import { defaultAttachmentPrompt, isImageAttachment, replaceTaskImages, validateTaskAttachments } from '../services/taskAttachments.js';
 import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 
 const router = Router();
@@ -331,15 +331,15 @@ router.post('/projects/:projectId/sessions/:sessionId/continue', async (req, res
     const selectedRunner = parseRunner(runner) ?? 'claude';
     let validatedImages: string[];
     try {
-      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+      validatedImages = validateTaskAttachments(images).map((image) => image.dataUrl);
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid attachments' });
     }
-    if (selectedRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+    if (selectedRunner === 'cursor' && validatedImages.filter(isImageAttachment).length > CURSOR_MAX_IMAGE_COUNT) {
       return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
     }
     const effectivePrompt = normalizedPrompt ||
-      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
+      defaultAttachmentPrompt(validatedImages);
 
     // Check agent
     const agent = agentPool.getAgent(project.agentId);

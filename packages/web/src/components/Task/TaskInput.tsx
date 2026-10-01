@@ -4,7 +4,7 @@ import VoiceInput from '../common/VoiceInput';
 import ImageThumbnail from '../common/ImageThumbnail';
 import ModelSwitcher from '../Conversation/ModelSwitcher';
 import type { Runner, Task } from '../../types';
-import { readImageFiles, type PendingImage } from '../../utils/images';
+import { defaultAttachmentPrompt, readAttachmentFiles, type PendingAttachment } from '../../utils/attachments';
 
 interface TaskInputProps {
   onSubmit: (data: { prompt: string; isPlanMode: boolean; runner?: Runner; model?: string; reasoningEffort?: string; dependsOn?: number; images?: string[] }) => Promise<void>;
@@ -24,10 +24,10 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
   const [reasoningEffort, setReasoningEffort] = useState(lastReasoningEffort || '');
   const [dependsOn, setDependsOn] = useState<number | undefined>();
   const [error, setError] = useState<string | null>(null);
-  const [images, setImages] = useState<PendingImage[]>([]);
+  const [images, setImages] = useState<PendingAttachment[]>([]);
   const [isReadingImages, setIsReadingImages] = useState(false);
-  const imagesRef = useRef<PendingImage[]>([]);
-  const imageReadPromiseRef = useRef<Promise<PendingImage[]> | null>(null);
+  const imagesRef = useRef<PendingAttachment[]>([]);
+  const imageReadPromiseRef = useRef<Promise<PendingAttachment[]> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Update model when lastModel prop changes (project switch)
@@ -55,7 +55,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
       if (files.length === 0) return;
       if (isReadingImages) return;
       setIsReadingImages(true);
-      const readPromise = readImageFiles(files, imagesRef.current).then((result) => {
+      const readPromise = readAttachmentFiles(files, imagesRef.current).then((result) => {
         imagesRef.current = result.images;
         setImages(result.images);
         setError(result.error || null);
@@ -65,7 +65,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
       try {
         await readPromise;
       } catch (error) {
-        setError(error instanceof Error ? error.message : 'Could not read image');
+        setError(error instanceof Error ? error.message : 'Could not read file');
       } finally {
         if (imageReadPromiseRef.current === readPromise) imageReadPromiseRef.current = null;
         setIsReadingImages(false);
@@ -87,7 +87,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
     if (!files) return;
     if (isReadingImages) return;
     setIsReadingImages(true);
-    const readPromise = readImageFiles(files, imagesRef.current).then((result) => {
+    const readPromise = readAttachmentFiles(files, imagesRef.current).then((result) => {
       imagesRef.current = result.images;
       setImages(result.images);
       setError(result.error || null);
@@ -97,7 +97,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
     try {
       await readPromise;
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Could not read image');
+      setError(error instanceof Error ? error.message : 'Could not read file');
     } finally {
       if (imageReadPromiseRef.current === readPromise) imageReadPromiseRef.current = null;
       setIsReadingImages(false);
@@ -123,7 +123,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
         ? readyImages.map((img) => img.dataUrl)
         : undefined;
       await onSubmit({
-        prompt: prompt.trim() || `Please analyze the ${readyImages.length} attached image${readyImages.length === 1 ? '' : 's'}.`,
+        prompt: prompt.trim() || defaultAttachmentPrompt(readyImages),
         isPlanMode,
         runner,
         model: model || undefined,
@@ -185,6 +185,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
                   key={img.id}
                   src={img.dataUrl}
                   alt={img.name}
+                  isImage={img.isImage}
                   size="md"
                   onRemove={() => removeImage(img.id)}
                 />
@@ -201,7 +202,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
           <input
             ref={fileInputRef}
             type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
+           
             multiple
             className="hidden"
             onChange={handleFileSelect}
@@ -211,7 +212,7 @@ export default function TaskInput({ onSubmit, isSubmitting, tasks, lastModel, la
             onClick={() => fileInputRef.current?.click()}
             disabled={isSubmitting || isReadingImages}
             className="p-2 rounded-lg bg-dark-700 text-dark-400 hover:text-dark-200 hover:bg-dark-600 transition-colors"
-            title="Upload images"
+            title="Attach files"
           >
             <Paperclip size={20} />
           </button>

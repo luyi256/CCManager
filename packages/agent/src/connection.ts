@@ -1,11 +1,13 @@
 import { io, Socket } from 'socket.io-client';
 import { exec, execSync } from 'child_process';
 import fs from 'fs';
+import path from 'path';
 import { promisify } from 'util';
+import { gzipSync } from 'zlib';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import { parseClaudeGrokSettings } from './runnerModels.js';
-import { TaskRun, defaultRunsRoot, type RunRecord } from './taskRun.js';
+import { TaskRun, defaultAttachmentsRoot, defaultRunsRoot, type RunRecord } from './taskRun.js';
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
 import { getCursorSessionDetail, listCursorSessions, searchCursorSessions } from './cursorSessions.js';
@@ -38,6 +40,7 @@ const EVENT_BATCH_MAX_RECORDS = 200;
 const EVENT_BATCH_MAX_BYTES = 512 * 1024;
 const IMAGE_DOWNLOAD_ATTEMPTS = 3;
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
+const SESSION_UPLOAD_TIMEOUT_MS = 170_000;
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -163,6 +166,7 @@ export class AgentConnection {
   /** Runs with an event batch awaiting server acknowledgement. */
   private deliveriesInFlight: Set<string> = new Set();
   private runsRoot: string;
+  private attachmentsRoot: string;
   private runPumpInterval: NodeJS.Timeout | null = null;
   /** Events are forwarded only after the server has reconciled this connection. */
   private registered = false;
@@ -184,6 +188,7 @@ export class AgentConnection {
     this.currentUrl = normalizeManagerUrl(config.managerUrl!);
     this.config.managerUrl = this.currentUrl;
     this.runsRoot = config.runsDir || defaultRunsRoot(config.agentId);
+    this.attachmentsRoot = config.attachmentsDir || defaultAttachmentsRoot(config.agentId);
     this.adoptExistingRuns();
   }
 
@@ -388,7 +393,17 @@ export class AgentConnection {
       runner: Runner;
       sessionId: string;
       relatedSessionIds?: string[];
-    }, callback: (result: unknown) => void) => {
+      uploadId?: string;
+    }, rawCallback: (result: unknown) => void) => {
+      const callback = async (result: { ok: boolean; [key: string]: unknown }) => {
+        if (!data.uploadId || !result.ok) return rawCallback(result);
+        try {
+          await this.uploadSessionDetail(data.uploadId, result);
+          rawCallback({ ok: true, uploaded: true });
+        } catch (error) {
+          rawCallback({ ok: false, error: `Session upload failed: ${error instanceof Error ? error.message : String(error)}` });
+        }
+      };
       try {
         const runner = data.runner ?? 'claude';
         const sessions = data.runner === 'cursor'
@@ -773,6 +788,7 @@ export class AgentConnection {
         executionPath,
         executor: task.executor ?? this.config.executor ?? 'local',
         dockerConfig: this.config.dockerConfig,
+        attachmentsDir: path.join(this.attachmentsRoot, `task-${task.taskId}`),
       });
       this.runs.set(run.dir, run);
       this.executors.set(task.taskId, run);
@@ -789,6 +805,21 @@ export class AgentConnection {
     } finally {
       if (this.launching.get(task.taskId) === task) this.launching.delete(task.taskId);
     }
+  }
+
+  /** Upload a session transcript over HTTP so a large one cannot stall the socket. */
+  private async uploadSessionDetail(uploadId: string, result: unknown): Promise<void> {
+    const response = await fetch(`${this.currentUrl}/api/agent/session-detail/${encodeURIComponent(uploadId)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.config.authToken}`,
+        'Content-Type': 'application/json',
+        'Content-Encoding': 'gzip',
+      },
+      body: gzipSync(JSON.stringify(result)),
+      signal: AbortSignal.timeout(SESSION_UPLOAD_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
   }
 
   /** Download images staged by the server for a dispatch, off the Socket.IO connection. */

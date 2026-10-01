@@ -16,6 +16,7 @@ const { getTaskById, createAgentToken } = await import('../services/storage.js')
 const { hashToken } = await import('../services/auth.js');
 const { agentPool } = await import('../services/agentPool.js');
 const { getStagedDispatchImages } = await import('../services/dispatchImages.js');
+const { completeSessionDetailUpload } = await import('../services/sessionDetailUploads.js');
 const { setupWebSocket } = await import('./index.js');
 
 // socket.io-client is only a dependency of the agent package.
@@ -150,4 +151,12 @@ test('agent reconnect syncs state silently and only recovers tasks the agent los
   const outputs = db.prepare(`SELECT content FROM task_logs WHERE task_id = 2 AND type = 'output' ORDER BY id`).all() as Array<{ content: string }>;
   // Consecutive output chunks are coalesced into one log row.
   assert.equal(outputs.map((row) => JSON.parse(row.content)).join(''), 'firstsecond');
+
+  // Session transcripts arrive over HTTP; the socket only acknowledges.
+  client.on('sessions:detail', (request: { uploadId: string }, ack: (result: unknown) => void) => {
+    completeSessionDetailUpload(request.uploadId, 'a1', { ok: true, entries: [{ type: 'user', text: 'hi' }] });
+    ack({ ok: true, uploaded: true });
+  });
+  const detail = await agentPool.requestSessionDetail('a1', '/tmp/p1', 'claude', 'session-x');
+  assert.deepEqual(detail, { ok: true, entries: [{ type: 'user', text: 'hi' }] });
 });

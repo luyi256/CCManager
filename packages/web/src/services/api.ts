@@ -215,6 +215,8 @@ export interface AttachmentMeta {
   position: number;
   mimeType: string;
   byteSize: number;
+  /** Set for non-image files. */
+  fileName?: string;
 }
 
 export interface TaskAttachments {

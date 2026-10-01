@@ -275,9 +275,11 @@ try {
 //   active = 1        -> part of the current dispatch set
 //   log_id IS NULL    -> belongs to the task's initial prompt
 //   log_id = <log id> -> belongs to that user_message
+//   file_name         -> original name of a non-image file attachment
 for (const migration of [
   ['log_id', 'INTEGER'],
   ['active', 'INTEGER DEFAULT 1'],
+  ['file_name', 'TEXT'],
 ] as const) {
   try {
     db.exec(`ALTER TABLE task_attachments ADD COLUMN ${migration[0]} ${migration[1]}`);

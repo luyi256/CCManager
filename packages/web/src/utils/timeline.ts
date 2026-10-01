@@ -3,6 +3,7 @@ export interface AttachmentRef {
   position: number;
   mimeType: string;
   byteSize: number;
+  fileName?: string;
 }
 
 export interface TimelineItem {

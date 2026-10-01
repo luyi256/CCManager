@@ -24,6 +24,7 @@ export interface AgentConfig {
   blockedPaths?: string[];
   capabilities?: string[];
   runsDir?: string; // Task run state; defaults to ~/.ccm-agent/runs/<agentId>
+  attachmentsDir?: string; // Saved file attachments; defaults to ~/.ccm-agent/attachments/<agentId>
 }
 
 export interface TaskRequest {

@@ -2,6 +2,10 @@ import type { Socket, Namespace } from 'socket.io';
 import { db } from './database.js';
 import { validateRunnerSelection } from './runnerModels.js';
 import { INLINE_IMAGE_BYTES, imagesByteSize, stageDispatchImages } from './dispatchImages.js';
+import { expectSessionDetailUpload } from './sessionDetailUploads.js';
+
+// Long transcripts can take minutes to upload over slow agent links.
+const SESSION_DETAIL_TIMEOUT_MS = 180_000;
 import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
@@ -321,7 +325,11 @@ class AgentPool {
     });
   }
 
-  /** Ask agent to get session detail (15s timeout for large files). */
+  /**
+   * Ask agent to get session detail. The transcript itself is uploaded over
+   * HTTP; the Socket.IO acknowledgement only reports whether that worked.
+   * Agents without HTTP upload support still return it in the acknowledgement.
+   */
   requestSessionDetail(
     agentId: string,
     projectPath: string,
@@ -332,17 +340,29 @@ class AgentPool {
   ): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
+    const upload = expectSessionDetailUpload(agentId);
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Agent timeout')), 15000);
+      const finish = (result: unknown) => {
+        clearTimeout(timer);
+        upload.cancel();
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        upload.cancel();
+        reject(new Error('Agent timeout'));
+      }, SESSION_DETAIL_TIMEOUT_MS);
+      void upload.promise.then(finish);
       agent.socket.emit('sessions:detail', {
         projectPath,
         projectId,
         runner,
         sessionId,
         relatedSessionIds,
+        uploadId: upload.id,
       }, (result: unknown) => {
-        clearTimeout(timer);
-        resolve(result);
+        const marker = result as { ok?: boolean; uploaded?: boolean } | null;
+        if (marker?.ok && marker.uploaded) return; // the HTTP upload resolves it
+        finish(result);
       });
     });
   }

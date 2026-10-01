@@ -10,7 +10,7 @@ import { enqueue, queueSize, hasQueued, peekAll, clear as clearFollowUpQueue } f
 import { drainFollowUps, isTaskActive } from '../services/followUpDispatch.js';
 import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
-import { bindAttachmentsToLog, getTaskImagesForDispatch, replaceTaskImages, validateTaskImages, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
+import { bindAttachmentsToLog, defaultAttachmentPrompt, getTaskImagesForDispatch, isImageAttachment, replaceTaskImages, validateTaskAttachments, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
 
 const router = Router();
@@ -81,7 +81,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
     const projectId = req.params.projectId;
 
     if (!normalizedPrompt && (!images || images.length === 0)) {
-      return res.status(400).json({ message: 'Prompt or images required' });
+      return res.status(400).json({ message: 'Prompt or attachments required' });
     }
 
     const project = await storage.getProject(projectId);
@@ -100,11 +100,11 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
     // (model availability), so the actionable error surfaces first.
     let validatedImages: string[];
     try {
-      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+      validatedImages = validateTaskAttachments(images).map((image) => image.dataUrl);
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid attachments' });
     }
-    if (selectedRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+    if (selectedRunner === 'cursor' && validatedImages.filter(isImageAttachment).length > CURSOR_MAX_IMAGE_COUNT) {
       return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
     }
     const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
@@ -122,7 +122,7 @@ router.post('/projects/:projectId/tasks', async (req, res) => {
     }
 
     const effectivePrompt = normalizedPrompt ||
-      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
+      defaultAttachmentPrompt(validatedImages);
 
     const task = await storage.createTask(projectId, {
       projectId,
@@ -397,17 +397,17 @@ router.post('/tasks/:id/continue', async (req, res) => {
     const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
 
     if (!normalizedPrompt && (!images || images.length === 0)) {
-      return res.status(400).json({ message: 'Prompt or images required' });
+      return res.status(400).json({ message: 'Prompt or attachments required' });
     }
 
     let validatedImages: string[];
     try {
-      validatedImages = validateTaskImages(images).map((image) => image.dataUrl);
+      validatedImages = validateTaskAttachments(images).map((image) => image.dataUrl);
     } catch (error) {
-      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid images' });
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid attachments' });
     }
     const effectivePrompt = normalizedPrompt ||
-      `Please analyze the ${validatedImages.length} attached image${validatedImages.length === 1 ? '' : 's'}.`;
+      defaultAttachmentPrompt(validatedImages);
 
     const task = await storage.getTaskById(taskId);
     if (!task) {
@@ -439,7 +439,7 @@ router.post('/tasks/:id/continue', async (req, res) => {
       }
     }
     const nextRunner = sessionRunner ?? parseRunner(runner) ?? task.runner ?? 'claude';
-    if (nextRunner === 'cursor' && validatedImages.length > CURSOR_MAX_IMAGE_COUNT) {
+    if (nextRunner === 'cursor' && validatedImages.filter(isImageAttachment).length > CURSOR_MAX_IMAGE_COUNT) {
       return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
     }
     const modelWasProvided = Object.prototype.hasOwnProperty.call(req.body, 'model');
@@ -807,6 +807,11 @@ router.get('/tasks/:id/attachments/:attachmentId', async (req, res) => {
 
     res.setHeader('Content-Type', attachment.mimeType);
     res.setHeader('Content-Length', attachment.buffer.length);
+    if (attachment.fileName) {
+      // Uploaded files are arbitrary content; never render them inline.
+      res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(attachment.fileName)}`);
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+    }
     // Attachment bytes never change once stored.
     res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
     res.end(attachment.buffer);

@@ -32,7 +32,7 @@ import {
   TimelineView,
 } from './TimelineRenderer';
 import { canSendFollowUpForTask, isTaskActive } from '../../utils/taskResume';
-import { readImageFiles, type PendingImage } from '../../utils/images';
+import { defaultAttachmentPrompt, readAttachmentFiles, type PendingAttachment } from '../../utils/attachments';
 import { useTaskAttachments } from '../../hooks/useAttachmentUrl';
 
 // Safe date formatting
@@ -105,7 +105,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     : followUps?.queueSize ?? 0;
   const queuedImageCount = followUps?.items.reduce((sum, item) => sum + item.imageCount, 0) ?? 0;
   const [continuePrompt, setContinuePrompt] = useState('');
-  const [followUpImages, setFollowUpImages] = useState<PendingImage[]>([]);
+  const [followUpImages, setFollowUpImages] = useState<PendingAttachment[]>([]);
   const [imageError, setImageError] = useState<string | null>(null);
   const [isReadingImages, setIsReadingImages] = useState(false);
   const followUpFileInputRef = useRef<HTMLInputElement>(null);
@@ -118,11 +118,11 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     if (files.length === 0 || isReadingImages) return;
     setIsReadingImages(true);
     try {
-      const result = await readImageFiles(files, followUpImages);
+      const result = await readAttachmentFiles(files, followUpImages);
       setFollowUpImages(result.images);
       setImageError(result.error || null);
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : 'Could not read image');
+      setImageError(error instanceof Error ? error.message : 'Could not read file');
     } finally {
       setIsReadingImages(false);
     }
@@ -134,11 +134,11 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
     if (isReadingImages) return;
     setIsReadingImages(true);
     try {
-      const result = await readImageFiles(files, followUpImages);
+      const result = await readAttachmentFiles(files, followUpImages);
       setFollowUpImages(result.images);
       setImageError(result.error || null);
     } catch (error) {
-      setImageError(error instanceof Error ? error.message : 'Could not read image');
+      setImageError(error instanceof Error ? error.message : 'Could not read file');
     } finally {
       setIsReadingImages(false);
       e.target.value = '';
@@ -661,7 +661,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                     const prompt = continuePrompt.trim();
                     if ((!prompt && followUpImages.length === 0) || isReadingImages) return;
                     const effectivePrompt = prompt ||
-                      `Please analyze the ${followUpImages.length} attached image${followUpImages.length === 1 ? '' : 's'}.`;
+                      defaultAttachmentPrompt(followUpImages);
                     const imageBase64s = followUpImages.length > 0 ? followUpImages.map(img => img.dataUrl) : undefined;
                     // Always send immediately - server/agent handles interrupting running tasks
                     const optimistic = { content: effectivePrompt, timestamp: Date.now() };
@@ -739,7 +739,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                       <input
                         ref={followUpFileInputRef}
                         type="file"
-                        accept="image/png,image/jpeg,image/gif,image/webp"
+                       
                         multiple
                         className="hidden"
                         onChange={handleFollowUpFileSelect}
@@ -749,7 +749,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                         onClick={() => followUpFileInputRef.current?.click()}
                         disabled={continueTask.isPending || isReadingImages}
                         className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
-                        title="Attach images"
+                        title="Attach files"
                       >
                         <Paperclip size={14} />
                       </button>
@@ -774,6 +774,7 @@ export default function TaskDetail({ task: initialTask, onClose }: TaskDetailPro
                           key={img.id}
                           src={img.dataUrl}
                           alt={img.name}
+                          isImage={img.isImage}
                           onRemove={() => removeFollowUpImage(img.id)}
                         />
                       ))}

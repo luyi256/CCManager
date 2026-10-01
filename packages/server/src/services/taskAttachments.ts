@@ -1,16 +1,49 @@
 import { db } from './database.js';
 
 const MAX_IMAGE_COUNT = 8;
-// No per-image product limit. Keep only a total bound that fits below the
+const MAX_ATTACHMENT_COUNT = 16;
+// No per-file product limit. Keep only a total bound that fits below the
 // Express JSON body limit after base64 expansion and leaves room for prompts.
 const MAX_TOTAL_BYTES = 36 * 1024 * 1024;
 export const ATTACHMENT_RETENTION_DAYS = 30;
-const IMAGE_DATA_URL = /^data:(image\/(?:png|jpeg|gif|webp));base64,([A-Za-z0-9+/=\r\n]+)$/;
+const SUPPORTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MIME_TYPE = /^[\w.+-]+\/[\w.+-]+$/;
+/**
+ * Attachments travel as base64 data URLs. Images are unnamed; any other file
+ * carries its original name as a `name` parameter:
+ *   data:application/pdf;name=paper.pdf;base64,....
+ */
+const DATA_URL = /^data:([^;,]*)((?:;[^;,]*)*?);base64,([A-Za-z0-9+/=\r\n]*)$/;
 
-export interface ParsedImage {
+export interface ParsedAttachment {
   dataUrl: string;
   mimeType: string;
   byteSize: number;
+  /** Set for non-image files. */
+  fileName?: string;
+}
+
+function nameParameter(parameters: string): string | undefined {
+  for (const parameter of parameters.split(';')) {
+    if (!parameter.startsWith('name=')) continue;
+    try {
+      return decodeURIComponent(parameter.slice(5));
+    } catch {
+      return parameter.slice(5);
+    }
+  }
+  return undefined;
+}
+
+function sanitizeFileName(name: string): string {
+  const cleaned = name.replace(/[\\/]/g, '_').replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  if (!cleaned || cleaned === '.' || cleaned === '..') return 'attachment';
+  return cleaned.slice(0, 200);
+}
+
+/** Images go to runners natively; everything else is saved as a file on the agent. */
+export function isImageAttachment(dataUrl: string): boolean {
+  return dataUrl.startsWith('data:image/') && !dataUrl.slice(0, dataUrl.indexOf(',')).includes(';name=');
 }
 
 function hasValidSignature(mimeType: string, bytes: Buffer): boolean {
@@ -32,30 +65,54 @@ function hasValidSignature(mimeType: string, bytes: Buffer): boolean {
   return false;
 }
 
-export function validateTaskImages(value: unknown): ParsedImage[] {
+export function validateTaskAttachments(value: unknown): ParsedAttachment[] {
   if (value === undefined || value === null) return [];
-  if (!Array.isArray(value)) throw new Error('Images must be an array');
-  if (value.length > MAX_IMAGE_COUNT) throw new Error(`A task can include at most ${MAX_IMAGE_COUNT} images`);
+  if (!Array.isArray(value)) throw new Error('Attachments must be an array');
+  if (value.length > MAX_ATTACHMENT_COUNT) {
+    throw new Error(`A message can include at most ${MAX_ATTACHMENT_COUNT} attachments`);
+  }
 
   let totalBytes = 0;
-  return value.map((item, index) => {
-    if (typeof item !== 'string') throw new Error(`Image ${index + 1} is invalid`);
-    const match = item.match(IMAGE_DATA_URL);
-    if (!match) throw new Error(`Image ${index + 1} must be PNG, JPEG, GIF, or WebP`);
-    const mimeType = match[1];
-    const normalizedBase64 = match[2].replace(/\s/g, '');
-    const bytes = Buffer.from(normalizedBase64, 'base64');
-    if (!bytes.length || !hasValidSignature(mimeType, bytes)) {
-      throw new Error(`Image ${index + 1} content does not match ${mimeType}`);
+  let imageCount = 0;
+  const parsed = value.map((item, index): ParsedAttachment => {
+    if (typeof item !== 'string') throw new Error(`Attachment ${index + 1} is invalid`);
+    const match = item.match(DATA_URL);
+    const fileName = match ? nameParameter(match[2]) : undefined;
+    const declaredType = match?.[1].toLowerCase() || '';
+    if (!match || (!fileName && !SUPPORTED_IMAGE_TYPES.has(declaredType))) {
+      throw new Error(`Image ${index + 1} must be PNG, JPEG, GIF, or WebP`);
     }
+    const bytes = Buffer.from(match[3].replace(/\s/g, ''), 'base64');
+    if (!bytes.length) throw new Error(`Attachment ${index + 1} is empty`);
     totalBytes += bytes.length;
-    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Images exceed the 36 MB total request limit');
+    if (totalBytes > MAX_TOTAL_BYTES) throw new Error('Attachments exceed the 36 MB total request limit');
+
+    const base64 = bytes.toString('base64');
+    if (!fileName) {
+      if (!hasValidSignature(declaredType, bytes)) {
+        throw new Error(`Image ${index + 1} content does not match ${declaredType}`);
+      }
+      imageCount++;
+      return { dataUrl: `data:${declaredType};base64,${base64}`, mimeType: declaredType, byteSize: bytes.length };
+    }
+    const mimeType = MIME_TYPE.test(declaredType) ? declaredType : 'application/octet-stream';
+    const name = sanitizeFileName(fileName);
     return {
-      dataUrl: `data:${mimeType};base64,${bytes.toString('base64')}`,
+      dataUrl: `data:${mimeType};name=${encodeURIComponent(name)};base64,${base64}`,
       mimeType,
       byteSize: bytes.length,
+      fileName: name,
     };
   });
+  if (imageCount > MAX_IMAGE_COUNT) throw new Error(`A message can include at most ${MAX_IMAGE_COUNT} images`);
+  return parsed;
+}
+
+/** Prompt used when a message has attachments but no text. */
+export function defaultAttachmentPrompt(dataUrls: string[]): string {
+  const count = dataUrls.length;
+  const noun = dataUrls.every(isImageAttachment) ? 'image' : 'file';
+  return `Please analyze the ${count} attached ${noun}${count === 1 ? '' : 's'}.`;
 }
 
 export interface AttachmentMeta {
@@ -64,6 +121,7 @@ export interface AttachmentMeta {
   position: number;
   mimeType: string;
   byteSize: number;
+  fileName?: string;
 }
 
 /**
@@ -83,7 +141,7 @@ export function replaceTaskImages(
   opts: { activate?: boolean } = {}
 ): { dataUrls: string[]; ids: number[] } {
   const activate = opts.activate !== false;
-  const images = validateTaskImages(value);
+  const images = validateTaskAttachments(value);
   const ids: number[] = [];
 
   const store = db.transaction(() => {
@@ -95,8 +153,8 @@ export function replaceTaskImages(
     ).get(taskId) as { nextPosition: number };
 
     const insert = db.prepare(`
-      INSERT INTO task_attachments (task_id, position, mime_type, byte_size, data_url, log_id, active)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO task_attachments (task_id, position, mime_type, byte_size, data_url, log_id, active, file_name)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
     images.forEach((image, offset) => {
       const result = insert.run(
@@ -107,6 +165,7 @@ export function replaceTaskImages(
         image.dataUrl,
         logId,
         activate ? 1 : 0,
+        image.fileName ?? null,
       );
       ids.push(Number(result.lastInsertRowid));
     });
@@ -147,7 +206,7 @@ export function getTaskImagesForDispatch(
 /** Metadata for every generation, for display. Never returns base64. */
 export function listTaskAttachments(taskId: number): AttachmentMeta[] {
   const rows = db.prepare(`
-    SELECT id, log_id, position, mime_type, byte_size FROM task_attachments
+    SELECT id, log_id, position, mime_type, byte_size, file_name FROM task_attachments
     WHERE task_id = ?
     ORDER BY position ASC
   `).all(taskId) as Array<{
@@ -156,6 +215,7 @@ export function listTaskAttachments(taskId: number): AttachmentMeta[] {
     position: number;
     mime_type: string;
     byte_size: number;
+    file_name: string | null;
   }>;
   return rows.map((row) => ({
     id: row.id,
@@ -163,6 +223,7 @@ export function listTaskAttachments(taskId: number): AttachmentMeta[] {
     position: row.position,
     mimeType: row.mime_type,
     byteSize: row.byte_size,
+    ...(row.file_name ? { fileName: row.file_name } : {}),
   }));
 }
 
@@ -170,15 +231,19 @@ export function listTaskAttachments(taskId: number): AttachmentMeta[] {
 export function getAttachmentForTask(
   taskId: number,
   attachmentId: number
-): { mimeType: string; buffer: Buffer } | null {
+): { mimeType: string; buffer: Buffer; fileName?: string } | null {
   const row = db.prepare(`
-    SELECT mime_type, data_url FROM task_attachments
+    SELECT mime_type, data_url, file_name FROM task_attachments
     WHERE task_id = ? AND id = ?
-  `).get(taskId, attachmentId) as { mime_type: string; data_url: string } | undefined;
+  `).get(taskId, attachmentId) as { mime_type: string; data_url: string; file_name: string | null } | undefined;
   if (!row) return null;
 
   const base64 = row.data_url.slice(row.data_url.indexOf(',') + 1);
-  return { mimeType: row.mime_type, buffer: Buffer.from(base64, 'base64') };
+  return {
+    mimeType: row.mime_type,
+    buffer: Buffer.from(base64, 'base64'),
+    ...(row.file_name ? { fileName: row.file_name } : {}),
+  };
 }
 
 export function bindAttachmentsToLog(ids: number[], logId: number): void {

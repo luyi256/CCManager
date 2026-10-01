@@ -11,11 +11,14 @@ import { exec, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
+import { describeAttachedFiles, saveAttachedFiles, splitAttachments } from './attachments.js';
+import { DockerExecutor } from './docker.js';
 import { createExecutor, type Executor } from './executors.js';
 import { RUN_FILES, readJsonLines, writeFileAtomic, type RunRequest } from './taskRun.js';
 
 const execAsync = promisify(exec);
 const CONTROL_POLL_MS = 200;
+const DOCKER_ATTACHMENTS_DIR = '/ccm-attachments';
 const TERMINATE_GRACE_MS = 6000;
 
 /**
@@ -66,6 +69,8 @@ async function run(dir: string): Promise<void> {
 
   writeFileAtomic(path.join(dir, RUN_FILES.runner), JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
 
+  const { images, files } = splitAttachments(task.images);
+  task.images = images.length > 0 ? images : undefined;
   const executor: Executor = createExecutor(task, request);
 
   const onSignal = (): void => {
@@ -116,6 +121,16 @@ async function run(dir: string): Promise<void> {
   });
 
   try {
+    if (files.length > 0) {
+      const attachmentsDir = request.attachmentsDir || path.join(dir, 'attachments');
+      let paths = saveAttachedFiles(attachmentsDir, files);
+      if (executor instanceof DockerExecutor) {
+        // The container sees only its mounts, so expose the folder read-only.
+        task.extraMounts = [...(task.extraMounts || []), { source: attachmentsDir, target: DOCKER_ATTACHMENTS_DIR, readonly: true }];
+        paths = paths.map((file) => path.posix.join(DOCKER_ATTACHMENTS_DIR, path.basename(file)));
+      }
+      task.prompt += describeAttachedFiles(paths);
+    }
     console.log(`Task ${task.taskId}: executing in ${executionPath}`);
     await executor.execute(task, executionPath);
     if (task.postTaskHook && !cancelled && !terminating) {

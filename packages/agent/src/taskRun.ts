@@ -22,6 +22,8 @@ export interface RunRequest {
   executionPath: string;
   executor?: 'local' | 'docker';
   dockerConfig?: DockerConfig;
+  /** Where this task's non-image file attachments are saved for the runner to read. */
+  attachmentsDir?: string;
 }
 
 export interface RunRecord {
@@ -48,6 +50,11 @@ const RUNNER_START_TIMEOUT_MS = 15000;
 
 export function defaultRunsRoot(agentId: string): string {
   return path.join(os.homedir(), '.ccm-agent', 'runs', agentId);
+}
+
+/** Kept after runs finish so follow-ups can still refer to earlier files. */
+export function defaultAttachmentsRoot(agentId: string): string {
+  return path.join(os.homedir(), '.ccm-agent', 'attachments', agentId);
 }
 
 function runnerEntry(): { script: string; execArgv: string[] } {

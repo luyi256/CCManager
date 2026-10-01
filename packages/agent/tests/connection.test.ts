@@ -7,6 +7,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createRequire } from 'node:module';
+import { gunzipSync } from 'node:zlib';
 import type { Server as SocketIOServerType, Socket } from '../../server/node_modules/socket.io/dist/index.js';
 import { AgentConnection } from '../src/connection.js';
 import type { AgentConfig } from '../src/types.js';
@@ -31,6 +32,7 @@ function config(managerUrl: string, dataPath: string, runsDir = mkdtempSync(path
     authToken: 'test-token',
     allowedPaths: [tmpdir()],
     runsDir,
+    attachmentsDir: path.join(runsDir, '..', `${path.basename(runsDir)}-attachments`),
   };
 }
 
@@ -459,6 +461,67 @@ test('downloads large dispatch images over HTTP before starting the runner', asy
   assert.equal(authorization, 'Bearer test-token');
   assert.deepEqual(request.task.images, [image, image]);
   assert.equal(request.task.imagesRef, undefined);
+
+  writeFileSync(release, '');
+  await waitFor(() => server.applied.some((item) => item.event === 'task:completed'), 'task did not complete', 10000);
+});
+
+test('uploads session detail over HTTP with gzip and the agent token', async (t) => {
+  let received: { authorization?: string; encoding?: string; body?: unknown } = {};
+  const server = await createRunnerTestServer(undefined, (request, response) => {
+    if (request.url !== '/api/agent/session-detail/upload-1' || request.method !== 'POST') return;
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      received = {
+        authorization: request.headers.authorization,
+        encoding: request.headers['content-encoding'],
+        body: JSON.parse(gunzipSync(Buffer.concat(chunks)).toString('utf8')),
+      };
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"ok":true}');
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const connection = new AgentConnection(config(server.url, tmpdir()));
+  t.after(() => connection.disconnect());
+  const payload = { ok: true, entries: [{ type: 'assistant', text: 'x'.repeat(100_000) }] };
+  await (connection as unknown as { uploadSessionDetail(id: string, result: unknown): Promise<void> })
+    .uploadSessionDetail('upload-1', payload);
+
+  assert.equal(received.authorization, 'Bearer test-token');
+  assert.equal(received.encoding, 'gzip');
+  assert.deepEqual(received.body, payload);
+});
+
+test('saves file attachments where the runner can read them', async (t) => {
+  const { release, projectPath } = installFakeClaude(t);
+  const notes = `data:text/markdown;name=${encodeURIComponent('review notes.md')};base64,${Buffer.from('# Cons 1').toString('base64')}`;
+  const server = await createRunnerTestServer((socket, count) => {
+    if (count !== 1) return;
+    socket.emit('task:execute', {
+      taskId: 8,
+      projectId: 'project',
+      projectPath,
+      prompt: 'read the notes',
+      isPlanMode: false,
+      runner: 'claude',
+      startedAt: 'run-8',
+      images: [notes],
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const runsDir = mkdtempSync(path.join(tmpdir(), 'ccm-runs-'));
+  const agentConfig = config(server.url, tmpdir(), runsDir);
+  const connection = new AgentConnection(agentConfig);
+  t.after(() => connection.disconnect());
+  connection.connect();
+
+  await waitFor(() => outputs(server.applied).includes('working'), 'runner did not start', 20000);
+  const saved = path.join(agentConfig.attachmentsDir!, 'task-8', 'review notes.md');
+  assert.equal(readFileSync(saved, 'utf8'), '# Cons 1');
 
   writeFileSync(release, '');
   await waitFor(() => server.applied.some((item) => item.event === 'task:completed'), 'task did not complete', 10000);

@@ -223,7 +223,9 @@ export function TimelineView({ grouped, userMessageLabel, taskId }: {
                           key={attachment.id}
                           taskId={taskId}
                           attachmentId={attachment.id}
-                          alt={`Attachment ${attachment.position + 1}`}
+                          alt={attachment.fileName || `Attachment ${attachment.position + 1}`}
+                          mimeType={attachment.mimeType}
+                          fileName={attachment.fileName}
                         />
                       ))}
                     </div>
