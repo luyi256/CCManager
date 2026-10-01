@@ -3,7 +3,7 @@ import { exec, execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { promisify } from 'util';
-import { gzipSync } from 'zlib';
+import { gzip } from 'zlib';
 import { validatePath } from './security.js';
 import { WorktreeManager } from './worktree.js';
 import { parseClaudeGrokSettings } from './runnerModels.js';
@@ -13,6 +13,7 @@ import { listSessions, listActiveSessions, getSessionDetail, searchSessions } fr
 import { getCursorSessionDetail, listCursorSessions, searchCursorSessions } from './cursorSessions.js';
 
 const execAsync = promisify(exec);
+const gzipAsync = promisify(gzip);
 
 type Executor = TaskRun;
 type Runner = 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
@@ -816,7 +817,7 @@ export class AgentConnection {
         'Content-Type': 'application/json',
         'Content-Encoding': 'gzip',
       },
-      body: gzipSync(JSON.stringify(result)),
+      body: await gzipAsync(JSON.stringify(result)),
       signal: AbortSignal.timeout(SESSION_UPLOAD_TIMEOUT_MS),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);

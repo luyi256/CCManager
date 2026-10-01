@@ -6,6 +6,7 @@ import { expectSessionDetailUpload } from './sessionDetailUploads.js';
 
 // Long transcripts can take minutes to upload over slow agent links.
 const SESSION_DETAIL_TIMEOUT_MS = 180_000;
+const SESSION_LIST_TIMEOUT_MS = 30_000;
 import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
@@ -286,12 +287,16 @@ class AgentPool {
     return true;
   }
 
-  /** Ask agent to list CLI sessions for a project path (10s timeout). */
+  /**
+   * Ask agent to list CLI sessions for a project path. On timeout the caller
+   * falls back to server-local sessions only, dropping every agent-side
+   * runner, so allow for large stores on a busy agent.
+   */
   requestSessions(agentId: string, projectPath: string, projectId?: string): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
     return new Promise((resolve, reject) => {
-      const timer = setTimeout(() => reject(new Error('Agent timeout')), 10000);
+      const timer = setTimeout(() => reject(new Error('Agent timeout')), SESSION_LIST_TIMEOUT_MS);
       agent.socket.emit('sessions:list', { projectPath, projectId }, (result: unknown) => {
         clearTimeout(timer);
         resolve(result);
