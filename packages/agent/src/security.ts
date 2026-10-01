@@ -21,54 +21,38 @@ export function validatePath(projectPath: string, config: AgentConfig): void {
   validatePathInternal(normalizedPath, config);
 }
 
+/** True when `target` is `base` or inside it; `base` may be the filesystem root. */
+function isWithin(target: string, base: string): boolean {
+  if (target === base) return true;
+  return target.startsWith(base.endsWith(path.sep) ? base : base + path.sep);
+}
+
+/**
+ * Base directory of an allowed-path entry. `/base/*` and `/base/**` also match
+ * the base itself, so a project rooted directly at the allowed base (e.g.
+ * project "/home/user/" with allow "/home/user/*") is accepted. `/*` means the
+ * whole filesystem, not the agent's working directory.
+ */
+function allowedBase(allowedPath: string): string {
+  const pattern = allowedPath.endsWith('/**')
+    ? allowedPath.slice(0, -3)
+    : allowedPath.endsWith('/*') ? allowedPath.slice(0, -2) : allowedPath;
+  return path.resolve(pattern || path.sep);
+}
+
 function validatePathInternal(normalizedPath: string, config: AgentConfig): void {
 
   // Check blocked paths first
   if (config.blockedPaths) {
     for (const blocked of config.blockedPaths) {
-      const normalizedBlocked = path.resolve(blocked);
-      if (
-        normalizedPath === normalizedBlocked ||
-        normalizedPath.startsWith(normalizedBlocked + path.sep)
-      ) {
+      if (isWithin(normalizedPath, path.resolve(blocked))) {
         throw new Error(`Path is blocked: ${normalizedPath}`);
       }
     }
   }
 
   // Check allowed paths
-  let allowed = false;
-  for (const allowedPath of config.allowedPaths) {
-    // Handle glob patterns like /home/user/projects/*
-    // A `/base/*` pattern also matches the base directory itself, so a project
-    // rooted directly at the allowed base (e.g. project "/home/user/" with allow
-    // "/home/user/*") is accepted instead of being rejected over a trailing slash.
-    if (allowedPath.endsWith('/*')) {
-      const basePath = path.resolve(allowedPath.slice(0, -2));
-      if (normalizedPath === basePath || normalizedPath.startsWith(basePath + path.sep)) {
-        allowed = true;
-        break;
-      }
-    } else if (allowedPath.endsWith('/**')) {
-      const basePath = path.resolve(allowedPath.slice(0, -3));
-      if (
-        normalizedPath === basePath ||
-        normalizedPath.startsWith(basePath + path.sep)
-      ) {
-        allowed = true;
-        break;
-      }
-    } else {
-      const normalizedAllowed = path.resolve(allowedPath);
-      if (
-        normalizedPath === normalizedAllowed ||
-        normalizedPath.startsWith(normalizedAllowed + path.sep)
-      ) {
-        allowed = true;
-        break;
-      }
-    }
-  }
+  const allowed = config.allowedPaths.some((allowedPath) => isWithin(normalizedPath, allowedBase(allowedPath)));
 
   if (!allowed) {
     throw new Error(

@@ -4,21 +4,16 @@ import type { Project } from '../types/index.js';
 // Server-side path validation against a list of allowed path patterns
 export function isPathAllowed(projectPath: string, allowedPaths: string[]): boolean {
   const normalized = path.posix.normalize(projectPath);
-  for (const allowed of allowedPaths) {
-    if (allowed.endsWith('/*')) {
-      const base = path.posix.normalize(allowed.slice(0, -2));
-      // `/base/*` also matches the base directory itself (parity with `/**`),
-      // so a project rooted at the allowed base is not rejected on a trailing slash.
-      if (normalized === base || normalized.startsWith(base + '/')) return true;
-    } else if (allowed.endsWith('/**')) {
-      const base = path.posix.normalize(allowed.slice(0, -3));
-      if (normalized === base || normalized.startsWith(base + '/')) return true;
-    } else {
-      const normalizedAllowed = path.posix.normalize(allowed);
-      if (normalized === normalizedAllowed || normalized.startsWith(normalizedAllowed + '/')) return true;
-    }
-  }
-  return false;
+  return allowedPaths.some((allowed) => {
+    // `/base/*` and `/base/**` also match the base directory itself, so a
+    // project rooted at the allowed base is not rejected on a trailing slash.
+    // `/*` is the whole filesystem.
+    const pattern = allowed.endsWith('/**')
+      ? allowed.slice(0, -3)
+      : allowed.endsWith('/*') ? allowed.slice(0, -2) : allowed;
+    const base = path.posix.normalize(pattern || '/');
+    return normalized === base || normalized.startsWith(base.endsWith('/') ? base : base + '/');
+  });
 }
 
 // Build effective allowedPaths to send to agent.
