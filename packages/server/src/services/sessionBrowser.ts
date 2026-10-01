@@ -370,15 +370,24 @@ function getLinkedTaskSummaries(projectId: string): Map<string, { taskId: number
 }
 
 /**
- * Merge sessions with the same firstPrompt into a single entry.
- * Uses the latest (by lastModified) session as representative.
+ * Claude-format CLIs start a new session file when a conversation is
+ * continued or compacted. Codex, tCodex, Cursor and Qwen resume in place, so
+ * two of their sessions with the same title are unrelated conversations.
+ */
+const CHAINED_SESSION_RUNNERS = new Set<SessionListItem['runner']>(['claude', 'claude-grok', 'tclaude']);
+
+/**
+ * Merge continued Claude-format sessions with the same title into a single
+ * entry. Uses the latest (by lastModified) session as representative.
  */
 export function mergeSessions(sessions: SessionListItem[]): SessionListItem[] {
   if (sessions.length <= 1) return sessions;
 
   const groups = new Map<string, SessionListItem[]>();
   for (const s of sessions) {
-    const key = `${s.runner}:${s.title || s.firstPrompt}`;
+    const key = CHAINED_SESSION_RUNNERS.has(s.runner)
+      ? `${s.runner}:${s.title || s.firstPrompt}`
+      : `${s.runner}:session:${s.sessionId}`;
     const group = groups.get(key);
     if (group) {
       group.push(s);

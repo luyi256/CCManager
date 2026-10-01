@@ -154,9 +154,9 @@ async function discoverCursorIdeSessions(
       if (!SESSION_ID_REGEX.test(sessionId)) continue;
       const transcriptPath = join(sessionDir, `${sessionId}.jsonl`);
       if (existsSync(transcriptPath)) {
-        const matchingIndex = names.findIndex((name) =>
-          basename(projectDir) === name || basename(projectDir).startsWith(`${name}-`)
-        );
+        // A prefix match is a different workspace (`home-luyi` vs
+        // `home-luyi-generation`), so only an exact name implies the cwd.
+        const matchingIndex = names.indexOf(basename(projectDir));
         transcripts.push({
           sessionId,
           transcriptPath,

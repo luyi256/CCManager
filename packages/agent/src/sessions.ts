@@ -327,7 +327,10 @@ function parseCodexMetadata(records: Array<Record<string, any>>, runner: 'codex'
   for (const obj of records) {
     const payload = obj.payload || {};
     if (obj.type === 'session_meta') {
-      sessionId ||= payload.session_id || payload.id || '';
+      // Subagent threads carry their parent's `session_id`; they are part of
+      // the parent conversation, not standalone sessions.
+      if (payload.thread_source === 'subagent' || payload.source?.subagent) return null;
+      sessionId ||= payload.id || payload.session_id || '';
       cwd ||= typeof payload.cwd === 'string' ? payload.cwd : undefined;
       gitBranch ||= typeof payload.git?.branch === 'string' ? payload.git.branch : undefined;
     } else if (obj.type === 'turn_context') {

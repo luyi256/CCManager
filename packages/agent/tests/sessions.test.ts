@@ -220,4 +220,38 @@ describe('multi-runner session browsing', () => {
       session.runner === 'tcodex' && session.firstPrompt === 'Aliased tCodex prompt'
     ));
   });
+
+  it('keeps a tCodex conversation separate from the subagent threads it spawned', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'ccm-session-subagent-'));
+    const projectPath = '/workspace/subagent-project';
+    const parentId = '01a00000-0000-7000-8000-000000000001';
+    const childId = '01a00000-0000-7000-8000-000000000002';
+    const thread = (id: string, extra: Record<string, unknown>, prompt: string, timestamp: string) => [
+      {
+        type: 'session_meta',
+        timestamp,
+        payload: { session_id: parentId, id, cwd: projectPath, ...extra },
+      },
+      { type: 'event_msg', timestamp, payload: { type: 'user_message', message: prompt } },
+    ];
+    await writeJsonl(join(homeDir, '.tcodex', 'sessions', '2026', '10', '01', 'rollout-parent.jsonl'),
+      thread(parentId, { source: 'cli' }, 'Parent prompt', '2026-10-01T10:00:00.000Z'));
+    await writeJsonl(join(homeDir, '.tcodex', 'sessions', '2026', '10', '01', 'rollout-child.jsonl'),
+      thread(childId, {
+        forked_from_id: parentId,
+        thread_source: 'subagent',
+        source: { subagent: { thread_spawn: { parent_thread_id: parentId, depth: 1 } } },
+      }, 'Subagent task', '2026-10-01T10:05:00.000Z'));
+
+    const sessions = await listSessions(projectPath, { homeDir });
+    assert.deepEqual(
+      sessions.map((session) => [session.sessionId, session.firstPrompt]),
+      [[parentId, 'Parent prompt']],
+    );
+    const detail = await getSessionDetail(projectPath, 'tcodex', parentId, undefined, { homeDir });
+    assert.deepEqual(
+      detail?.filter((entry) => entry.type === 'user_message').map((entry) => entry.content),
+      ['Parent prompt'],
+    );
+  });
 });

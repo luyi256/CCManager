@@ -77,4 +77,28 @@ describe('Cursor history browsing', () => {
     assert.equal(search.length, 1);
     assert.equal(search[0].sessionId, sessionId);
   });
+
+  it('does not attribute a subdirectory workspace to its parent project', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'ccm-cursor-parent-'));
+    const parentProject = join(homeDir, 'work');
+    const childProject = join(parentProject, 'generation');
+    await mkdir(childProject, { recursive: true });
+    const storeName = (path: string) => path.replace(/[^a-zA-Z0-9]/g, '-').replace(/^-+|-+$/g, '');
+    const sessionId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+    await writeJsonl(join(
+      homeDir,
+      '.cursor',
+      'projects',
+      storeName(childProject),
+      'agent-transcripts',
+      sessionId,
+      `${sessionId}.jsonl`,
+    ), [{ role: 'user', message: { content: [{ type: 'text', text: '<user_query>Child prompt</user_query>' }] } }]);
+
+    assert.deepEqual(await listCursorSessions(parentProject, false, { homeDir }), []);
+    assert.deepEqual(
+      (await listCursorSessions(childProject, false, { homeDir })).map((session) => session.sessionId),
+      [sessionId],
+    );
+  });
 });
