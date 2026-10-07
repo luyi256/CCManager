@@ -1,10 +1,10 @@
 import crypto from 'crypto';
 
 /**
- * Session transcripts can be several megabytes. Returning them through a
- * Socket.IO acknowledgement blocks the agent connection long enough on slow
- * links to miss heartbeats, so agents upload them over HTTP instead and the
- * pending request is resolved here.
+ * Session transcripts and file previews can be several megabytes. Returning
+ * them through a Socket.IO acknowledgement blocks the agent connection long
+ * enough on slow links to miss heartbeats, so agents upload them over HTTP
+ * instead and the pending request is resolved here.
  */
 interface PendingUpload {
   agentId: string;
@@ -13,7 +13,7 @@ interface PendingUpload {
 
 const pending = new Map<string, PendingUpload>();
 
-export function expectSessionDetailUpload(agentId: string): {
+export function expectAgentUpload(agentId: string): {
   id: string;
   promise: Promise<unknown>;
   cancel: () => void;
@@ -26,7 +26,7 @@ export function expectSessionDetailUpload(agentId: string): {
 }
 
 /** Returns false when no request is waiting for this upload from this agent. */
-export function completeSessionDetailUpload(id: string, agentId: string, body: unknown): boolean {
+export function completeAgentUpload(id: string, agentId: string, body: unknown): boolean {
   const entry = pending.get(id);
   if (!entry || entry.agentId !== agentId) return false;
   pending.delete(id);

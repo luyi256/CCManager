@@ -1,7 +1,7 @@
 import type { Request, RequestHandler, Response } from 'express';
 import { hashToken } from '../services/auth.js';
 import { getStagedDispatchImages } from '../services/dispatchImages.js';
-import { completeSessionDetailUpload } from '../services/sessionDetailUploads.js';
+import { completeAgentUpload } from '../services/agentUploads.js';
 import { findAgentTokenByHash } from '../services/storage.js';
 
 /** HTTP endpoints for agents, authenticated with agent tokens rather than device tokens. */
@@ -30,12 +30,12 @@ export const agentDispatchImagesHandler: RequestHandler = (req, res) => {
   res.json({ images });
 };
 
-/** Upload of a requested session transcript (gzip-encoded JSON). */
-export const agentSessionDetailUploadHandler: RequestHandler = (req, res) => {
+/** Upload of a requested result such as a session transcript or file preview (gzip-encoded JSON). */
+export const agentUploadHandler: RequestHandler = (req, res) => {
   const agentId = authenticateAgent(req, res);
   if (!agentId) return;
-  if (!completeSessionDetailUpload(String(req.params.id), agentId, req.body)) {
-    return res.status(404).json({ error: 'No pending session detail request' });
+  if (!completeAgentUpload(String(req.params.id), agentId, req.body)) {
+    return res.status(404).json({ error: 'No pending request for this upload' });
   }
   res.json({ ok: true });
 };

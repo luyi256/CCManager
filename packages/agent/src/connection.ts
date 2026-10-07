@@ -11,6 +11,15 @@ import { TaskRun, defaultAttachmentsRoot, defaultRunsRoot, type RunRecord } from
 import type { AgentConfig, TaskRequest, AgentInfo } from './types.js';
 import { listSessions, listActiveSessions, getSessionDetail, searchSessions } from './sessions.js';
 import { getCursorSessionDetail, listCursorSessions, searchCursorSessions } from './cursorSessions.js';
+import {
+  FileAccessError,
+  ProjectFileWatcher,
+  listDirectory,
+  readProjectFile,
+  syncProjectFiles,
+  type FileAccessRequest,
+  type SyncRequest,
+} from './projectFiles.js';
 
 const execAsync = promisify(exec);
 const gzipAsync = promisify(gzip);
@@ -42,6 +51,17 @@ const EVENT_BATCH_MAX_BYTES = 512 * 1024;
 const IMAGE_DOWNLOAD_ATTEMPTS = 3;
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 15 * 60 * 1000;
 const SESSION_UPLOAD_TIMEOUT_MS = 170_000;
+// Larger file previews go over HTTP so they cannot stall the socket.
+const INLINE_FILE_RESULT_BYTES = 256 * 1024;
+const FILE_UPLOAD_TIMEOUT_MS = 50_000;
+
+function fileErrorResult(error: unknown): { ok: false; error: string; code?: string } {
+  return {
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+    code: error instanceof FileAccessError ? error.code : undefined,
+  };
+}
 
 function normalizeManagerUrl(value: string): string {
   const parsed = new URL(value.trim());
@@ -183,9 +203,13 @@ export class AgentConnection {
   private worktreeManager = new WorktreeManager();
   // Monotonic sequence per task to detect superseded follow-ups
   private followUpSeq: Map<number, number> = new Map();
+  private fileWatcher: ProjectFileWatcher;
 
   constructor(config: AgentConfig) {
     this.config = config;
+    this.fileWatcher = new ProjectFileWatcher(config, (projectId, dirs) => {
+      this.emitVolatile('files:changed', { projectId, dirs });
+    });
     this.currentUrl = normalizeManagerUrl(config.managerUrl!);
     this.config.managerUrl = this.currentUrl;
     this.runsRoot = config.runsDir || defaultRunsRoot(config.agentId);
@@ -270,6 +294,8 @@ export class AgentConnection {
       console.log(`Disconnected from manager: ${reason}`);
       this.registered = false;
       this.stopHeartbeat();
+      // The server re-sends the watch sets its users still need after reconnecting.
+      this.fileWatcher.clearAll();
 
       if (this.shuttingDown) return;
 
@@ -399,7 +425,7 @@ export class AgentConnection {
       const callback = async (result: { ok: boolean; [key: string]: unknown }) => {
         if (!data.uploadId || !result.ok) return rawCallback(result);
         try {
-          await this.uploadSessionDetail(data.uploadId, result);
+          await this.uploadResult('session-detail', data.uploadId, result, SESSION_UPLOAD_TIMEOUT_MS);
           rawCallback({ ok: true, uploaded: true });
         } catch (error) {
           rawCallback({ ok: false, error: `Session upload failed: ${error instanceof Error ? error.message : String(error)}` });
@@ -452,6 +478,53 @@ export class AgentConnection {
         console.error(`[sessions] search error:`, error);
         callback({ ok: false, error: error instanceof Error ? error.message : String(error) });
       }
+    });
+
+    // Project file browsing — read-only, confined to the project directory.
+    socket.on('files:list', async (data: FileAccessRequest & { path?: string }, callback: (result: unknown) => void) => {
+      try {
+        callback({ ok: true, ...await listDirectory(this.config, data) });
+      } catch (error) {
+        callback(fileErrorResult(error));
+      }
+    });
+
+    socket.on('files:read', async (
+      data: FileAccessRequest & { path: string; etag?: string; uploadId?: string },
+      callback: (result: unknown) => void,
+    ) => {
+      let result: { ok: boolean; [key: string]: unknown };
+      try {
+        result = { ok: true, ...await readProjectFile(this.config, data) };
+      } catch (error) {
+        callback(fileErrorResult(error));
+        return;
+      }
+      const content = typeof result.content === 'string' ? result.content : '';
+      if (!data.uploadId || Buffer.byteLength(content) <= INLINE_FILE_RESULT_BYTES) {
+        callback(result);
+        return;
+      }
+      try {
+        await this.uploadResult('uploads', data.uploadId, result, FILE_UPLOAD_TIMEOUT_MS);
+        callback({ ok: true, uploaded: true });
+      } catch (error) {
+        callback({ ok: false, error: `File upload failed: ${error instanceof Error ? error.message : String(error)}` });
+      }
+    });
+
+    socket.on('files:sync', async (data: SyncRequest, callback: (result: unknown) => void) => {
+      try {
+        callback({ ok: true, ...await syncProjectFiles(this.config, data) });
+      } catch (error) {
+        callback(fileErrorResult(error));
+      }
+    });
+
+    socket.on('files:watch', (data: FileAccessRequest & { projectId: string; dirs: string[] }) => {
+      if (!data?.projectId) return;
+      void this.fileWatcher.set(data.projectId, data, Array.isArray(data.dirs) ? data.dirs : [])
+        .catch((error) => console.warn(`[files] watch failed for ${data.projectId}:`, error));
     });
 
     socket.on('models:list', async (data: { runner: Runner }, callback: (result: unknown) => void) => {
@@ -814,9 +887,9 @@ export class AgentConnection {
     }
   }
 
-  /** Upload a session transcript over HTTP so a large one cannot stall the socket. */
-  private async uploadSessionDetail(uploadId: string, result: unknown): Promise<void> {
-    const response = await fetch(`${this.currentUrl}/api/agent/session-detail/${encodeURIComponent(uploadId)}`, {
+  /** Upload a large request result over HTTP so it cannot stall the socket. */
+  private async uploadResult(endpoint: string, uploadId: string, result: unknown, timeoutMs: number): Promise<void> {
+    const response = await fetch(`${this.currentUrl}/api/agent/${endpoint}/${encodeURIComponent(uploadId)}`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${this.config.authToken}`,
@@ -824,7 +897,7 @@ export class AgentConnection {
         'Content-Encoding': 'gzip',
       },
       body: await gzipAsync(JSON.stringify(result)),
-      signal: AbortSignal.timeout(SESSION_UPLOAD_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
   }
@@ -964,6 +1037,7 @@ export class AgentConnection {
     // Runners are detached on purpose: stopping or upgrading the agent must
     // not stop their work. The next agent process re-attaches to them.
     this.stopRunPump();
+    this.fileWatcher.clearAll();
     this.socket?.removeAllListeners();
     this.socket?.disconnect();
     this.socket = null;

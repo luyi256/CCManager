@@ -15,10 +15,10 @@ function isRetryable(status: number): boolean {
   return status >= 500 && status < 600;
 }
 
-async function request<T>(url: string, options?: RequestInit): Promise<T> {
+async function request<T>(url: string, options?: RequestInit, maxRetries = MAX_RETRIES): Promise<T> {
   let lastError: Error | null = null;
 
-  for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
     if (attempt > 0) {
       const delay = INITIAL_RETRY_DELAY * Math.pow(2, attempt - 1);
       await sleep(delay);
@@ -43,7 +43,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
     } catch (fetchErr) {
       lastError = fetchErr instanceof Error ? fetchErr : new Error(String(fetchErr));
       // Network errors are retryable
-      if (attempt < MAX_RETRIES) continue;
+      if (attempt < maxRetries) continue;
       throw lastError;
     }
 
@@ -64,7 +64,7 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
       throw lastError;
     }
 
-    if (isRetryable(response.status) && attempt < MAX_RETRIES) {
+    if (isRetryable(response.status) && attempt < maxRetries) {
       continue;
     }
 
@@ -490,6 +490,63 @@ export async function adoptSession(
     method: 'POST',
     body: JSON.stringify({ relatedSessionIds, runner, model }),
   });
+}
+
+// Project files (read-only explorer). Listings and contents carry an etag;
+// sending it back lets the agent answer with a tiny "not modified" reply.
+export interface FileEntry {
+  name: string;
+  type: 'file' | 'dir';
+  symlink?: boolean;
+}
+
+export interface DirListing {
+  path: string;
+  etag: string;
+  entries: FileEntry[];
+  truncated?: boolean;
+}
+
+export type FileContent = {
+  path: string;
+  etag: string;
+  size: number;
+  mtime: string;
+} & (
+  | { kind: 'text'; content: string; truncated?: boolean }
+  | { kind: 'image'; content: string; mime: string }
+  | { kind: 'binary' }
+  | { kind: 'too_large' }
+);
+
+export interface FileSyncResult {
+  changed: DirListing[];
+  missing: string[];
+  file?: { path: string; changed: boolean; missing?: boolean };
+}
+
+export async function getDirListing(projectId: string, path: string): Promise<DirListing> {
+  return request(`/projects/${projectId}/files/list?${new URLSearchParams({ path }).toString()}`, undefined, 0);
+}
+
+export async function getFileContent(
+  projectId: string,
+  path: string,
+  etag?: string,
+): Promise<FileContent | { path: string; etag: string; notModified: true }> {
+  const params = new URLSearchParams({ path });
+  if (etag) params.set('etag', etag);
+  return request(`/projects/${projectId}/files/content?${params.toString()}`, undefined, 0);
+}
+
+export async function syncFiles(projectId: string, body: {
+  dirs: Array<{ path: string; etag?: string }>;
+  file?: { path: string; etag?: string };
+}): Promise<FileSyncResult> {
+  return request(`/projects/${projectId}/files/sync`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }, 0);
 }
 
 // Voice transcription

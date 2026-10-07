@@ -487,12 +487,68 @@ test('uploads session detail over HTTP with gzip and the agent token', async (t)
   const connection = new AgentConnection(config(server.url, tmpdir()));
   t.after(() => connection.disconnect());
   const payload = { ok: true, entries: [{ type: 'assistant', text: 'x'.repeat(100_000) }] };
-  await (connection as unknown as { uploadSessionDetail(id: string, result: unknown): Promise<void> })
-    .uploadSessionDetail('upload-1', payload);
+  await (connection as unknown as { uploadResult(endpoint: string, id: string, result: unknown, timeoutMs: number): Promise<void> })
+    .uploadResult('session-detail', 'upload-1', payload, 10_000);
 
   assert.equal(received.authorization, 'Bearer test-token');
   assert.equal(received.encoding, 'gzip');
   assert.deepEqual(received.body, payload);
+});
+
+test('lists project files over the socket and uploads large previews over HTTP', async (t) => {
+  const projectPath = mkdtempSync(path.join(tmpdir(), 'ccm-files-project-'));
+  t.after(() => rm(projectPath, { recursive: true, force: true }));
+  mkdirSync(path.join(projectPath, 'src'));
+  writeFileSync(path.join(projectPath, 'small.txt'), 'hi');
+  writeFileSync(path.join(projectPath, 'large.txt'), 'y'.repeat(400 * 1024));
+
+  let uploaded: { url?: string; body?: { ok: boolean; kind: string; content: string } } = {};
+  let registeredSocket: Socket | null = null;
+  const server = await createRunnerTestServer((socket) => {
+    registeredSocket = socket;
+  }, (request, response) => {
+    if (!request.url?.startsWith('/api/agent/uploads/') || request.method !== 'POST') return;
+    const chunks: Buffer[] = [];
+    request.on('data', (chunk: Buffer) => chunks.push(chunk));
+    request.on('end', () => {
+      uploaded = { url: request.url, body: JSON.parse(gunzipSync(Buffer.concat(chunks)).toString('utf8')) };
+      response.writeHead(200, { 'content-type': 'application/json' });
+      response.end('{"ok":true}');
+    });
+  });
+  t.after(() => closeSocketServer(server));
+
+  const connection = new AgentConnection({ ...config(server.url, tmpdir()), allowedPaths: [projectPath] });
+  t.after(() => connection.disconnect());
+  connection.connect();
+  await waitFor(() => registeredSocket !== null, 'agent did not register');
+  const socket = registeredSocket as unknown as Socket;
+
+  const listing = await socket.timeout(5000).emitWithAck('files:list', { projectPath, path: '' }) as {
+    ok: boolean;
+    entries: Array<{ name: string; type: string }>;
+  };
+  assert.equal(listing.ok, true);
+  assert.deepEqual(listing.entries.map((entry) => entry.name), ['src', 'large.txt', 'small.txt']);
+
+  const small = await socket.timeout(5000).emitWithAck('files:read', { projectPath, path: 'small.txt', uploadId: 'u-small' }) as {
+    ok: boolean;
+    content?: string;
+  };
+  assert.equal(small.content, 'hi');
+  assert.equal(uploaded.url, undefined);
+
+  const large = await socket.timeout(5000).emitWithAck('files:read', { projectPath, path: 'large.txt', uploadId: 'u-large' });
+  assert.deepEqual(large, { ok: true, uploaded: true });
+  assert.equal(uploaded.url, '/api/agent/uploads/u-large');
+  assert.equal(uploaded.body?.kind, 'text');
+  assert.equal(uploaded.body?.content.length, 400 * 1024);
+
+  const denied = await socket.timeout(5000).emitWithAck('files:read', { projectPath, path: '../escape.txt' }) as {
+    ok: boolean;
+    code?: string;
+  };
+  assert.deepEqual([denied.ok, denied.code], [false, 'denied']);
 });
 
 test('saves file attachments where the runner can read them', async (t) => {

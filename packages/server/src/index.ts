@@ -36,7 +36,8 @@ import agentsRouter from './routes/agents.js';
 import transcribeRouter from './routes/transcribe.js';
 import sessionsRouter from './routes/sessions.js';
 import authRouter from './routes/auth.js';
-import { agentDispatchImagesHandler, agentSessionDetailUploadHandler } from './routes/agentDispatch.js';
+import filesRouter from './routes/files.js';
+import { agentDispatchImagesHandler, agentUploadHandler } from './routes/agentDispatch.js';
 import { setupWebSocket } from './websocket/index.js';
 import { startWaitingTaskChecker, startAttachmentRetention } from './services/waitingTasks.js';
 import { agentPool } from './services/agentPool.js';
@@ -146,8 +147,10 @@ const apiAuthMiddleware: express.RequestHandler = (req, res, next) => {
 // Agents authenticate with their own tokens, not device tokens.
 app.get('/api/agent/dispatch-images/:id', agentDispatchImagesHandler);
 app.get('/ccm/api/agent/dispatch-images/:id', agentDispatchImagesHandler);
-app.post('/api/agent/session-detail/:id', agentSessionDetailUploadHandler);
-app.post('/ccm/api/agent/session-detail/:id', agentSessionDetailUploadHandler);
+app.post('/api/agent/session-detail/:id', agentUploadHandler);
+app.post('/ccm/api/agent/session-detail/:id', agentUploadHandler);
+app.post('/api/agent/uploads/:id', agentUploadHandler);
+app.post('/ccm/api/agent/uploads/:id', agentUploadHandler);
 
 app.use('/api', apiAuthMiddleware);
 app.use('/ccm/api', apiAuthMiddleware);
@@ -160,6 +163,7 @@ app.use('/api', tasksRouter);
 app.use('/api/settings', settingsRouter);
 app.use('/api/transcribe', transcribeRouter);
 app.use('/api', sessionsRouter);
+app.use('/api', filesRouter);
 app.use('/ccm/api/auth', authRouter);
 app.use('/ccm/api/projects', projectsRouter);
 app.use('/ccm/api/agents', agentsRouter);
@@ -167,6 +171,7 @@ app.use('/ccm/api', tasksRouter);
 app.use('/ccm/api/settings', settingsRouter);
 app.use('/ccm/api/transcribe', transcribeRouter);
 app.use('/ccm/api', sessionsRouter);
+app.use('/ccm/api', filesRouter);
 
 // Serve static files in production
 const webDistPath = process.env.STATIC_PATH || path.resolve(__dirname, '../../web/dist');

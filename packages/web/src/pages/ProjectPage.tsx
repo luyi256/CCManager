@@ -1,10 +1,12 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
 import { AnimatePresence } from 'framer-motion';
-import { Settings, RefreshCw, History, ArrowLeft } from 'lucide-react';
+import { Settings, RefreshCw, History, ArrowLeft, FolderTree } from 'lucide-react';
 import { Link } from 'react-router-dom';
+import clsx from 'clsx';
 import TaskInput from '../components/Task/TaskInput';
 import SessionBrowser from '../components/Session/SessionBrowser';
+import FileExplorer from '../components/Files/FileExplorer';
 import ProjectSettingsModal from '../components/Project/ProjectSettingsModal';
 import ConversationSidebar from '../components/Conversation/ConversationSidebar';
 import ConversationPanel from '../components/Conversation/ConversationPanel';
@@ -13,6 +15,8 @@ import { useTasks, useCreateTask } from '../hooks/useTasks';
 import { useActiveSessions } from '../hooks/useSessions';
 import type { Runner } from '../types';
 
+const FILES_OPEN_KEY = 'ccm_files_panel_open';
+
 export default function ProjectPage() {
   const { projectId } = useParams<{ projectId: string }>();
   const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
@@ -20,6 +24,10 @@ export default function ProjectPage() {
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [sessionBrowserOpen, setSessionBrowserOpen] = useState(false);
+  const [filesOpen, setFilesOpen] = useState(() => localStorage.getItem(FILES_OPEN_KEY) === '1');
+  useEffect(() => {
+    localStorage.setItem(FILES_OPEN_KEY, filesOpen ? '1' : '0');
+  }, [filesOpen]);
   const [initialSession, setInitialSession] = useState<{
     id: string;
     runner: Runner;
@@ -148,6 +156,15 @@ export default function ProjectPage() {
           </div>
           <div className="flex items-center gap-1 shrink-0">
             <button
+              onClick={() => setFilesOpen((value) => !value)}
+              className={clsx('btn btn-ghost p-2', filesOpen && 'bg-dark-700 text-dark-50')}
+              title="Files"
+              aria-label={filesOpen ? 'Hide project files' : 'Show project files'}
+              aria-pressed={filesOpen}
+            >
+              <FolderTree size={18} />
+            </button>
+            <button
               onClick={() => setSessionBrowserOpen(true)}
               className="btn btn-ghost p-2"
               title="CLI Sessions"
@@ -197,6 +214,15 @@ export default function ProjectPage() {
           </div>
         )}
       </main>
+
+      {filesOpen && (
+        <FileExplorer
+          key={project.id}
+          projectId={project.id}
+          projectPath={project.projectPath}
+          onClose={() => setFilesOpen(false)}
+        />
+      )}
 
       {/* Session Browser Drawer */}
       <AnimatePresence>

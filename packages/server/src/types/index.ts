@@ -221,6 +221,15 @@ export interface ServerToAgentEvents {
   'task:cancel': (data: { taskId: number }) => void;
   'task:merge': (data: { taskId: number; projectPath: string; branch: string; deleteBranch?: boolean }) => void;
   'task:cleanup-worktree': (data: { taskId: number; projectPath: string; branch: string }) => void;
+  'files:list': (data: { projectPath: string; allowedPaths?: string[]; path?: string }, ack: (result: unknown) => void) => void;
+  'files:read': (data: { projectPath: string; allowedPaths?: string[]; path: string; etag?: string; uploadId?: string }, ack: (result: unknown) => void) => void;
+  'files:sync': (data: {
+    projectPath: string;
+    allowedPaths?: string[];
+    dirs: Array<{ path: string; etag?: string }>;
+    file?: { path: string; etag?: string };
+  }, ack: (result: unknown) => void) => void;
+  'files:watch': (data: { projectId: string; projectPath: string; allowedPaths?: string[]; dirs: string[] }) => void;
 }
 
 export interface AgentToServerEvents {
@@ -255,9 +264,11 @@ export interface AgentToServerEvents {
   ) => void;
   'task:merge-result': (data: { taskId: number; success: boolean; mergeCommit?: string; conflicts?: string[]; error?: string }) => void;
   'task:worktree-cleaned': (data: { taskId: number; branch: string }) => void;
+  'files:changed': (data: { projectId: string; dirs: string[] }) => void;
 }
 
 export interface ServerToUserEvents {
+  'files:changed': (data: { projectId: string; dirs: string[] }) => void;
   'agent:list': (agents: Agent[]) => void;
   'agent:status': (data: { agentId: string; status: string }) => void;
   'task:output': (data: { taskId: number; text: string }) => void;
@@ -284,6 +295,8 @@ export interface UserToServerEvents {
   'task:answer': (data: { taskId: string; answer: string }) => void;
   'task:confirm_plan': (data: { taskId: string }) => void;
   'task:permission_response': (data: { taskId: string; requestId: string; response: 'approve' | 'deny' }) => void;
+  'files:watch': (data: { projectId: string; dirs: string[] }) => void;
+  'files:unwatch': () => void;
 }
 
 export interface StreamMessage {

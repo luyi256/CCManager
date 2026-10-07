@@ -9,6 +9,7 @@ import { buildTaskAllowedPaths } from '../services/pathValidation.js';
 import { hashToken } from '../services/auth.js';
 import { buildTaskStreamSnapshot, taskLogToStreamEvent } from '../services/taskStream.js';
 import { getTaskImagesForDispatch } from '../services/taskAttachments.js';
+import { FileWatchRegistry } from '../services/fileWatch.js';
 import type {
   ServerToAgentEvents,
   AgentToServerEvents,
@@ -25,6 +26,23 @@ let userNamespace: Namespace;
 // Track user subscriptions
 const userSubscriptions = new Map<string, Set<number>>();
 const taskStreamSequences = new Map<number, number>();
+const fileWatches = new FileWatchRegistry();
+
+/** Tell the project's agent which directories its viewers currently have expanded. */
+async function pushFileWatch(projectId: string): Promise<void> {
+  try {
+    const project = await getProject(projectId);
+    if (!project) return;
+    agentPool.setFileWatch(project.agentId, {
+      projectId,
+      projectPath: project.projectPath,
+      allowedPaths: buildTaskAllowedPaths(project),
+      dirs: fileWatches.dirsFor(projectId),
+    });
+  } catch (error) {
+    console.error(`Failed to update file watch for project ${projectId}:`, error);
+  }
+}
 
 function nextTaskStreamSequence(taskId: number): number {
   const next = (taskStreamSequences.get(taskId) || 0) + 1;
@@ -500,6 +518,8 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       agentPool.register(socket, info);
       // Broadcast updated agent list to users
       broadcastAgentList();
+      // The agent dropped its file watchers when it disconnected.
+      for (const projectId of fileWatches.projects()) void pushFileWatch(projectId);
 
       // Reconcile server state with what the agent actually did while the
       // connection was down. A disconnect alone never interrupts execution:
@@ -684,6 +704,16 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       }
     });
 
+    socket.on('files:changed', async (data: { projectId?: unknown; dirs?: unknown }) => {
+      if (typeof data?.projectId !== 'string' || !Array.isArray(data.dirs)) return;
+      const project = await getProject(data.projectId).catch(() => null);
+      if (!project || project.agentId !== socket.handshake.auth.agentId) return;
+      const dirs = data.dirs.filter((dir): dir is string => typeof dir === 'string');
+      for (const socketId of fileWatches.subscribers(data.projectId)) {
+        userNamespace.sockets.get(socketId)?.emit('files:changed', { projectId: data.projectId, dirs });
+      }
+    });
+
     socket.on('task:worktree-cleaned', async (data) => {
       try {
         const task = await getTaskById(data.taskId);
@@ -794,8 +824,21 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       }
     });
 
+    socket.on('files:watch', (data: { projectId?: unknown; dirs?: unknown }) => {
+      if (typeof data?.projectId !== 'string' || !Array.isArray(data.dirs)) return;
+      const dirs = data.dirs.filter((dir): dir is string => typeof dir === 'string');
+      for (const projectId of fileWatches.set(socket.id, data.projectId, dirs)) void pushFileWatch(projectId);
+    });
+
+    socket.on('files:unwatch', () => {
+      const projectId = fileWatches.remove(socket.id);
+      if (projectId) void pushFileWatch(projectId);
+    });
+
     socket.on('disconnect', () => {
       userSubscriptions.delete(socket.id);
+      const watchedProject = fileWatches.remove(socket.id);
+      if (watchedProject) void pushFileWatch(watchedProject);
       console.log('User disconnected:', socket.id);
     });
   });

@@ -2,11 +2,13 @@ import type { Socket, Namespace } from 'socket.io';
 import { db } from './database.js';
 import { validateRunnerSelection } from './runnerModels.js';
 import { INLINE_IMAGE_BYTES, imagesByteSize, stageDispatchImages } from './dispatchImages.js';
-import { expectSessionDetailUpload } from './sessionDetailUploads.js';
+import { expectAgentUpload } from './agentUploads.js';
 
 // Long transcripts can take minutes to upload over slow agent links.
 const SESSION_DETAIL_TIMEOUT_MS = 180_000;
 const SESSION_LIST_TIMEOUT_MS = 30_000;
+const FILE_REQUEST_TIMEOUT_MS = 15_000;
+const FILE_CONTENT_TIMEOUT_MS = 60_000;
 import type { Runner } from '../types/index.js';
 
 export interface ConnectedAgent {
@@ -355,7 +357,7 @@ class AgentPool {
   ): Promise<unknown> {
     const agent = this.agents.get(agentId);
     if (!agent) return Promise.reject(new Error('Agent not connected'));
-    const upload = expectSessionDetailUpload(agentId);
+    const upload = expectAgentUpload(agentId);
     return new Promise((resolve, reject) => {
       const finish = (result: unknown) => {
         clearTimeout(timer);
@@ -380,6 +382,48 @@ class AgentPool {
         finish(result);
       });
     });
+  }
+
+  /** Request/acknowledge round trip for small payloads (directory listings, sync). */
+  requestFiles(agentId: string, event: 'files:list' | 'files:sync', payload: object): Promise<unknown> {
+    const agent = this.agents.get(agentId);
+    if (!agent) return Promise.reject(new Error('Agent not connected'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Agent timeout')), FILE_REQUEST_TIMEOUT_MS);
+      agent.socket.emit(event, payload, (result: unknown) => {
+        clearTimeout(timer);
+        resolve(result);
+      });
+    });
+  }
+
+  /** Read a file preview; contents above the agent's inline limit arrive over HTTP. */
+  requestFileContent(agentId: string, payload: object): Promise<unknown> {
+    const agent = this.agents.get(agentId);
+    if (!agent) return Promise.reject(new Error('Agent not connected'));
+    const upload = expectAgentUpload(agentId);
+    return new Promise((resolve, reject) => {
+      const finish = (result: unknown) => {
+        clearTimeout(timer);
+        upload.cancel();
+        resolve(result);
+      };
+      const timer = setTimeout(() => {
+        upload.cancel();
+        reject(new Error('Agent timeout'));
+      }, FILE_CONTENT_TIMEOUT_MS);
+      void upload.promise.then(finish);
+      agent.socket.emit('files:read', { ...payload, uploadId: upload.id }, (result: unknown) => {
+        const marker = result as { ok?: boolean; uploaded?: boolean } | null;
+        if (marker?.ok && marker.uploaded) return;
+        finish(result);
+      });
+    });
+  }
+
+  /** Replace the set of directories the agent watches for one project (empty stops watching). */
+  setFileWatch(agentId: string, payload: { projectId: string; projectPath: string; allowedPaths?: string[]; dirs: string[] }): void {
+    this.agents.get(agentId)?.socket.emit('files:watch', payload);
   }
 
   private startHeartbeatMonitor(): void {

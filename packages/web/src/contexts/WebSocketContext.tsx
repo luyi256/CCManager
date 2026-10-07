@@ -23,6 +23,9 @@ interface WebSocketContextType {
   sendAnswer: (taskId: string, answer: string) => void;
   confirmPlan: (taskId: string) => void;
   respondPermission: (taskId: string, requestId: string, response: 'approve' | 'deny') => void;
+  /** Replace the directories the agent should watch for this browser tab. */
+  watchFiles: (projectId: string, dirs: string[]) => void;
+  unwatchFiles: () => void;
 }
 
 const WebSocketContext = createContext<WebSocketContextType | null>(null);
@@ -126,6 +129,11 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
       });
     }
 
+    socket.on('files:changed', (data: { projectId: string; dirs: string[] }) => {
+      const msg: WebSocketMessage = { ...data, type: 'files:changed' };
+      handlersRef.current.forEach((handler) => handler(msg));
+    });
+
     return () => {
       socket.disconnect();
     };
@@ -160,6 +168,14 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
     socketRef.current?.emit('task:permission_response', { taskId, requestId, response });
   }, []);
 
+  const watchFiles = useCallback((projectId: string, dirs: string[]) => {
+    socketRef.current?.emit('files:watch', { projectId, dirs });
+  }, []);
+
+  const unwatchFiles = useCallback(() => {
+    socketRef.current?.emit('files:unwatch');
+  }, []);
+
   return (
     <WebSocketContext.Provider
       value={{
@@ -172,6 +188,8 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
         sendAnswer,
         confirmPlan,
         respondPermission,
+        watchFiles,
+        unwatchFiles,
       }}
     >
       {children}

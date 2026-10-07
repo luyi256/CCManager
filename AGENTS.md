@@ -58,6 +58,7 @@ packages/
 │   │   ├── projects.ts       # Project CRUD
 │   │   ├── tasks.ts          # Task CRUD, cancel, retry, continue, plan review
 │   │   ├── settings.ts       # Global settings, auth validation
+│   │   ├── files.ts          # Read-only project file explorer (list, content, batched sync)
 │   │   └── transcribe.ts     # Voice-to-text
 │   ├── services/
 │   │   ├── database.ts       # SQLite connection and schema
@@ -77,6 +78,7 @@ packages/
 │   │   ├── Layout/AppLayout.tsx         # Top nav, connection status
 │   │   ├── Project/                     # AddProjectModal, ProjectCard, ProjectList
 │   │   ├── Task/                        # TaskBoard, TaskCard, TaskColumn, TaskDetail, TaskInput
+│   │   ├── Files/                       # FileExplorer (VS Code-style tree), FileViewer
 │   │   └── common/                      # ErrorBoundary, Modal, SafeMarkdown, StatusBadge, VoiceInput
 │   ├── contexts/WebSocketContext.tsx     # Socket.IO provider
 │   ├── hooks/                           # useProjects, useTasks, useTaskStream, useVoiceInput
@@ -91,6 +93,7 @@ packages/
 │   ├── executor.ts           # spawn claude CLI (stream-json, 4-hour timeout)
 │   ├── docker.ts             # Docker container execution (mount /workspace, credential injection, HOME=/home/ccm)
 │   ├── security.ts           # Path validation (incl. symlink check), env var whitelist
+│   ├── projectFiles.ts       # Project file listing/preview/sync confined to the project, fs.watch on expanded dirs
 │   └── types.ts              # AgentConfig, TaskRequest, DockerConfig, TaskResult types
 ```
 
@@ -232,6 +235,18 @@ Example: `packages/agent/agent.config.example.json`
 | GET/PUT | `/api/settings` | Global settings |
 | POST | `/api/settings/validate-auth` | Validate auth token |
 | POST | `/api/transcribe` | Voice-to-text (Whisper) |
+| GET | `/api/projects/:pid/files/list?path=` | List one project directory (lazy tree) |
+| GET | `/api/projects/:pid/files/content?path=&etag=` | File preview; matching etag returns `notModified` |
+| POST | `/api/projects/:pid/files/sync` | Revalidate expanded dirs + open file by etag in one request |
+
+### Project File Explorer
+
+The explorer is read-only and served by the project's agent. Directories load
+lazily; listings and files carry etags so revalidation returns only changes.
+The agent watches expanded directories (`fs.watch`, non-recursive) and pushes
+`files:changed` hints that trigger one batched `/files/sync`; a 10-second sync
+covers filesystems without change events. File previews above 256 KB are
+uploaded over HTTP (`/api/agent/uploads/:id`) instead of the socket.
 
 ## Task States
 
