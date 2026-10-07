@@ -623,6 +623,14 @@ export function setupWebSocket(server: HttpServer, path = '/socket.io'): Server 
       }
     });
 
+    // Model catalogs re-probed after registration (e.g. a runner whose
+    // boot-time probe failed transiently).
+    socket.on('capabilities', (capabilities: unknown) => {
+      const agentId = socket.handshake.auth.agentId;
+      if (!Array.isArray(capabilities) || !capabilities.every((item) => typeof item === 'string')) return;
+      if (agentPool.updateCapabilities(agentId, socket, capabilities)) broadcastAgentList();
+    });
+
     for (const [event, handler] of Object.entries(agentTaskEventHandlers)) {
       socket.on(event, async (data: unknown, ack?: () => void) => {
         try {

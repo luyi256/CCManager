@@ -499,6 +499,12 @@ export class AgentConnection {
     return Array.from(reported.values());
   }
 
+  /** Advertise capabilities that changed after registration. */
+  updateCapabilities(capabilities: string[]): void {
+    this.config.capabilities = capabilities;
+    if (this.registered) this.socket?.emit('capabilities', capabilities);
+  }
+
   private register(socket: Socket): void {
     const info: AgentInfo = {
       agentId: this.config.agentId,

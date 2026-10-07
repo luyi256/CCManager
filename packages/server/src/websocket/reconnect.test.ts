@@ -23,6 +23,7 @@ const { setupWebSocket } = await import('./index.js');
 interface TestClient {
   on(event: string, listener: (...args: any[]) => void): void;
   once(event: string, listener: (...args: any[]) => void): void;
+  emit(event: string, ...args: unknown[]): void;
   timeout(ms: number): { emitWithAck(event: string, ...args: unknown[]): Promise<unknown> };
   disconnect(): void;
 }
@@ -159,4 +160,12 @@ test('agent reconnect syncs state silently and only recovers tasks the agent los
   });
   const detail = await agentPool.requestSessionDetail('a1', '/tmp/p1', 'claude', 'session-x');
   assert.deepEqual(detail, { ok: true, entries: [{ type: 'user', text: 'hi' }] });
+
+  // A catalog re-probed after registration replaces the advertised one.
+  const tcodexCatalog = 'models:tcodex:{"installed":true,"models":["gpt-6-astra"]}';
+  client.emit('capabilities', [tcodexCatalog]);
+  await delay(200);
+  assert.deepEqual(agentPool.getAgent('a1')?.capabilities, [tcodexCatalog]);
+  const stored = db.prepare(`SELECT capabilities FROM agents WHERE id = 'a1'`).get() as { capabilities: string };
+  assert.deepEqual(JSON.parse(stored.capabilities), [tcodexCatalog]);
 });

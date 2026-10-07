@@ -2,7 +2,10 @@ import { createContext, useContext, useEffect, useRef, useState, useCallback, Re
 import { useQueryClient } from '@tanstack/react-query';
 import { io, Socket } from 'socket.io-client';
 import type { Agent } from '../types';
-import { getApiToken } from '../services/auth';
+import { clearApiToken, getApiToken } from '../services/auth';
+
+/** Messages from the server's user-namespace auth middleware. */
+const AUTH_ERRORS = new Set(['Authentication required', 'Invalid token']);
 
 interface WebSocketMessage {
   type: string;
@@ -66,6 +69,12 @@ export function WebSocketProvider({ children }: { children: ReactNode }) {
 
     socket.on('connect_error', (error) => {
       console.warn('Socket.IO connection error:', error.message);
+      // The server rejected the device token itself; retrying cannot succeed.
+      if (AUTH_ERRORS.has(error.message)) {
+        socket.disconnect();
+        clearApiToken();
+        window.location.reload();
+      }
     });
 
     // Agent updates

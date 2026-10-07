@@ -10,6 +10,7 @@ import { discoverRunnerModelCapabilities } from './runnerModels.js';
 import type { AgentConfig } from './types.js';
 
 const CONFIG_PATH = path.join(process.env.HOME || '', '.ccm-agent.json');
+const MODEL_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
 const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 
 // The production entrypoint lives in packages/agent/dist while the shared
@@ -223,6 +224,29 @@ async function main(): Promise<void> {
 
   // Connect
   connection.connect();
+
+  // A runner whose boot-time probe failed transiently would otherwise
+  // advertise an empty catalog until the agent restarts. Successful probes
+  // are cached, so this only re-runs failed or expired ones.
+  let refreshingModels = false;
+  setInterval(async () => {
+    if (refreshingModels) return;
+    refreshingModels = true;
+    try {
+      const capabilities = [
+        ...configuredCapabilities.filter((capability) => !capability.startsWith('models:')),
+        ...await discoverRunnerModelCapabilities(),
+      ];
+      if (JSON.stringify(capabilities) !== JSON.stringify(config.capabilities)) {
+        console.log('[models] Runner model catalogs changed; updating manager');
+        connection.updateCapabilities(capabilities);
+      }
+    } catch (error) {
+      console.warn('[models] Model refresh failed:', error instanceof Error ? error.message : error);
+    } finally {
+      refreshingModels = false;
+    }
+  }, MODEL_REFRESH_INTERVAL_MS);
 
   // Keep alive
   await new Promise(() => {});

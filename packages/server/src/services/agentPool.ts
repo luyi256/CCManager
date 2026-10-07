@@ -73,6 +73,16 @@ class AgentPool {
     console.log(`Agent registered: ${info.agentName} (${info.agentId})`);
   }
 
+  /** Returns false when the socket is not the agent's current connection. */
+  updateCapabilities(agentId: string, socket: Socket, capabilities: string[]): boolean {
+    const agent = this.agents.get(agentId);
+    if (!agent || agent.socket !== socket) return false;
+    agent.capabilities = capabilities;
+    db.prepare('UPDATE agents SET capabilities = ? WHERE id = ?').run(JSON.stringify(capabilities), agentId);
+    console.log(`Agent capabilities updated: ${agent.agentName} (${agentId})`);
+    return true;
+  }
+
   unregister(agentId: string, socket?: Socket): void {
     const agent = this.agents.get(agentId);
     if (socket && agent?.socket !== socket) return;
