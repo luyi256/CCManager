@@ -5,7 +5,7 @@
 set -euo pipefail
 
 # ── 配置 ──────────────────────────────────────────────────
-CCM_DIR="/home/luyi/CCManager"
+CCM_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 AGENT_CONFIG="/home/luyi/.ccm-agent.json"
 AGENT_LOG="/tmp/ccm-agent.log"
 HEARTBEAT_FILE="/tmp/ccm-agent-heartbeat.json"
@@ -309,7 +309,7 @@ usage() {
   $(basename "$0") status       # 只看状态
 
 配合 crontab（以 luyi 用户）:
-  */2 * * * * /home/luyi/CCManager/ccm-guardian.sh >> /tmp/ccm-guardian.log 2>&1
+  */2 * * * * $CCM_DIR/ccm-guardian.sh >> /tmp/ccm-guardian.log 2>&1
 EOF
 }
 
