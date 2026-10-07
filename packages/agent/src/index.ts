@@ -6,7 +6,8 @@ import readline from 'readline';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { AgentConnection } from './connection.js';
-import { discoverRunnerModelCapabilities } from './runnerModels.js';
+import { discoverRunnerModelCapabilities, refreshFailedRunnerModels } from './runnerModels.js';
+import { scrubParentSessionEnv } from './runnerEnv.js';
 import type { AgentConfig } from './types.js';
 
 const CONFIG_PATH = path.join(process.env.HOME || '', '.ccm-agent.json');
@@ -17,6 +18,10 @@ const PACKAGE_DIR = path.dirname(fileURLToPath(import.meta.url));
 // deployment environment lives at the repository root.
 dotenv.config({ path: path.resolve(PACKAGE_DIR, '../../../.env'), quiet: true });
 dotenv.config({ path: path.resolve(PACKAGE_DIR, '../.env'), quiet: true });
+const scrubbedEnv = scrubParentSessionEnv();
+if (scrubbedEnv.length > 0) {
+  console.log(`Ignoring inherited coding-session variables: ${scrubbedEnv.join(', ')}`);
+}
 if (!process.env.CURSOR_API_KEY && process.env.CURSOR_API) {
   process.env.CURSOR_API_KEY = process.env.CURSOR_API;
 }
@@ -226,20 +231,20 @@ async function main(): Promise<void> {
   connection.connect();
 
   // A runner whose boot-time probe failed transiently would otherwise
-  // advertise an empty catalog until the agent restarts. Successful probes
-  // are cached, so this only re-runs failed or expired ones.
+  // advertise an empty catalog until the agent restarts. Only failed runners
+  // are re-probed; when none failed this does nothing.
   let refreshingModels = false;
   setInterval(async () => {
     if (refreshingModels) return;
     refreshingModels = true;
     try {
-      const capabilities = [
-        ...configuredCapabilities.filter((capability) => !capability.startsWith('models:')),
-        ...await discoverRunnerModelCapabilities(),
-      ];
-      if (JSON.stringify(capabilities) !== JSON.stringify(config.capabilities)) {
+      const refreshed = await refreshFailedRunnerModels();
+      if (refreshed) {
         console.log('[models] Runner model catalogs changed; updating manager');
-        connection.updateCapabilities(capabilities);
+        connection.updateCapabilities([
+          ...configuredCapabilities.filter((capability) => !capability.startsWith('models:')),
+          ...refreshed,
+        ]);
       }
     } catch (error) {
       console.warn('[models] Model refresh failed:', error instanceof Error ? error.message : error);

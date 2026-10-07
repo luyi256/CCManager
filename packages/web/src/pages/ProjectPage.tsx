@@ -174,6 +174,10 @@ export default function ProjectPage() {
             task={selectedTask}
             agentId={project.agentId}
             onBack={() => setMobileSidebarOpen(true)}
+            onOpenTask={(taskId) => {
+              setSelectedTaskId(taskId);
+              setIsComposing(false);
+            }}
           />
         ) : (
           <div className="flex-1 overflow-y-auto px-4 py-6">

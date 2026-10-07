@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { codexEnv } from './runnerEnv.js';
 import type { TaskRequest } from './types.js';
 
 // Default timeout: 4 hours (in milliseconds)
@@ -75,7 +76,7 @@ export class CodexExecutor extends EventEmitter {
 
   private async runCodex(args: string[], cwd: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const env = { ...process.env };
+      const env = codexEnv(this.command === 'tcodex' ? 'tcodex' : 'codex');
 
       this.process = spawn(this.command, args, {
         cwd,

@@ -19,9 +19,10 @@ import StatusBadge from '../common/StatusBadge';
 import ImageThumbnail from '../common/ImageThumbnail';
 import ErrorBoundary from '../common/ErrorBoundary';
 import VoiceInput from '../common/VoiceInput';
-import ModelSwitcher from './ModelSwitcher';
+import ModelSwitcher, { runnerLabel } from './ModelSwitcher';
 import { useTaskStream } from '../../hooks/useTaskStream';
-import { useCancelTask, useRetryTask, useContinueTask, useTaskLogs, useTask, useFlushFollowUps, useDiscardFollowUps, useTaskFollowUps } from '../../hooks/useTasks';
+import { useCancelTask, useRetryTask, useContinueTask, useHandoffTask, useTaskLogs, useTask, useFlushFollowUps, useDiscardFollowUps, useTaskFollowUps } from '../../hooks/useTasks';
+import { splitHandoffPrompt } from '../../utils/handoff';
 import { mergeTask, cleanupWorktree } from '../../services/api';
 import type { Runner, Task } from '../../types';
 import {
@@ -63,9 +64,10 @@ interface ConversationPanelProps {
   task: Task;
   agentId?: string;
   onBack?: () => void;
+  onOpenTask?: (taskId: number) => void;
 }
 
-export default function ConversationPanel({ task: initialTask, agentId, onBack }: ConversationPanelProps) {
+export default function ConversationPanel({ task: initialTask, agentId, onBack, onOpenTask }: ConversationPanelProps) {
   const [autoScroll, setAutoScroll] = useState(true);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   const scrollRafRef = useRef<number>(0);
@@ -108,6 +110,8 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
   const cancelTask = useCancelTask();
   const retryTask = useRetryTask();
   const continueTask = useContinueTask();
+  const handoffTask = useHandoffTask();
+  const isSending = continueTask.isPending || handoffTask.isPending;
   const flushFollowUps = useFlushFollowUps();
   const discardFollowUps = useDiscardFollowUps();
   const { data: followUps } = useTaskFollowUps(task.id, canSendFollowUp);
@@ -147,6 +151,10 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     sessionRunner &&
     ['completed', 'completed_with_warnings', 'failed', 'cancelled'].includes(task.status)
   );
+  // Another agent cannot resume this session, so it continues in a new task.
+  const handoffRunner = runnerLocked && sessionRunner && followUpRunner !== sessionRunner
+    ? followUpRunner
+    : undefined;
 
   useEffect(() => {
     setFollowUpRunner(runnerLocked && sessionRunner ? sessionRunner : task.runner || 'claude');
@@ -259,11 +267,14 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
     const items: TimelineItem[] = [];
     const savedUserMessages = new Set<string>();
 
+    const handoff = splitHandoffPrompt(task.prompt);
     items.push({
       id: 'initial-prompt',
       type: 'user_message',
       timestamp: new Date(task.createdAt).getTime(),
-      content: task.prompt,
+      content: handoff.sourceTaskId
+        ? `${handoff.message}\n\n↪ Continued from task #${handoff.sourceTaskId}; its conversation was sent as context.`
+        : task.prompt,
       attachments: attachments?.initial,
     });
 
@@ -720,7 +731,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                 onSubmit={async (e) => {
                   e.preventDefault();
                   const prompt = continuePrompt.trim();
-                  if (continueTask.isPending) return;
+                  if (isSending) return;
                   let readyImages: PendingAttachment[];
                   try {
                     readyImages = followUpImageReadPromiseRef.current
@@ -733,6 +744,28 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                   const effectivePrompt = prompt ||
                     defaultAttachmentPrompt(readyImages);
                   const imageBase64s = readyImages.length > 0 ? readyImages.map(img => img.dataUrl) : undefined;
+                  const clearInput = () => {
+                    setContinuePrompt('');
+                    followUpImagesRef.current = [];
+                    setFollowUpImages([]);
+                    if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
+                  };
+                  if (handoffRunner) {
+                    handoffTask.mutate({
+                      taskId: task.id,
+                      prompt: effectivePrompt,
+                      images: imageBase64s,
+                      runner: handoffRunner,
+                      model: followUpModel,
+                      reasoningEffort: followUpReasoningEffort || undefined,
+                    }, {
+                      onSuccess: (newTask) => {
+                        clearInput();
+                        onOpenTask?.(newTask.id);
+                      },
+                    });
+                    return;
+                  }
                   const optimistic = { content: effectivePrompt, timestamp: Date.now() };
                   setSentMessages(prev => [...prev, optimistic]);
                   continueTask.mutate({
@@ -743,12 +776,7 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     model: followUpModel,
                     reasoningEffort: followUpReasoningEffort || undefined,
                   }, {
-                    onSuccess: () => {
-                      setContinuePrompt('');
-                      followUpImagesRef.current = [];
-                      setFollowUpImages([]);
-                      if (followUpTextareaRef.current) followUpTextareaRef.current.style.height = 'auto';
-                    },
+                    onSuccess: clearInput,
                     onError: () => {
                       setSentMessages((prev) => prev.filter((message) => message !== optimistic));
                     },
@@ -798,7 +826,25 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                     </div>
                   )
                 )}
-                <div className="relative bg-dark-800 border border-dark-600 rounded-lg focus-within:border-primary-500">
+                {handoffRunner && sessionRunner && (
+                  <div className="mb-1.5 px-2 py-1.5 rounded-md bg-violet-500/10 border border-violet-500/30 flex items-start gap-2">
+                    <p className="flex-1 text-xs text-violet-200">
+                      Sends to a new {runnerLabel(handoffRunner)} task with this conversation as context.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFollowUpRunner(sessionRunner);
+                        setFollowUpModel(task.model || '');
+                        setFollowUpReasoningEffort(task.reasoningEffort || '');
+                      }}
+                      className="text-xs text-violet-300 hover:text-violet-100 underline whitespace-nowrap"
+                    >
+                      Stay on {runnerLabel(sessionRunner)}
+                    </button>
+                  </div>
+                )}
+                <div className="bg-dark-800 border border-dark-600 rounded-lg focus-within:border-primary-500">
                   <textarea
                     ref={followUpTextareaRef}
                     value={continuePrompt}
@@ -810,41 +856,51 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
                         e.currentTarget.form?.requestSubmit();
                       }
                     }}
-                    placeholder={queuedCount > 0 ? "Add another message..." : "Follow-up message..."}
-                    disabled={continueTask.isPending || isReadingImages}
+                    placeholder={
+                      handoffRunner
+                        ? `Message for the new ${runnerLabel(handoffRunner)} task...`
+                        : queuedCount > 0 ? "Add another message..." : "Follow-up message..."
+                    }
+                    disabled={isSending || isReadingImages}
                     rows={1}
-                    className="w-full bg-transparent px-3 py-2 pr-28 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-hidden max-h-40"
+                    className="block w-full bg-transparent px-3 pt-2 pb-1 text-sm leading-normal text-dark-200 placeholder-dark-500 focus:outline-none resize-none overflow-y-auto max-h-40"
                   />
-                  <div className="absolute right-2 bottom-1.5 flex items-center gap-1">
-                    <ModelSwitcher
-                      selectedRunner={followUpRunner}
-                      selectedModel={followUpModel}
-                      selectedEffort={followUpReasoningEffort}
-                      onRunnerChange={setFollowUpRunner}
-                      onModelChange={setFollowUpModel}
-                      onEffortChange={setFollowUpReasoningEffort}
-                      agentId={agentId}
-                      compact
-                      lockRunner={runnerLocked}
-                    />
-                    <input ref={followUpFileInputRef} type="file" multiple className="hidden" onChange={handleFollowUpFileSelect} />
-                    <button
-                      type="button"
-                      onClick={() => followUpFileInputRef.current?.click()}
-                      disabled={continueTask.isPending || isReadingImages}
-                      className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
-                      title="Attach files"
-                    >
-                      <Paperclip size={14} />
-                    </button>
-                    <VoiceInput compact onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))} />
-                    <button
-                      type="submit"
-                      disabled={continueTask.isPending || isReadingImages || (!continuePrompt.trim() && followUpImages.length === 0)}
-                      className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
-                    >
-                      <Send size={16} />
-                    </button>
+                  <div className="flex items-center justify-between gap-2 px-1.5 pb-1.5">
+                    <div className="min-w-0">
+                      <ModelSwitcher
+                        selectedRunner={followUpRunner}
+                        selectedModel={followUpModel}
+                        selectedEffort={followUpReasoningEffort}
+                        onRunnerChange={setFollowUpRunner}
+                        onModelChange={setFollowUpModel}
+                        onEffortChange={setFollowUpReasoningEffort}
+                        agentId={agentId}
+                        compact
+                        menuAlign="left"
+                        sessionRunner={runnerLocked ? sessionRunner : undefined}
+                      />
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <input ref={followUpFileInputRef} type="file" multiple className="hidden" onChange={handleFollowUpFileSelect} />
+                      <button
+                        type="button"
+                        onClick={() => followUpFileInputRef.current?.click()}
+                        disabled={isSending || isReadingImages}
+                        className="p-1 rounded-md text-dark-400 hover:text-dark-200 disabled:text-dark-600 transition-colors"
+                        title="Attach files"
+                      >
+                        <Paperclip size={14} />
+                      </button>
+                      <VoiceInput compact onTranscription={(text) => setContinuePrompt((prev) => (prev ? `${prev} ${text}` : text))} />
+                      <button
+                        type="submit"
+                        disabled={isSending || isReadingImages || (!continuePrompt.trim() && followUpImages.length === 0)}
+                        className="p-1.5 rounded-md text-dark-400 hover:text-primary-400 disabled:text-dark-600 disabled:cursor-not-allowed transition-colors"
+                        title={handoffRunner ? `Start a new ${runnerLabel(handoffRunner)} task` : 'Send'}
+                      >
+                        <Send size={16} />
+                      </button>
+                    </div>
                   </div>
                 </div>
                 {followUpImages.length > 0 && (
@@ -869,6 +925,11 @@ export default function ConversationPanel({ task: initialTask, agentId, onBack }
               {continueTask.isError && (
                 <p className="text-red-400 text-xs mt-2" role="alert">
                   {continueTask.error instanceof Error ? continueTask.error.message : 'Failed to send follow-up'}
+                </p>
+              )}
+              {handoffTask.isError && (
+                <p className="text-red-400 text-xs mt-2" role="alert">
+                  {handoffTask.error instanceof Error ? handoffTask.error.message : 'Failed to start the new task'}
                 </p>
               )}
             </div>

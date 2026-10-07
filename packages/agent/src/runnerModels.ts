@@ -3,6 +3,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { promisify } from 'util';
+import { codexEnv, tcodexHome } from './runnerEnv.js';
 
 export type Runner = 'claude' | 'claude-grok' | 'codex' | 'cursor' | 'qwen' | 'tclaude' | 'tcodex';
 
@@ -125,7 +126,7 @@ async function runCli(
   const { stdout, stderr } = await execFileAsync(RUNNER_COMMANDS[runner], args, {
     timeout,
     maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env },
+    env: runner === 'codex' || runner === 'tcodex' ? codexEnv(runner) : { ...process.env },
   });
   return { stdout, stderr };
 }
@@ -197,7 +198,7 @@ function readCodexConfig(runner: 'codex' | 'tcodex'): {
   modelProvider?: string;
 } {
   const configDir = runner === 'tcodex'
-    ? process.env.TCODEX_HOME || path.join(os.homedir(), '.tcodex')
+    ? tcodexHome()
     : path.join(os.homedir(), '.codex');
   try {
     const raw = fs.readFileSync(path.join(configDir, 'config.toml'), 'utf8');
@@ -522,25 +523,55 @@ async function probeRunner(runner: Runner): Promise<ProbeOutcome> {
   return { kind: 'transient', message: 'Model probe exhausted retries' };
 }
 
-export async function discoverRunnerModelCapabilities(): Promise<string[]> {
-  const runners = Object.keys(RUNNER_COMMANDS) as Runner[];
-  let dirty = false;
-  const entries = await Promise.all(runners.map(async (runner) => {
-    const cached = capabilityCache.get(runner);
-    if (cached && cached.expiresAt > Date.now()) return cached.capability;
+const ALL_RUNNERS = Object.keys(RUNNER_COMMANDS) as Runner[];
+const advertisedCapabilities = new Map<Runner, string>();
+/** Runners whose last probe failed transiently and advertise an empty catalog. */
+const failedRunners = new Set<Runner>();
 
-    const outcome = await probeRunner(runner);
-    const capability = `models:${runner}:${JSON.stringify(buildRunnerCatalog(runner, outcome))}`;
-    const ttl = capabilityCacheTtl(outcome);
-    if (ttl === null) {
-      // Never leave a stale negative behind for the next process to load.
-      if (capabilityCache.delete(runner)) dirty = true;
-    } else {
-      capabilityCache.set(runner, { expiresAt: Date.now() + ttl, capability });
-      dirty = true;
+/** Probes one runner and records the result; returns true if the cache changed. */
+async function probeAndRecord(runner: Runner): Promise<boolean> {
+  const outcome = await probeRunner(runner);
+  const capability = `models:${runner}:${JSON.stringify(buildRunnerCatalog(runner, outcome))}`;
+  advertisedCapabilities.set(runner, capability);
+  if (outcome.kind === 'transient') failedRunners.add(runner);
+  else failedRunners.delete(runner);
+  const ttl = capabilityCacheTtl(outcome);
+  if (ttl === null) {
+    // Never leave a stale negative behind for the next process to load.
+    return capabilityCache.delete(runner);
+  }
+  capabilityCache.set(runner, { expiresAt: Date.now() + ttl, capability });
+  return true;
+}
+
+export async function discoverRunnerModelCapabilities(): Promise<string[]> {
+  let dirty = false;
+  await Promise.all(ALL_RUNNERS.map(async (runner) => {
+    const cached = capabilityCache.get(runner);
+    if (cached && cached.expiresAt > Date.now()) {
+      advertisedCapabilities.set(runner, cached.capability);
+      failedRunners.delete(runner);
+      return;
     }
-    return capability;
+    if (await probeAndRecord(runner)) dirty = true;
   }));
   if (dirty) persistCapabilityCache();
-  return entries;
+  return ALL_RUNNERS.map((runner) => advertisedCapabilities.get(runner)!);
+}
+
+/**
+ * Re-probe only runners whose last probe failed transiently; healthy catalogs
+ * are left alone. Returns the full capability list if anything changed.
+ */
+export async function refreshFailedRunnerModels(): Promise<string[] | null> {
+  if (failedRunners.size === 0) return null;
+  const runners = Array.from(failedRunners);
+  const before = runners.map((runner) => advertisedCapabilities.get(runner));
+  let dirty = false;
+  await Promise.all(runners.map(async (runner) => {
+    if (await probeAndRecord(runner)) dirty = true;
+  }));
+  if (dirty) persistCapabilityCache();
+  const changed = runners.some((runner, index) => advertisedCapabilities.get(runner) !== before[index]);
+  return changed ? ALL_RUNNERS.map((runner) => advertisedCapabilities.get(runner)!) : null;
 }
