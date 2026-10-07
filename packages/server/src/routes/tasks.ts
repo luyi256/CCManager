@@ -10,7 +10,6 @@ import { enqueue, queueSize, hasQueued, peekAll, clear as clearFollowUpQueue } f
 import { drainFollowUps, isTaskActive } from '../services/followUpDispatch.js';
 import { validateReasoningEffort, validateRunnerSelection } from '../services/runnerModels.js';
 import { taskLogToStreamEvent } from '../services/taskStream.js';
-import { buildHandoffPrompt } from '../services/taskHandoff.js';
 import { bindAttachmentsToLog, defaultAttachmentPrompt, getTaskImagesForDispatch, isImageAttachment, replaceTaskImages, validateTaskAttachments, listTaskAttachments, getAttachmentForTask, type AttachmentMeta } from '../services/taskAttachments.js';
 import type { Runner, Task } from '../types/index.js';
 
@@ -73,188 +72,127 @@ router.get('/tasks/:id', async (req, res) => {
   }
 });
 
-interface NewTaskInput {
-  prompt: string;
-  images: unknown;
-  runner: Runner;
-  model: unknown;
-  reasoningEffort: unknown;
-  isPlanMode?: boolean;
-  dependsOn?: number;
-  /** Turns the user's message into the prompt the runner receives. */
-  wrapPrompt?: (message: string) => Promise<string> | string;
-}
-
-/** Validates, persists and dispatches a new task; shared by create and handoff. */
-async function createAndStartTask(
-  project: NonNullable<Awaited<ReturnType<typeof storage.getProject>>>,
-  input: NewTaskInput,
-): Promise<{ status: number; body: unknown }> {
-  const projectId = project.id;
-  const selectedRunner = input.runner;
-  if (!input.prompt && (!Array.isArray(input.images) || input.images.length === 0)) {
-    return { status: 400, body: { message: 'Prompt or attachments required' } };
-  }
-
-  // Check if agent is available
-  const agent = agentPool.getAgent(project.agentId);
-  if (!agent) {
-    return {
-      status: 503,
-      body: { message: `Agent ${project.agentId} is not connected. Please ensure the agent is running.` },
-    };
-  }
-  // Validate the user's own input (images) before environmental checks
-  // (model availability), so the actionable error surfaces first.
-  let validatedImages: string[];
-  try {
-    validatedImages = validateTaskAttachments(input.images).map((image) => image.dataUrl);
-  } catch (error) {
-    return { status: 400, body: { message: error instanceof Error ? error.message : 'Invalid attachments' } };
-  }
-  if (selectedRunner === 'cursor' && validatedImages.filter(isImageAttachment).length > CURSOR_MAX_IMAGE_COUNT) {
-    return { status: 400, body: { message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` } };
-  }
-  const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, input.model);
-  if (selectedModel.error) {
-    return { status: 400, body: { message: selectedModel.error } };
-  }
-  const selectedEffort = validateReasoningEffort(
-    agent.capabilities,
-    selectedRunner,
-    selectedModel.model,
-    input.reasoningEffort,
-  );
-  if (selectedEffort.error) {
-    return { status: 400, body: { message: selectedEffort.error } };
-  }
-
-  const message = input.prompt || defaultAttachmentPrompt(validatedImages);
-  const effectivePrompt = input.wrapPrompt ? await input.wrapPrompt(message) : message;
-  const { isPlanMode, dependsOn } = input;
-
-  const task = await storage.createTask(projectId, {
-    projectId,
-    prompt: effectivePrompt,
-    status: 'pending',
-    isPlanMode: isPlanMode || false,
-    runner: selectedRunner,
-    model: selectedModel.model,
-    reasoningEffort: selectedEffort.reasoningEffort,
-    dependsOn,
-    createdAt: new Date().toISOString(),
-  });
-  if (validatedImages.length > 0) replaceTaskImages(task.id, validatedImages);
-
-  // If project has worktree enabled, set the branch name
-  if (project.enableWorktree) {
-    task.worktreeBranch = `ccm-task-${task.id}`;
-    await storage.saveTask(projectId, task);
-  }
-
-  // Start execution if no dependencies
-  if (!dependsOn) {
-    const startedAt = new Date().toISOString();
-    task.attemptCount = (task.attemptCount || 0) + 1;
-    task.lastProgressAt = startedAt;
-    task.status = 'running';
-    task.startedAt = startedAt;
-    await storage.saveTask(projectId, task);
-    const dispatched = agentPool.dispatchTask(project.agentId, {
-      taskId: task.id,
-      projectId: project.id,
-      projectPath: project.projectPath,
-      prompt: task.prompt,
-      isPlanMode: task.isPlanMode,
-      runner: task.runner,
-      model: task.model,
-      reasoningEffort: task.reasoningEffort,
-      executor: project.executor,
-      dockerImage: project.dockerImage,
-      worktreeBranch: task.worktreeBranch,
-      postTaskHook: project.postTaskHook,
-      extraMounts: project.extraMounts,
-      allowedPaths: buildTaskAllowedPaths(project),
-      images: validatedImages.length > 0 ? validatedImages : undefined,
-      startedAt,
-      attempt: task.attemptCount,
-    });
-
-    if (dispatched) {
-      // The task was persisted before dispatch so early session events cannot
-      // race with this request and be overwritten.
-    } else {
-      task.status = 'failed';
-      task.error = 'Failed to dispatch task to agent';
-      task.completedAt = new Date().toISOString();
-      await storage.saveTask(projectId, task);
-    }
-    if (dispatched) await broadcastStreamPhase(task, 'starting');
-  }
-
-  // Keep the remembered model aligned with the most recent runner selection.
-  db.prepare(`UPDATE projects SET last_model = ? WHERE id = ?`).run(selectedModel.model || null, projectId);
-
-  return { status: 201, body: task };
-}
-
 // Create task
 router.post('/projects/:projectId/tasks', async (req, res) => {
   try {
     const { prompt, isPlanMode, runner, model, reasoningEffort, dependsOn, images } = req.body;
-    const project = await storage.getProject(req.params.projectId);
+    const normalizedPrompt = typeof prompt === 'string' ? prompt.trim() : '';
+    const selectedRunner = parseRunner(runner) ?? 'claude';
+    const projectId = req.params.projectId;
+
+    if (!normalizedPrompt && (!images || images.length === 0)) {
+      return res.status(400).json({ message: 'Prompt or attachments required' });
+    }
+
+    const project = await storage.getProject(projectId);
     if (!project) {
       return res.status(404).json({ message: 'Project not found' });
     }
-    const result = await createAndStartTask(project, {
-      prompt: typeof prompt === 'string' ? prompt.trim() : '',
-      images,
-      runner: parseRunner(runner) ?? 'claude',
-      model,
+
+    // Check if agent is available
+    const agent = agentPool.getAgent(project.agentId);
+    if (!agent) {
+      return res.status(503).json({
+        message: `Agent ${project.agentId} is not connected. Please ensure the agent is running.`,
+      });
+    }
+    // Validate the user's own input (images) before environmental checks
+    // (model availability), so the actionable error surfaces first.
+    let validatedImages: string[];
+    try {
+      validatedImages = validateTaskAttachments(images).map((image) => image.dataUrl);
+    } catch (error) {
+      return res.status(400).json({ message: error instanceof Error ? error.message : 'Invalid attachments' });
+    }
+    if (selectedRunner === 'cursor' && validatedImages.filter(isImageAttachment).length > CURSOR_MAX_IMAGE_COUNT) {
+      return res.status(400).json({ message: `Cursor supports at most ${CURSOR_MAX_IMAGE_COUNT} images per message` });
+    }
+    const selectedModel = validateRunnerSelection(agent.capabilities, selectedRunner, model);
+    if (selectedModel.error) {
+      return res.status(400).json({ message: selectedModel.error });
+    }
+    const selectedEffort = validateReasoningEffort(
+      agent.capabilities,
+      selectedRunner,
+      selectedModel.model,
       reasoningEffort,
-      isPlanMode,
+    );
+    if (selectedEffort.error) {
+      return res.status(400).json({ message: selectedEffort.error });
+    }
+
+    const effectivePrompt = normalizedPrompt ||
+      defaultAttachmentPrompt(validatedImages);
+
+    const task = await storage.createTask(projectId, {
+      projectId,
+      prompt: effectivePrompt,
+      status: 'pending',
+      isPlanMode: isPlanMode || false,
+      runner: selectedRunner,
+      model: selectedModel.model,
+      reasoningEffort: selectedEffort.reasoningEffort,
       dependsOn,
+      createdAt: new Date().toISOString(),
     });
-    res.status(result.status).json(result.body);
+    if (validatedImages.length > 0) replaceTaskImages(task.id, validatedImages);
+
+    // If project has worktree enabled, set the branch name
+    if (project.enableWorktree) {
+      task.worktreeBranch = `ccm-task-${task.id}`;
+      await storage.saveTask(projectId, task);
+    }
+
+    // Start execution if no dependencies
+    if (!dependsOn) {
+      const startedAt = new Date().toISOString();
+      task.attemptCount = (task.attemptCount || 0) + 1;
+      task.lastProgressAt = startedAt;
+      task.status = 'running';
+      task.startedAt = startedAt;
+      await storage.saveTask(projectId, task);
+      const dispatched = agentPool.dispatchTask(project.agentId, {
+        taskId: task.id,
+        projectId: project.id,
+        projectPath: project.projectPath,
+        prompt: task.prompt,
+        isPlanMode: task.isPlanMode,
+        runner: task.runner,
+        model: task.model,
+        reasoningEffort: task.reasoningEffort,
+        executor: project.executor,
+        dockerImage: project.dockerImage,
+        worktreeBranch: task.worktreeBranch,
+        postTaskHook: project.postTaskHook,
+        extraMounts: project.extraMounts,
+        allowedPaths: buildTaskAllowedPaths(project),
+        images: validatedImages.length > 0 ? validatedImages : undefined,
+        startedAt,
+        attempt: task.attemptCount,
+      });
+
+      if (dispatched) {
+        // The task was persisted before dispatch so early session events cannot
+        // race with this request and be overwritten.
+      } else {
+        task.status = 'failed';
+        task.error = 'Failed to dispatch task to agent';
+        task.completedAt = new Date().toISOString();
+        await storage.saveTask(projectId, task);
+      }
+      if (dispatched) await broadcastStreamPhase(task, 'starting');
+    }
+
+    // Keep the remembered model aligned with the most recent runner selection.
+    db.prepare(`UPDATE projects SET last_model = ? WHERE id = ?`).run(selectedModel.model || null, projectId);
+
+    res.status(201).json(task);
   } catch (error) {
     console.error('Failed to create task:', error);
     return errorResponse(res, 500, 'Failed to create task', {
       projectId: req.params.projectId,
       error: error instanceof Error ? error.message : String(error),
     });
-  }
-});
-
-// Continue a conversation with a different coding agent. A session can only be
-// resumed by the CLI that owns it, so this starts a new task whose prompt
-// carries the earlier conversation.
-router.post('/tasks/:id/handoff', async (req, res) => {
-  try {
-    const { prompt, images, runner, model, reasoningEffort } = req.body;
-    const targetRunner = parseRunner(runner);
-    if (!targetRunner) {
-      return res.status(400).json({ message: 'A target coding agent is required' });
-    }
-    const task = await storage.getTaskById(parseInt(req.params.id, 10));
-    if (!task) {
-      return res.status(404).json({ message: 'Task not found' });
-    }
-    const project = await storage.getProject(task.projectId);
-    if (!project) {
-      return res.status(404).json({ message: 'Project not found' });
-    }
-    const result = await createAndStartTask(project, {
-      prompt: typeof prompt === 'string' ? prompt.trim() : '',
-      images,
-      runner: targetRunner,
-      model,
-      reasoningEffort,
-      wrapPrompt: async (message) => buildHandoffPrompt(task, await storage.getTaskLogs(task.projectId, task.id), message),
-    });
-    res.status(result.status).json(result.body);
-  } catch (error) {
-    console.error('Failed to hand off task:', error);
-    errorResponse(res, 500, 'Failed to hand off task');
   }
 });
 

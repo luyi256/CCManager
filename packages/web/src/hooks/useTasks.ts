@@ -33,29 +33,6 @@ export function useCreateTask(projectId: string) {
   });
 }
 
-export function useHandoffTask() {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ taskId, ...data }: {
-      taskId: number;
-      prompt: string;
-      images?: string[];
-      runner: Runner;
-      model?: string;
-      reasoningEffort?: string;
-    }) => api.handoffTask(taskId, data),
-    onSuccess: (task) => {
-      queryClient.setQueryData(['task', task.id], task);
-      // The project page opens tasks from this list, so add it before the refetch.
-      queryClient.setQueryData<Task[]>(['tasks', task.projectId], (old) =>
-        old ? [task, ...old.filter((t) => t.id !== task.id)] : [task]
-      );
-      queryClient.invalidateQueries({ queryKey: ['tasks', task.projectId] });
-    },
-  });
-}
-
 export function useUpdateTask() {
   const queryClient = useQueryClient();
 

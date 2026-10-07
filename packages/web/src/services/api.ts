@@ -187,20 +187,6 @@ export async function continueTask(
   });
 }
 
-/** Continue a task's conversation with another coding agent, as a new task. */
-export async function handoffTask(taskId: number, data: {
-  prompt: string;
-  images?: string[];
-  runner: Runner;
-  model?: string;
-  reasoningEffort?: string;
-}): Promise<Task> {
-  return request(`/tasks/${taskId}/handoff`, {
-    method: 'POST',
-    body: JSON.stringify(data),
-  });
-}
-
 export interface QueuedFollowUp {
   id: number;
   prompt: string;

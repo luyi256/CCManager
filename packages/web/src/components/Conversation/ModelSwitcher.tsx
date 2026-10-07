@@ -13,10 +13,6 @@ const RUNNERS: Array<{ id: Runner; label: string; accent: string }> = [
   { id: 'qwen', label: 'Qwen', accent: 'text-amber-400' },
 ];
 
-export function runnerLabel(runner: Runner): string {
-  return RUNNERS.find((item) => item.id === runner)?.label ?? runner;
-}
-
 type Step = 'runner' | 'models' | 'effort';
 type ModelOption = api.RunnerModelsResponse['modelOptions'][number];
 
@@ -29,11 +25,7 @@ interface ModelSwitcherProps {
   onEffortChange: (effort: string) => void;
   agentId?: string;
   compact?: boolean;
-  /**
-   * Runner that owns the conversation's session. Other runners cannot resume
-   * it, so choosing one continues the conversation in a new task.
-   */
-  sessionRunner?: Runner;
+  lockRunner?: boolean;
   menuAlign?: 'left' | 'right';
 }
 
@@ -54,7 +46,7 @@ export default function ModelSwitcher({
   onEffortChange,
   agentId,
   compact = false,
-  sessionRunner,
+  lockRunner = false,
   menuAlign = compact ? 'right' : 'left',
 }: ModelSwitcherProps) {
   const [open, setOpen] = useState(false);
@@ -123,9 +115,7 @@ export default function ModelSwitcher({
     if (!open) return;
     setDraftRunner(selectedRunner);
     setDraftModel(selectedModel);
-    if (sessionRunner) {
-      // Switching model within the session is the common case; other agents
-      // are one step back.
+    if (lockRunner) {
       setStep('models');
       setModels([]);
       setRunnerAvailable(null);
@@ -133,7 +123,7 @@ export default function ModelSwitcher({
     } else {
       setStep('runner');
     }
-  }, [open, selectedRunner, sessionRunner]);
+  }, [open, selectedRunner, lockRunner]);
 
   const applyDefault = () => {
     if (runnerAvailable === false) return;
@@ -236,9 +226,6 @@ export default function ModelSwitcher({
                   >
                     <Cpu size={15} className={runner.accent} />
                     <span className="flex-1">{runner.label}</span>
-                    {sessionRunner && sessionRunner !== runner.id && (
-                      <span className="rounded bg-dark-700 px-1.5 py-0.5 text-[10px] text-dark-400">New task</span>
-                    )}
                     {selectedRunner === runner.id && <Check size={14} className="text-dark-400" />}
                   </button>
                 ))}
@@ -248,30 +235,10 @@ export default function ModelSwitcher({
 
           {step === 'models' && (
             <div className="p-2">
-              <div className="flex items-center justify-between gap-2 px-1 pb-2">
-                <span className="flex items-center gap-2 min-w-0">
-                  {sessionRunner && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setError(null);
-                        setStep('runner');
-                      }}
-                      className="text-xs text-dark-400 hover:text-dark-200 whitespace-nowrap"
-                    >
-                      ← Agents
-                    </button>
-                  )}
-                  <span className="block text-xs uppercase text-dark-500 truncate">{draftRunnerMeta.label} models</span>
-                </span>
+              <div className="flex items-center justify-between px-1 pb-2">
+                <span className="block text-xs uppercase text-dark-500">{draftRunnerMeta.label} models</span>
                 {isLoading && <Loader2 size={14} className="animate-spin text-dark-500" />}
               </div>
-              {sessionRunner && sessionRunner !== draftRunner && (
-                <div className="mx-1 mb-2 rounded-md bg-dark-800 px-2 py-1.5 text-xs text-dark-400">
-                  The current session can only be resumed by {runnerLabel(sessionRunner)}.
-                  Sending will start a new {draftRunnerMeta.label} task with this conversation as context.
-                </div>
-              )}
 
               <button
                 type="button"
